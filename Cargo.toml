@@ -3,7 +3,11 @@ name = "smtp-server"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ahash = { version = "0.8.0" }
+ahash = { version = "0.8.2" }
+rustls = "0.20"
+rustls-pemfile = "1.0"
+tokio = { version = "1.23.0", features = ["full"] }
+tokio-rustls = { version = "0.23.4"}
+webpki-roots = { version = "0.22.5"}

@@ -456,10 +456,11 @@ integers2 = [
 ]
 integers3 = [
   4,
+  # comment in the middle
   5, # this is ok
 ]
 contributors = [
-  "Foo Bar <foo@example.com>",
+  "Foo Bar <foo@example.com>" ,
   { name = "Baz Qux", email = "bazqux@example.com", url = "https://example.com/bazqux" }
 ]
 

@@ -1,105 +1,83 @@
-[servers]
-
-[servers."relay"]
+[server]
 hostname = "mx.example.org"
 greeting = "Stalwart SMTP v0.1 at your service"
-type = "smtp"
-bind = ["0.0.0.0", 25]
+protocol = "smtp"
 
-[servers."relay".tls]
+[server.listener.smtp]
+bind = ["0.0.0.0:25"]
+
+[server.listener.smtps]
+bind = ["0.0.0.0:465"]
+
+[server.tls]
 enable = true,
 implicit = true,
-sni = "abc",
-cert = "key",
-protocols = "SSLv2, SSLv3, TLSv1, TLSv1.1, TLSv1.2, TLSv1.3",
-ciphers = "aNULL:-aNULL:HIGH:MEDIUM:+RC4:@STRENGTH",
-clientcert = true
+implicit.smtp = false
+timeout = 300
+certificate = default
+sni = [{subject = "domain.org", certificate = "abc"}]
+protocols = ["TLSv1.2", TLSv1.3"]
+ciphers = ["cipher1", "cipher2"]
+ignore_client_order = true
 
-[servers."relay".socket]
-backlog = 111,
-ttl = 123,
-send-buffer-size = 123,
-recv-buffer-size = 444,
-linger = 1,
-tos = 1,
+[server.socket]
+reuse-addr = true
+reuse-port = true
+backlog = 1024,
+#ttl = 3600,
+#send-buffer-size = 65535,
+#recv-buffer-size = 65535,
+#linger = 1,
+#tos = 1,
 
-[servers."relay".transaction.connect]
-script = connect.sieve
+[stage]
 
-[[servers."relay".transaction.connect.throttle]]
-concurrency = 1000
+[stage.connect]
+script = "connect.sieve"
+throttle.local = {key = ["remoteip", "localip"], concurrency = 1000, rate = [3, 10]}
+throttle = {concurrency = 10000, rate = [3, 10]}
 
-[[servers."relay".transaction.connect.throttle]]
-key = remoteip + localip
-concurrency = 10,
-rate = [3, 60]
-
-[servers."relay".transaction.ehlo]
+[stage.ehlo]
 require = true
+extensions.submission = ["deliveryby"]
 extensions = "chunking, pipeline, smtputf8, starttls"
 script = ehlo.sieve
 authenticate = spf
-
-[[servers."relay".transaction.ehlo]]
 commands = 1
-idle = 10
+timeout = 10
 
-[servers."relay".transaction.auth]
+[stage.auth]
 require = true
 require-tls = true
 auth-host = "auth-server"
 mechanisms = "plain, login"
+limits = {idle = 10, errors = 3, errors-wait = 10}
 
-[[servers."relay".transaction.auth.limits]]
-idle = 10,
-errors = 3,
-errors-wait = 10
-
-[servers."relay".transaction.mail]
+[stage.mail]
 authenticate = spf
+authenticate.submission = none
 script = mail-from.sieve
+limits = {idle = 10, messages = 10}
+throttle = {key = "mail-from", concurrency = 10, rate = [3, 60]}
 
-[[servers."relay".transaction.mail.limits]]
-idle = 10,
-messages = 10
-
-[[servers."relay".transaction.mail.throttle]]
-key = mail-from,
-concurrency = 10,
-rate = [3, 60]
-
-[servers."relay".transaction.rcpt]
+[stage.rcpt]
 script = rcpt-to.sieve
 local-domains = list-domains
 local-addresses = list-addresses
 cache = { entries = 1000, ttl-positive = 10, ttl-negative = 5 }
+limits = { idle = 10, max-recipients = 100, errors = 5 }
+throttle = {key = "rcpt-to", concurrency = 10, rate = [3, 60]}
 
-[[servers."relay".transaction.rcpt.limits]]
-idle = 10,
-max-recipients = 100,
-errors = 5
-
-[[servers."relay".transaction.rcpt.throttle]]
-key = rcpt-to
-concurrency = 10
-rate = [3, 60]
-
-[servers."relay".transaction.data]
+[stage.data]
 authenticate = [dkim, arc, dmarc]
 sign = dkim, arc
 script = data.sieve
+limits = { idle = 10, size = 100000, received-headers = 50, mime-parts = 50, nested-messages = 3 }
 
-[[servers."relay".transaction.data.limits]]
-idle = 10
-size = 100000
-received-headers = 50
-mime-parts = 50
-nested-messages = 3
-
-[servers."relay".transaction.quit]
+[stage.quit]
 script = quit.sieve
 
-[servers."relay".transaction.disconnect]
+[stage.disconnect]
 script = disconnect.sieve
 
 [external]
@@ -112,34 +90,17 @@ auth.username = "hello"
 auth.password = "world"
 tls = "optional, require, dane, dane-fallback-require, dane-require
 
-[queues]
-
-[queues."default"]
+[queue]
 retry = [0, 1, 15, 60, 90]
 notify = [9, 10]
 prefer = ipv6
-source-ips = [192.168.0.2, 162.168.0.1]
+source-ips = ["192.168.0.2", "162.168.0.1"]
 tls = optional, require, dane, dane-fallback-require, dane-require
+limits = { attempts = 100, time = 3600, queued-messages = 10000, queue-size = 1000000 }
+limits.ip = { rate = 1/60, concurrency = 100, key = localip, remote-ip, remote-mx }
+throttle = { rate = 1/60, concurrency = 1000, key = all }
+smart-host.is-local = lmtp
 
-[[queues."default".limits]]
-attempts = 100
-time = 3600
-queued-messages = 10000
-queue-size = 1000000
-
-[[queues."default".throttle]]
-rate = 1/60
-concurrency = 1000
-key = all
-
-[[queues."default".throttle]]
-rate = 1/60
-concurrency = 100
-key = localip, remote-ip, remote-mx
-
-[queues.local]
-smart-host = lmtp
-match-rule = "is-local"
 
 [rules]
 
@@ -185,13 +146,6 @@ data = ["example.org", "*.example.net"]
 [list.localaddresses]
 server = lmtp
 
-[certificates]
-
-[certificates.tls]
-type = "rsa"
-certificate = ""
-privatekey = ""
-
 [servers."relay".outgoing.dsn]
 name = "Mail Delivery Subsystem"
 address = "MAILER-DAEMON"
@@ -211,3 +165,12 @@ subject = "DMARC aggregate report for $1"
 send-reports = true
 report-frequency = requested, 86400
 incoming-address = "dmarc@*"
+
+[certificate.default]
+type = "rsa"
+cert = '''
+-----BEGIN CERTIFICATE-----
+'''
+pki = '''
+-----BEGIN PRIVATE KEY-----
+'''
