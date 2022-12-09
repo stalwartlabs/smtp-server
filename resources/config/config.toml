@@ -3,16 +3,26 @@ hostname = "mx.example.org"
 greeting = "Stalwart SMTP v0.1 at your service"
 protocol = "smtp"
 
-[server.listener.smtp]
+[[server.listener]]
+id = "smtp"
 bind = ["0.0.0.0:25"]
+tls.implicit = false
 
-[server.listener.smtps]
+[[server.listener]]
+id = "smtps"
 bind = ["0.0.0.0:465"]
+tls.implicit = true
+tls.sni = [{subject = "domain.org", certificate = "abc"}]
+socket.backlog = 1024
+
+[[server.listener]]
+id = "submission"
+bind = ["0.0.0.0:465"]
+tls = {implicit = true}
 
 [server.tls]
 enable = true,
 implicit = true,
-implicit.smtp = false
 timeout = 300
 certificate = default
 sni = [{subject = "domain.org", certificate = "abc"}]
@@ -34,48 +44,92 @@ backlog = 1024,
 
 [stage.connect]
 script = "connect.sieve"
-throttle.local = {key = ["remoteip", "localip"], concurrency = 1000, rate = [3, 10]}
-throttle = {concurrency = 10000, rate = [3, 10]}
+concurrency = 10000
+throttle = [
+    {key = ["remoteip", "localip"], concurrency = 10000, rate = "3/5m"},
+]
+
+[[stage.connect.rule]]
+match-if = {remote-ip = "127.0.0.1"}
+throttle = {key = ["remoteip", "localip"], concurrency = 1000, rate = [3, 10]}
 
 [stage.ehlo]
 require = true
-extensions.submission = ["deliveryby"]
-extensions = "chunking, pipeline, smtputf8, starttls"
 script = ehlo.sieve
-authenticate = spf
-commands = 1
-timeout = 10
+authenticate = {spf = "strict"}
+timeout = "5m"
+max-ehlos = 1
+
+[stage.ehlo.capabilities]
+pipelining = true
+chunking = true
+requiretls = true
+no-soliciting = ""
+auth = []
+dsn = true
+future-release = false
+deliver-by = false
+mt-priority = false
+size = 100000
+expn = false
+
+[[stage.ehlo.rule]]
+match-if = {listener = "submission"}
+authenticate = {spf = "none"}
+capabilities = {expn = true, auth = ["mechanism"], dsn = true, future-release = "5d", deliver-by = "30m", mt-priority = "mixer"}
 
 [stage.auth]
-require = true
-require-tls = true
 auth-host = "auth-server"
-mechanisms = "plain, login"
-limits = {idle = 10, errors = 3, errors-wait = 10}
+require = false
+timeout = 10
+errors = {total = 3, wait = "5s"}
+
+[[stage.auth.rule]]
+match-if = {listener = "submission"}
+require = true
 
 [stage.mail]
-authenticate = spf
-authenticate.submission = none
+auth = {spf = "strict"}
 script = mail-from.sieve
-limits = {idle = 10, messages = 10}
+timeout = 10
 throttle = {key = "mail-from", concurrency = 10, rate = [3, 60]}
+
+[[stage.mail.rule]]
+match-if = {id = "submission"}
+authenticate = {spf = "disable"}
+#capabilities = {deliver-by = "1000s", future-release = "1000s"}
 
 [stage.rcpt]
 script = rcpt-to.sieve
-local-domains = list-domains
-local-addresses = list-addresses
+local-domains = "list-domains"
+local-addresses = "list-addresses"
 cache = { entries = 1000, ttl-positive = 10, ttl-negative = 5 }
-limits = { idle = 10, max-recipients = 100, errors = 5 }
-throttle = {key = "rcpt-to", concurrency = 10, rate = [3, 60]}
+throttle = [{key = "rcpt-to", concurrency = 10, rate = [3, 60]}]
+errors = {total = 3, wait = "5s"}
+timeout = "5m"
+max-recipients = 100
+
+[[stage.rcpt.rule]]
+match-if = {id = "submission"}
+max-recipients = 1000
 
 [stage.data]
-authenticate = [dkim, arc, dmarc]
-sign = dkim, arc
+authenticate = {dkim = "true", arc = "true", dmarc = "true"}
 script = data.sieve
-limits = { idle = 10, size = 100000, received-headers = 50, mime-parts = 50, nested-messages = 3 }
+timeout = "10s"
+add-headers = ["arc-seal", "received-spf", "authentication-results", "return-path", "received"]
 
-[stage.quit]
-script = quit.sieve
+[stage.data.limits]
+messages = 10
+message-size = 100000
+received-headers = 50
+mime-parts = 50
+nested-messages = 3
+
+[[stage.data]]
+match-if = {id = "submission"}
+authenticate = {dkim = "false", arc = "false", dmarc = "false"}
+add-headers = ["dkim-signature", "arc-seal", "return-path", "received"]
 
 [stage.disconnect]
 script = disconnect.sieve
@@ -97,22 +151,23 @@ prefer = ipv6
 source-ips = ["192.168.0.2", "162.168.0.1"]
 tls = optional, require, dane, dane-fallback-require, dane-require
 limits = { attempts = 100, time = 3600, queued-messages = 10000, queue-size = 1000000 }
-limits.ip = { rate = 1/60, concurrency = 100, key = localip, remote-ip, remote-mx }
 throttle = { rate = 1/60, concurrency = 1000, key = all }
-smart-host.is-local = lmtp
+
+[[queue.virtual]]
+match-if = {rcpt-domain = "*.example.org"}
+id = "local"
+relay-host = "lmtp"
 
 
 [rules]
 
 [rules."is-local"]
 rcpt-domain = ["*.example.org"]
-rcpt-to = [""]
+rcpt = [""]
 server-id = "relay"
 mx = ["mx.gmail.com", "mx.coco.com"]
 remote-ip = [192.168.0.32/1]
 priority = 1
-
-
 
 [resolver]
 type = system, google, cloudflare

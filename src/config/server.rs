@@ -21,9 +21,15 @@ use super::{
 
 impl Config {
     pub fn build_servers(&self) -> super::Result<Vec<Server>> {
-        let mut servers = Vec::new();
-        for id in self.sub_keys("server.listener") {
-            servers.push(self.build_server(id)?);
+        let mut servers: Vec<Server> = Vec::new();
+
+        for array_pos in self.sub_keys("server.listener") {
+            let server = self.build_server(array_pos)?;
+            if !servers.iter().any(|s| s.id == server.id) {
+                servers.push(server);
+            } else {
+                return Err(format!("Duplicate listener id {:?}.", server.id));
+            }
         }
 
         if !servers.is_empty() {
@@ -33,17 +39,23 @@ impl Config {
         }
     }
 
-    pub fn build_server(&self, id: &str) -> super::Result<Server> {
+    fn build_server(&self, array_pos: &str) -> super::Result<Server> {
+        // Obtain server id
+        let id = self.property_require::<String>(("server.listeners", array_pos, "id"))?;
+
         // Build TLS config
         let (tls, tls_implicit) = if self
-            .property_or_default(("server.tls.enable", id), "server.tls.enable")?
+            .property_or_default(
+                ("server.listener", array_pos, "tls.enable"),
+                "server.tls.enable",
+            )?
             .unwrap_or(false)
         {
             // Parse protocol versions
             let mut tls_v2 = false;
             let mut tls_v3 = false;
             for (key, protocol) in self.properties_or_default::<String>(
-                ("server.tls.protocols", id),
+                ("server.listener", array_pos, "tls.protocols"),
                 "server.tls.protocols",
             ) {
                 match protocol?.as_str() {
@@ -63,9 +75,10 @@ impl Config {
 
             // Parse cipher suites
             let mut ciphers = Vec::new();
-            for (key, protocol) in
-                self.properties_or_default::<String>(("server.tls.cipher", id), "server.tls.cipher")
-            {
+            for (key, protocol) in self.properties_or_default::<String>(
+                ("server.listener", array_pos, "tls.cipher"),
+                "server.tls.cipher",
+            ) {
                 ciphers.push(match protocol?.as_str() {
                     // TLS1.3 suites
                     "TLS13_AES_256_GCM_SHA384" => TLS13_AES_256_GCM_SHA384,
@@ -102,7 +115,7 @@ impl Config {
             // Obtain default certificate
             let cert_id = self
                 .property_or_default::<String>(
-                    ("server.tls.certificate", id),
+                    ("server.listener", array_pos, "tls.certificate"),
                     "server.tls.certificate",
                 )?
                 .ok_or_else(|| format!("Undefined certificate id for listener {:?}.", id))?;
@@ -112,21 +125,14 @@ impl Config {
             // Add SNI certificates
             let mut resolver = ResolvesServerCertUsingSni::new();
             for (key, value) in self.properties_or_default::<String>(
-                ("server.tls.certificate.sni", id),
-                "server.tls.certificate.sni",
+                ("server.listener", array_pos, "tls.sni"),
+                "server.tls.sni",
             ) {
-                if let Some((_, array_pos)) = key
-                    .strip_suffix(".subject")
-                    .and_then(|k| k.rsplit_once('.'))
-                {
+                if let Some(prefix) = key.strip_suffix(".subject") {
                     resolver
                         .add(
                             value?.as_str(),
-                            match self.property::<String>((
-                                "server.tls.certificate.sni",
-                                array_pos,
-                                "cert",
-                            ))? {
+                            match self.property::<String>((prefix, "cert"))? {
                                 Some(sni_cert_id) if sni_cert_id != cert_id => CertifiedKey {
                                     cert: vec![self.rustls_certificate(&sni_cert_id)?],
                                     key: any_supported_type(
@@ -195,14 +201,17 @@ impl Config {
             //config.key_log = Arc::new(KeyLogger::default());
             config.ignore_client_order = self
                 .property_or_default(
-                    ("server.tls.ignore_client_order", id),
+                    ("server.listener", array_pos, "tls.ignore_client_order"),
                     "server.tls.ignore_client_order",
                 )?
                 .unwrap_or(true);
             (
                 config.into(),
-                self.property_or_default(("server.tls.implicit", id), "server.tls.implicit")?
-                    .unwrap_or(true),
+                self.property_or_default(
+                    ("server.listener", array_pos, "tls.implicit"),
+                    "server.tls.implicit",
+                )?
+                .unwrap_or(true),
             )
         } else {
             (None, false)
@@ -210,7 +219,7 @@ impl Config {
 
         // Build listeners
         let mut listeners = Vec::new();
-        for (_, addr) in self.properties::<SocketAddr>(("server.listener", id, "bind")) {
+        for (_, addr) in self.properties::<SocketAddr>(("server.listener", array_pos, "bind")) {
             // Parse bind address and build socket
             let addr = addr?;
             let socket = if addr.is_ipv4() {
@@ -230,7 +239,7 @@ impl Config {
                 "tos",
             ] {
                 if let Some(value) = self.property_or_default::<String>(
-                    ("server.socket", option, id),
+                    ("server.listener", array_pos, "socket", option),
                     ("server.socket", option),
                 )? {
                     match option {
@@ -264,7 +273,7 @@ impl Config {
             let listener = socket
                 .listen(
                     self.property_or_default(
-                        ("server.socket.backlog.", id),
+                        ("server.listener", array_pos, "socket.backlog"),
                         "server.socket.backlog",
                     )?
                     .unwrap_or(1024),
@@ -277,9 +286,10 @@ impl Config {
                 })?;
 
             // Set TTL parameter
-            if let Some(ttl) =
-                self.property_or_default(("server.socket.ttl.", id), "server.socket.ttl")?
-            {
+            if let Some(ttl) = self.property_or_default(
+                ("server.listener", array_pos, "socket.ttl"),
+                "server.socket.ttl",
+            )? {
                 listener.set_ttl(ttl).map_err(|err| {
                     format!(
                         "Failed to set socket option 'ttl' for listener '{}': {}",
@@ -298,15 +308,24 @@ impl Config {
         }
 
         Ok(Server {
-            id: id.to_string(),
+            id,
             hostname: self
-                .property_or_default(("server.listener", id, "hostname"), "server.hostname")?
+                .property_or_default(
+                    ("server.listener", array_pos, "hostname"),
+                    "server.hostname",
+                )?
                 .ok_or("Hostname directive not found.")?,
             greeting: self
-                .property_or_default(("server.listener", id, "greeting"), "server.greeting")?
+                .property_or_default(
+                    ("server.listener", array_pos, "greeting"),
+                    "server.greeting",
+                )?
                 .unwrap_or_else(|| "Stalwart SMTP at your service".to_string()),
             protocol: self
-                .property_or_default(("server.listener", id, "protocol"), "server.protocol")?
+                .property_or_default(
+                    ("server.listener", array_pos, "protocol"),
+                    "server.protocol",
+                )?
                 .unwrap_or(ServerProtocol::Smtp),
             listeners,
             tls,

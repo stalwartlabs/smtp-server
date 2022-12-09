@@ -3,8 +3,8 @@ use std::str::FromStr;
 use super::Config;
 
 impl Config {
-    pub fn property<T: FromStr>(&self, key: impl IntoKey) -> super::Result<Option<T>> {
-        let key = key.into_key();
+    pub fn property<T: FromStr>(&self, key: impl AsKey) -> super::Result<Option<T>> {
+        let key = key.as_key();
         if let Some(value) = self.keys.get(&key) {
             match T::from_str(value) {
                 Ok(result) => Ok(Some(result)),
@@ -17,8 +17,8 @@ impl Config {
 
     pub fn property_or_default<T: FromStr>(
         &self,
-        key: impl IntoKey,
-        default: impl IntoKey,
+        key: impl AsKey,
+        default: impl AsKey,
     ) -> super::Result<Option<T>> {
         match self.property(key) {
             Ok(None) => self.property(default),
@@ -26,10 +26,20 @@ impl Config {
         }
     }
 
-    pub fn sub_keys<'x, 'y: 'x>(&'y self, prefix: &'x str) -> impl Iterator<Item = &str> + 'x {
+    pub fn property_require<T: FromStr>(&self, key: impl AsKey) -> super::Result<T> {
+        match self.property(key.clone()) {
+            Ok(Some(result)) => Ok(result),
+            Ok(None) => Err(format!("Missing property {:?}.", key.as_key())),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn sub_keys<'x, 'y: 'x>(&'y self, prefix: impl AsKey) -> impl Iterator<Item = &str> + 'x {
         let mut last_key = "";
+        let prefix = prefix.as_prefix();
+
         self.keys.keys().filter_map(move |key| {
-            let key = key.strip_prefix(prefix)?.strip_prefix('.')?;
+            let key = key.strip_prefix(&prefix)?;
             let key = if let Some((key, _)) = key.split_once('.') {
                 key
             } else {
@@ -46,7 +56,7 @@ impl Config {
 
     pub fn properties<T: FromStr>(
         &self,
-        prefix: impl IntoKey,
+        prefix: impl AsKey,
     ) -> impl Iterator<Item = (&str, super::Result<T>)> {
         let prefix = prefix.as_prefix();
         self.keys.iter().filter_map(move |(key, value)| {
@@ -65,8 +75,8 @@ impl Config {
 
     pub fn properties_or_default<T: FromStr>(
         &self,
-        prefix: impl IntoKey,
-        default: impl IntoKey,
+        prefix: impl AsKey,
+        default: impl AsKey,
     ) -> impl Iterator<Item = (&str, super::Result<T>)> {
         let mut prefix = prefix.as_prefix();
 
@@ -74,19 +84,19 @@ impl Config {
             prefix.truncate(prefix.len() - 1);
             prefix
         } else {
-            default.into_key()
+            default.as_key()
         })
     }
 
-    pub fn value(&self, key: &str) -> Option<&str> {
-        self.keys.get(key).map(|s| s.as_str())
+    pub fn value(&self, key: impl AsKey) -> Option<&str> {
+        self.keys.get(&key.as_key()).map(|s| s.as_str())
     }
 
     pub fn take_value(&mut self, key: &str) -> Option<String> {
         self.keys.remove(key)
     }
 
-    pub fn file_contents(&self, key: impl IntoKey) -> super::Result<Vec<u8>> {
+    pub fn file_contents(&self, key: impl AsKey) -> super::Result<Vec<u8>> {
         let key_ = key.clone();
         if let Some(value) = self.property::<String>(key_)? {
             if value.starts_with("file://") {
@@ -94,7 +104,7 @@ impl Config {
                     format!(
                         "Failed to read file {:?} for key {:?}: {}",
                         value,
-                        key.into_key(),
+                        key.as_key(),
                         err
                     )
                 })
@@ -104,42 +114,81 @@ impl Config {
         } else {
             Err(format!(
                 "Property {:?} not found in configuration file.",
-                key.into_key()
+                key.as_key()
             ))
         }
     }
 }
 
 pub trait ParseKey {
-    fn parse_key<T: FromStr>(&self, key: &str) -> super::Result<T>;
+    fn parse_key<T: FromStr>(&self, key: impl AsKey) -> super::Result<T>;
+    fn parse_duration(&self, key: impl AsKey) -> super::Result<u64>;
 }
 
 impl ParseKey for &str {
-    fn parse_key<T: FromStr>(&self, key: &str) -> super::Result<T> {
+    fn parse_key<T: FromStr>(&self, key: impl AsKey) -> super::Result<T> {
         match T::from_str(self) {
             Ok(result) => Ok(result),
-            Err(_) => Err(format!("Invalid value {:?} for key {:?}.", self, key)),
+            Err(_) => Err(format!(
+                "Invalid value {:?} for key {:?}.",
+                self,
+                key.as_key()
+            )),
         }
+    }
+
+    fn parse_duration(&self, key: impl AsKey) -> super::Result<u64> {
+        let duration = self.trim().to_ascii_uppercase();
+        let (num, multiplier) = if let Some(num) = duration.strip_prefix('d') {
+            (num, 24 * 60 * 60 * 1000)
+        } else if let Some(num) = duration.strip_prefix('h') {
+            (num, 60 * 60 * 1000)
+        } else if let Some(num) = duration.strip_prefix('m') {
+            (num, 60 * 1000)
+        } else if let Some(num) = duration.strip_prefix('s') {
+            (num, 1000)
+        } else if let Some(num) = duration.strip_prefix("ms") {
+            (num, 1)
+        } else {
+            (duration.as_str(), 1)
+        };
+        num.parse::<u64>()
+            .ok()
+            .and_then(|num| {
+                if num > 0 {
+                    Some(num * multiplier)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                format!(
+                    "Invalid duration value {:?} for key {:?}.",
+                    self,
+                    key.as_key()
+                )
+            })
     }
 }
 
 impl ParseKey for String {
-    fn parse_key<T: FromStr>(&self, key: &str) -> super::Result<T> {
-        match T::from_str(self) {
-            Ok(result) => Ok(result),
-            Err(_) => Err(format!("Invalid value {:?} for key {:?}.", self, key)),
-        }
+    fn parse_key<T: FromStr>(&self, key: impl AsKey) -> super::Result<T> {
+        self.as_str().parse_key(key)
+    }
+
+    fn parse_duration(&self, key: impl AsKey) -> super::Result<u64> {
+        self.as_str().parse_duration(key)
     }
 }
 
-pub trait IntoKey: Clone {
-    fn into_key(self) -> String;
+pub trait AsKey: Clone {
+    fn as_key(&self) -> String;
     fn as_prefix(&self) -> String;
 }
 
-impl IntoKey for &str {
-    fn into_key(self) -> String {
-        self.into()
+impl AsKey for &str {
+    fn as_key(&self) -> String {
+        self.to_string()
     }
 
     fn as_prefix(&self) -> String {
@@ -147,9 +196,9 @@ impl IntoKey for &str {
     }
 }
 
-impl IntoKey for String {
-    fn into_key(self) -> String {
-        self
+impl AsKey for String {
+    fn as_key(&self) -> String {
+        self.to_string()
     }
 
     fn as_prefix(&self) -> String {
@@ -157,8 +206,8 @@ impl IntoKey for String {
     }
 }
 
-impl IntoKey for (&str, &str) {
-    fn into_key(self) -> String {
+impl AsKey for (&str, &str) {
+    fn as_key(&self) -> String {
         format!("{}.{}", self.0, self.1)
     }
 
@@ -167,13 +216,23 @@ impl IntoKey for (&str, &str) {
     }
 }
 
-impl IntoKey for (&str, &str, &str) {
-    fn into_key(self) -> String {
+impl AsKey for (&str, &str, &str) {
+    fn as_key(&self) -> String {
         format!("{}.{}.{}", self.0, self.1, self.2)
     }
 
     fn as_prefix(&self) -> String {
         format!("{}.{}.{}.", self.0, self.1, self.2)
+    }
+}
+
+impl AsKey for (&str, &str, &str, &str) {
+    fn as_key(&self) -> String {
+        format!("{}.{}.{}.{}", self.0, self.1, self.2, self.3)
+    }
+
+    fn as_prefix(&self) -> String {
+        format!("{}.{}.{}.{}.", self.0, self.1, self.2, self.3)
     }
 }
 
