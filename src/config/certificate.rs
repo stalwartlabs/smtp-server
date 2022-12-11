@@ -38,9 +38,9 @@ impl KeyLog for KeyLogger {
 impl Config {
     pub fn rustls_certificate(&self, cert_id: &str) -> super::Result<Certificate> {
         certs(&mut Cursor::new(self.file_contents((
-            "certificate",
+            "key",
             cert_id,
-            "cert",
+            "certificate",
         ))?))
         .map_err(|err| {
             format!(
@@ -61,9 +61,9 @@ impl Config {
 
     pub fn rustls_private_key(&self, cert_id: &str) -> super::Result<PrivateKey> {
         match read_one(&mut Cursor::new(self.file_contents((
-            "certificate",
+            "key",
             cert_id,
-            "pki",
+            "private-key",
         ))?))
         .map_err(|err| {
             format!(

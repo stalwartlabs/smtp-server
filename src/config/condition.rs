@@ -1,12 +1,27 @@
-use std::{net::IpAddr, str::FromStr};
+use std::{collections::hash_map::Entry, net::IpAddr};
 
 use super::{
-    utils::{AsKey, ParseKey},
-    Condition, Config, IpAddrMask, StringMatch,
+    utils::{AsKey, ParseKey, ParseValue},
+    Condition, Conditions, Config, ConfigContext, IpAddrMask, StringMatch,
 };
 
 impl Config {
-    pub fn parse_conditions(&self, key: impl AsKey) -> super::Result<Vec<Condition>> {
+    pub fn parse_rules(&self, ctx: &mut ConfigContext) -> super::Result<()> {
+        for rule_name in self.sub_keys("rule") {
+            match ctx.rules.entry(rule_name.to_string()) {
+                Entry::Vacant(e) => {
+                    e.insert(self.parse_conditions(("rule", rule_name))?.into());
+                }
+                Entry::Occupied(_) => {
+                    return Err(format!("Duplicate rule {:?} found.", rule_name));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_conditions(&self, key: impl AsKey) -> super::Result<Conditions> {
         let mut conditions = Vec::new();
         let prefix = key.as_prefix();
 
@@ -19,76 +34,77 @@ impl Config {
                 };
                 match property {
                     "rcpt" => {
+                        let value = value.parse_key(key_.as_str())?;
                         if let Some(Condition::Recipient(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions
-                                .push(Condition::Recipient(vec![value.parse_key(key_.as_str())?]));
+                            conditions.push(Condition::Recipient(vec![value]));
                         }
                     }
                     "rcpt-domain" => {
+                        let value = value.parse_key(key_.as_str())?;
                         if let Some(Condition::RecipientDomain(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions.push(Condition::RecipientDomain(vec![
-                                value.parse_key(key_.as_str())?
-                            ]));
+                            conditions.push(Condition::RecipientDomain(vec![value]));
                         }
                     }
                     "sender" => {
+                        let value = value.parse_key(key_.as_str())?;
                         if let Some(Condition::Sender(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions
-                                .push(Condition::Sender(vec![value.parse_key(key_.as_str())?]));
+                            conditions.push(Condition::Sender(vec![value]));
                         }
                     }
                     "sender-domain" => {
+                        let value = value.parse_key(key_.as_str())?;
                         if let Some(Condition::SenderDomain(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions.push(Condition::SenderDomain(vec![
-                                value.parse_key(key_.as_str())?
-                            ]));
+                            conditions.push(Condition::SenderDomain(vec![value]));
                         }
                     }
                     "mx" => {
+                        let value = value.parse_key(key_.as_str())?;
                         if let Some(Condition::Mx(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions.push(Condition::Mx(vec![value.parse_key(key_.as_str())?]));
+                            conditions.push(Condition::Mx(vec![value]));
                         }
                     }
                     "priority" => {
+                        let value = value.parse_key(key_.as_str())?;
                         if let Some(Condition::Priority(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions
-                                .push(Condition::Priority(vec![value.parse_key(key_.as_str())?]));
+                            conditions.push(Condition::Priority(vec![value]));
                         }
                     }
                     "listener" => {
+                        let value = value.to_string();
                         if let Some(Condition::Listener(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions
-                                .push(Condition::Listener(vec![value.parse_key(key_.as_str())?]));
+                            conditions.push(Condition::Listener(vec![value]));
                         }
                     }
                     "local-ip" => {
+                        let value = value.parse_key(key_.as_str())?;
+
                         if let Some(Condition::LocalIp(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions
-                                .push(Condition::LocalIp(vec![value.parse_key(key_.as_str())?]));
+                            conditions.push(Condition::LocalIp(vec![value]));
                         }
                     }
                     "remote-ip" => {
+                        let value = value.parse_key(key_.as_str())?;
+
                         if let Some(Condition::RemoteIp(values)) = conditions.last_mut() {
-                            values.push(value.parse_key(key_.as_str())?);
+                            values.push(value);
                         } else {
-                            conditions
-                                .push(Condition::RemoteIp(vec![value.parse_key(key_.as_str())?]));
+                            conditions.push(Condition::RemoteIp(vec![value]));
                         }
                     }
                     _ => {
@@ -98,56 +114,70 @@ impl Config {
             }
         }
 
-        Ok(conditions)
+        Ok(Conditions { conditions })
     }
 }
 
-impl FromStr for StringMatch {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(if let Some(value) = s.strip_prefix("list:") {
+impl ParseValue for StringMatch {
+    fn parse_value(_key: impl AsKey, value: &str) -> super::Result<Self> {
+        Ok(if let Some(value) = value.strip_prefix("list:") {
             StringMatch::InList(value.into())
-        } else if let Some(value) = s.strip_prefix("regex:") {
+        } else if let Some(value) = value.strip_prefix("regex:") {
             StringMatch::RegexMatch(value.into())
-        } else if let Some(value) = s.strip_prefix('*') {
+        } else if let Some(value) = value.strip_prefix('*') {
             StringMatch::StartsWith(value.into())
-        } else if let Some(value) = s.strip_suffix('*') {
+        } else if let Some(value) = value.strip_suffix('*') {
             StringMatch::EndsWith(value.into())
         } else {
-            StringMatch::EqualTo(s.into())
+            StringMatch::EqualTo(value.into())
         })
     }
 }
 
-impl FromStr for IpAddrMask {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some((addr, mask)) = s.rsplit_once('/') {
-            let mask = mask.trim().parse::<u32>().map_err(|_| ())?;
-            match addr.trim().parse::<IpAddr>().map_err(|_| ())? {
-                IpAddr::V4(addr) if (8..=32).contains(&mask) => Ok(IpAddrMask::V4 {
-                    addr,
-                    mask: u32::MAX << (32 - mask),
-                }),
-                IpAddr::V6(addr) if (8..=128).contains(&mask) => Ok(IpAddrMask::V6 {
-                    addr,
-                    mask: u128::MAX << (128 - mask),
-                }),
-                _ => Err(()),
+impl ParseValue for IpAddrMask {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        if let Some((addr, mask)) = value.rsplit_once('/') {
+            if let (Ok(addr), Ok(mask)) =
+                (addr.trim().parse::<IpAddr>(), mask.trim().parse::<u32>())
+            {
+                match addr {
+                    IpAddr::V4(addr) if (8..=32).contains(&mask) => {
+                        return Ok(IpAddrMask::V4 {
+                            addr,
+                            mask: u32::MAX << (32 - mask),
+                        })
+                    }
+                    IpAddr::V6(addr) if (8..=128).contains(&mask) => {
+                        return Ok(IpAddrMask::V6 {
+                            addr,
+                            mask: u128::MAX << (128 - mask),
+                        })
+                    }
+                    _ => (),
+                }
             }
         } else {
-            Ok(match s.trim().parse::<IpAddr>().map_err(|_| ())? {
-                IpAddr::V4(addr) => IpAddrMask::V4 {
-                    addr,
-                    mask: u32::MAX,
-                },
-                IpAddr::V6(addr) => IpAddrMask::V6 {
-                    addr,
-                    mask: u128::MAX,
-                },
-            })
+            match value.trim().parse::<IpAddr>() {
+                Ok(IpAddr::V4(addr)) => {
+                    return Ok(IpAddrMask::V4 {
+                        addr,
+                        mask: u32::MAX,
+                    })
+                }
+                Ok(IpAddr::V6(addr)) => {
+                    return Ok(IpAddrMask::V6 {
+                        addr,
+                        mask: u128::MAX,
+                    })
+                }
+                _ => (),
+            }
         }
+
+        Err(format!(
+            "Invalid IP address {:?} for property {:?}.",
+            value,
+            key.as_key()
+        ))
     }
 }

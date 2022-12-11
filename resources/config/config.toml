@@ -12,7 +12,7 @@ tls.implicit = false
 id = "smtps"
 bind = ["0.0.0.0:465"]
 tls.implicit = true
-tls.sni = [{subject = "domain.org", certificate = "abc"}]
+tls.sni = [{subject = "domain.org", pki = "abc"}]
 socket.backlog = 1024
 
 [[server.listener]]
@@ -24,8 +24,8 @@ tls = {implicit = true}
 enable = true,
 implicit = true,
 timeout = 300
-certificate = default
-sni = [{subject = "domain.org", certificate = "abc"}]
+pki = default
+sni = [{subject = "domain.org", pki = "abc"}]
 protocols = ["TLSv1.2", TLSv1.3"]
 ciphers = ["cipher1", "cipher2"]
 ignore_client_order = true
@@ -45,18 +45,15 @@ backlog = 1024,
 [stage.connect]
 script = "connect.sieve"
 concurrency = 10000
-throttle = [
-    {key = ["remoteip", "localip"], concurrency = 10000, rate = "3/5m"},
-]
 
-[[stage.connect.rule]]
-match-if = {remote-ip = "127.0.0.1"}
-throttle = {key = ["remoteip", "localip"], concurrency = 1000, rate = [3, 10]}
+[[stage.connect.throttle]]
+key = ["remoteip", "localip"]
+concurrency = 10000
+rate = "3/5m"
 
 [stage.ehlo]
 require = true
 script = ehlo.sieve
-authenticate = {spf = "strict"}
 timeout = "5m"
 max-ehlos = 1
 
@@ -65,39 +62,37 @@ pipelining = true
 chunking = true
 requiretls = true
 no-soliciting = ""
-auth = []
 dsn = true
-future-release = false
+future-release = [
+    {if = "is-submission", then = "5d"},
+    {else = false}
+]
 deliver-by = false
 mt-priority = false
 size = 100000
 expn = false
 
-[[stage.ehlo.rule]]
-match-if = {listener = "submission"}
-authenticate = {spf = "none"}
-capabilities = {expn = true, auth = ["mechanism"], dsn = true, future-release = "5d", deliver-by = "30m", mt-priority = "mixer"}
-
 [stage.auth]
+mechanisms = [
+    {if = "is-submission", then = ["plain", "login"]},
+    {else = []}
+]
+require = [
+    {if = "is-submission", then = true},
+    {else = false}
+]
 auth-host = "auth-server"
-require = false
 timeout = 10
 errors = {total = 3, wait = "5s"}
 
-[[stage.auth.rule]]
-match-if = {listener = "submission"}
-require = true
-
 [stage.mail]
-auth = {spf = "strict"}
 script = mail-from.sieve
 timeout = 10
-throttle = {key = "mail-from", concurrency = 10, rate = [3, 60]}
 
-[[stage.mail.rule]]
-match-if = {id = "submission"}
-authenticate = {spf = "disable"}
-#capabilities = {deliver-by = "1000s", future-release = "1000s"}
+[[stage.mail.throttle]]
+key = "mail-from"
+concurrency = 10
+rate = [3, 60]
 
 [stage.rcpt]
 script = rcpt-to.sieve
@@ -109,15 +104,9 @@ errors = {total = 3, wait = "5s"}
 timeout = "5m"
 max-recipients = 100
 
-[[stage.rcpt.rule]]
-match-if = {id = "submission"}
-max-recipients = 1000
-
 [stage.data]
-authenticate = {dkim = "true", arc = "true", dmarc = "true"}
 script = data.sieve
 timeout = "10s"
-add-headers = ["arc-seal", "received-spf", "authentication-results", "return-path", "received"]
 
 [stage.data.limits]
 messages = 10
@@ -126,13 +115,55 @@ received-headers = 50
 mime-parts = 50
 nested-messages = 3
 
-[[stage.data]]
-match-if = {id = "submission"}
-authenticate = {dkim = "false", arc = "false", dmarc = "false"}
-add-headers = ["dkim-signature", "arc-seal", "return-path", "received"]
+[state.data.add-headers]
+received = true
+received-spf = true
+return-path = true
+auth-results = true
+message-id = true
+date = true
 
-[stage.disconnect]
-script = disconnect.sieve
+[stage.queue]
+script = queue.sieve
+queue-id = "local"
+
+[[rule]]
+id = ""
+
+
+[dkim]
+verify = "strict"
+
+[dkim.sign]
+pki = "cert"
+domain = ""
+selector = ""
+headers = ["From", "To", "Date", "Message-ID"]
+algorithm = "rsa-sha256"
+canonicalization = "simple/relaxed"
+expire = "10d"
+third-party = ""
+third-party-algo = ""
+auid = ""
+set-body-length = false
+reporting = true
+
+[spf]
+verify-ehlo = ""
+verify-mail-from = ""
+
+[arc]
+verify = "strict"
+
+[arc.seal]
+pki = "cert"
+domain = ""
+selector = ""
+headers = ["From", "To", "Date", "Message-ID", "DKIM-Signature"]
+algorithm = "rsa-sha256"
+canonicalization = "simple/relaxed"
+expire = "10d"
+set-body-length = false
 
 [external]
 
@@ -144,7 +175,7 @@ auth.username = "hello"
 auth.password = "world"
 tls = "optional, require, dane, dane-fallback-require, dane-require
 
-[queue]
+[queue."out"]
 retry = [0, 1, 15, 60, 90]
 notify = [9, 10]
 prefer = ipv6
@@ -153,15 +184,13 @@ tls = optional, require, dane, dane-fallback-require, dane-require
 limits = { attempts = 100, time = 3600, queued-messages = 10000, queue-size = 1000000 }
 throttle = { rate = 1/60, concurrency = 1000, key = all }
 
-[[queue.virtual]]
-match-if = {rcpt-domain = "*.example.org"}
-id = "local"
+[queue."local"]
 relay-host = "lmtp"
 
 
-[rules]
+[rule]
 
-[rules."is-local"]
+[rule."is-local"]
 rcpt-domain = ["*.example.org"]
 rcpt = [""]
 server-id = "relay"
@@ -221,11 +250,12 @@ send-reports = true
 report-frequency = requested, 86400
 incoming-address = "dmarc@*"
 
-[certificate.default]
+[key]
+[key."default"]
 type = "rsa"
-cert = '''
+certificate = '''
 -----BEGIN CERTIFICATE-----
 '''
-pki = '''
+private-key = '''
 -----BEGIN PRIVATE KEY-----
 '''

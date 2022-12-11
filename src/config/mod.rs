@@ -1,5 +1,6 @@
 pub mod certificate;
 pub mod condition;
+pub mod if_block;
 pub mod parser;
 pub mod server;
 pub mod stage;
@@ -9,8 +10,11 @@ pub mod utils;
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr},
+    sync::Arc,
+    time::Duration,
 };
 
+use ahash::AHashMap;
 use rustls::ServerConfig;
 use smtp_proto::MtPriority;
 use tokio::net::TcpListener;
@@ -42,6 +46,10 @@ pub enum Condition {
     Priority(Vec<i64>),
 }
 
+pub struct Conditions {
+    pub conditions: Vec<Condition>,
+}
+
 pub enum StringMatch {
     EqualTo(String),
     StartsWith(String),
@@ -59,11 +67,27 @@ pub enum ThrottleKey {
     LocalIp,
 }
 
+pub struct IfThen<T: Default> {
+    pub conditions: Vec<Arc<Conditions>>,
+    pub then: T,
+}
+
+#[derive(Default)]
+pub struct IfBlock<T: Default> {
+    pub if_then: Vec<IfThen<T>>,
+    pub default: T,
+}
+
 pub struct Throttle {
     pub key: Vec<ThrottleKey>,
-    pub concurrency: u64,
-    pub rate_requests: u64,
-    pub rate_period: u64,
+    pub concurrency: IfBlock<u64>,
+    pub rate: IfBlock<ThrottleRate>,
+}
+
+#[derive(Default)]
+pub struct ThrottleRate {
+    pub requests: u64,
+    pub period: Duration,
 }
 
 pub enum IpAddrMask {
@@ -71,17 +95,15 @@ pub enum IpAddrMask {
     V6 { addr: Ipv6Addr, mask: u128 },
 }
 
-pub struct ConnectStage {
-    pub script: String,
-    pub concurrency: u64,
-    pub pipelining: bool,
+pub struct Connect {
+    pub script: Option<IfBlock<String>>,
+    pub concurrency: IfBlock<u64>,
     pub throttle: Vec<Throttle>,
 }
 
-pub struct EhloStage {
+pub struct Ehlo {
     pub script: String,
     pub require: bool,
-    pub spf: AuthLevel,
     pub timeout: u64,
     pub max_commands: u64,
 
@@ -90,7 +112,6 @@ pub struct EhloStage {
     pub chunking: bool,
     pub requiretls: bool,
     pub no_soliciting: Option<String>,
-    pub auth: u64,
     pub future_release: Option<u64>,
     pub deliver_by: Option<u64>,
     pub mt_priority: MtPriority,
@@ -98,22 +119,24 @@ pub struct EhloStage {
     pub expn: bool,
 }
 
-pub struct AuthStage {
+pub struct Auth {
     pub script: String,
     pub require: bool,
     pub auth_host: usize,
+    pub mechanisms: u64,
     pub timeout: u64,
     pub errors_max: usize,
     pub errors_wait: u64,
 }
 
-pub struct MailStage {
+pub struct Mail {
     pub script: String,
     pub spf: AuthLevel,
     pub timeout: u64,
+    pub throttle: Vec<Throttle>,
 }
 
-pub struct RcptStage {
+pub struct Rcpt {
     pub script: String,
     pub timeout: u64,
 
@@ -132,16 +155,14 @@ pub struct RcptStage {
 
     // Limits
     pub max_recipients: usize,
+
+    // Throttle
+    pub throttle: Vec<Throttle>,
 }
 
-pub struct DataStage {
+pub struct Data {
     pub script: String,
     pub timeout: u64,
-
-    // Message Authentication
-    pub dkim: AuthLevel,
-    pub arc: AuthLevel,
-    pub dmarc: AuthLevel,
 
     // Limits
     pub max_messages: usize,
@@ -153,11 +174,25 @@ pub struct DataStage {
     // Headers
     pub add_received: bool,
     pub add_received_spf: bool,
+    pub add_return_path: bool,
     pub add_auth_results: bool,
-    pub add_dkim_signature: bool,
-    pub add_arc_seal: bool,
     pub add_message_id: bool,
     pub add_date: bool,
+}
+
+pub struct Queue {
+    pub script: String,
+    pub queue_id: usize,
+}
+
+pub struct Stage {
+    pub connect: Connect,
+    pub ehlo: Ehlo,
+    pub auth: Auth,
+    pub mail: Mail,
+    pub rcpt: Rcpt,
+    pub data: Data,
+    pub queue: Queue,
 }
 
 pub enum AuthLevel {
@@ -169,6 +204,10 @@ pub enum AuthLevel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     keys: BTreeMap<String, String>,
+}
+
+pub struct ConfigContext {
+    pub rules: AHashMap<String, Arc<Conditions>>,
 }
 
 pub type Result<T> = std::result::Result<T, String>;

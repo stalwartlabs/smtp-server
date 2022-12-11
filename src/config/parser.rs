@@ -245,7 +245,7 @@ impl<'x> TomlParser<'x> {
                         ']' => break,
                         ch => {
                             return Err(format!(
-                                "Unexpected character {:?} found in array for key {:?} at line {}.",
+                                "Unexpected character {:?} found in array for property {:?} at line {}.",
                                 ch, key, self.line
                             ));
                         }
@@ -263,7 +263,7 @@ impl<'x> TomlParser<'x> {
                     '}' => break,
                     ch => {
                         return Err(format!(
-                                "Unexpected character {:?} found in inline table for key {:?} at line {}.",
+                                "Unexpected character {:?} found in inline table for property {:?} at line {}.",
                                 ch, key, self.line
                             ));
                     }
