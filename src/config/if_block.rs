@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use ahash::AHashMap;
+
 use super::{
     utils::{AsKey, ParseValues},
     Config, ConfigContext, IfBlock, IfThen,
@@ -140,5 +144,70 @@ impl<T: Default> IfBlock<T> {
             if_then: Vec::with_capacity(0),
             default: value,
         }
+    }
+}
+
+impl<T: Default> IfBlock<Option<T>> {
+    pub fn try_unwrap(self, key: &str) -> super::Result<IfBlock<T>> {
+        let mut if_then = Vec::with_capacity(self.if_then.len());
+        for if_clause in self.if_then {
+            if_then.push(IfThen {
+                conditions: if_clause.conditions,
+                then: if_clause
+                    .then
+                    .ok_or_else(|| format!("Property {:?} cannot contain null values.", key))?,
+            });
+        }
+
+        Ok(IfBlock {
+            if_then,
+            default: self
+                .default
+                .ok_or_else(|| format!("Property {:?} cannot contain null values.", key))?,
+        })
+    }
+}
+
+impl IfBlock<Option<String>> {
+    pub fn map_if_block<T>(
+        self,
+        map: &AHashMap<String, Arc<T>>,
+        key_name: &str,
+        object_name: &str,
+    ) -> super::Result<IfBlock<Option<Arc<T>>>> {
+        let mut if_then = Vec::with_capacity(self.if_then.len());
+        for (pos, if_clause) in self.if_then.into_iter().enumerate() {
+            if_then.push(IfThen {
+                conditions: if_clause.conditions,
+                then: if let Some(then) = if_clause.then {
+                    if let Some(value) = map.get(&then) {
+                        Some(value.clone())
+                    } else {
+                        return Err(format!(
+                            "Unable to find {} {:?} declared as 'if' number {}'s 'then' value for {:?}",
+                            object_name, then, pos + 1, key_name
+                        ));
+                    }
+                } else {
+                    None
+                },
+            });
+        }
+
+        Ok(IfBlock {
+            if_then,
+            default: if let Some(default) = self.default {
+                if let Some(value) = map.get(&default) {
+                    Some(value.clone())
+                } else {
+                    return Err(format!(
+                        "Unable to find {} {:?} declared as the 'else' value for {:?}",
+                        object_name, default, key_name
+                    ));
+                }
+            } else {
+                None
+            },
+        })
     }
 }

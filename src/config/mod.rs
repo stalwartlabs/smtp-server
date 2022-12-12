@@ -1,7 +1,9 @@
 pub mod certificate;
 pub mod condition;
 pub mod if_block;
+pub mod list;
 pub mod parser;
+pub mod remote;
 pub mod server;
 pub mod stage;
 pub mod throttle;
@@ -9,26 +11,49 @@ pub mod utils;
 
 use std::{
     collections::BTreeMap,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use rustls::ServerConfig;
 use smtp_proto::MtPriority;
-use tokio::net::TcpListener;
+use tokio::net::TcpSocket;
 
+#[derive(Debug)]
 pub struct Server {
     pub id: String,
+    pub internal_id: u64,
     pub hostname: String,
     pub greeting: String,
     pub protocol: ServerProtocol,
-    pub listeners: Vec<TcpListener>,
+    pub listeners: Vec<Listener>,
     pub tls: Option<ServerConfig>,
     pub tls_implicit: bool,
 }
 
+#[derive(Debug)]
+pub struct Listener {
+    pub socket: TcpSocket,
+    pub addr: SocketAddr,
+    pub ttl: Option<u32>,
+    pub backlog: Option<u32>,
+}
+
+pub struct Host {}
+pub struct Script {}
+
+#[derive(Default)]
+pub struct List {
+    entries: AHashSet<String>,
+    host: Option<Arc<Host>>,
+}
+
+#[derive(Default)]
+pub struct Queue {}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ServerProtocol {
     Smtp,
     Lmtp,
@@ -39,7 +64,7 @@ pub enum Condition {
     RecipientDomain(Vec<StringMatch>),
     Sender(Vec<StringMatch>),
     SenderDomain(Vec<StringMatch>),
-    Listener(Vec<String>),
+    Listener(Vec<u64>),
     Mx(Vec<StringMatch>),
     RemoteIp(Vec<IpAddrMask>),
     LocalIp(Vec<IpAddrMask>),
@@ -96,93 +121,89 @@ pub enum IpAddrMask {
 }
 
 pub struct Connect {
-    pub script: Option<IfBlock<String>>,
+    pub script: IfBlock<Option<Arc<Script>>>,
     pub concurrency: IfBlock<u64>,
+    pub timeout: IfBlock<Option<Duration>>,
     pub throttle: Vec<Throttle>,
 }
 
 pub struct Ehlo {
-    pub script: String,
-    pub require: bool,
-    pub timeout: u64,
-    pub max_commands: u64,
+    pub script: IfBlock<Option<Arc<Script>>>,
+    pub require: IfBlock<bool>,
+    pub max_commands: IfBlock<Option<u64>>,
 
     // Capabilities
-    pub pipelining: bool,
-    pub chunking: bool,
-    pub requiretls: bool,
-    pub no_soliciting: Option<String>,
-    pub future_release: Option<u64>,
-    pub deliver_by: Option<u64>,
-    pub mt_priority: MtPriority,
-    pub size: Option<usize>,
-    pub expn: bool,
+    pub pipelining: IfBlock<bool>,
+    pub chunking: IfBlock<bool>,
+    pub requiretls: IfBlock<bool>,
+    pub no_soliciting: IfBlock<Option<String>>,
+    pub future_release: IfBlock<Option<Duration>>,
+    pub deliver_by: IfBlock<Option<Duration>>,
+    pub mt_priority: IfBlock<Option<MtPriority>>,
+    pub size: IfBlock<Option<usize>>,
+    pub expn: IfBlock<bool>,
 }
 
 pub struct Auth {
-    pub script: String,
-    pub require: bool,
-    pub auth_host: usize,
-    pub mechanisms: u64,
-    pub timeout: u64,
-    pub errors_max: usize,
-    pub errors_wait: u64,
+    pub script: IfBlock<Option<Arc<Script>>>,
+    pub require: IfBlock<bool>,
+    pub auth_host: IfBlock<Option<Arc<Host>>>,
+    pub mechanisms: IfBlock<u64>,
+    pub errors_max: IfBlock<usize>,
+    pub errors_wait: IfBlock<Duration>,
 }
 
 pub struct Mail {
-    pub script: String,
-    pub spf: AuthLevel,
-    pub timeout: u64,
+    pub script: IfBlock<Option<Arc<Script>>>,
     pub throttle: Vec<Throttle>,
 }
 
 pub struct Rcpt {
-    pub script: String,
-    pub timeout: u64,
+    pub script: IfBlock<Option<Arc<Script>>>,
+    pub allow_relay: IfBlock<bool>,
 
     // Lookup
-    pub local_domains: usize,
-    pub local_addresses: usize,
+    pub local_domains: IfBlock<Arc<List>>,
+    pub local_addresses: IfBlock<Arc<List>>,
 
     // Recipient cache
-    pub cache_size: usize,
-    pub cache_ttl_positive: u64,
-    pub cache_ttl_negative: u64,
+    pub cache_size: IfBlock<usize>,
+    pub cache_ttl_positive: IfBlock<Duration>,
+    pub cache_ttl_negative: IfBlock<Duration>,
 
     // Errors
-    pub errors_max: usize,
-    pub errors_wait: usize,
+    pub errors_max: IfBlock<usize>,
+    pub errors_wait: IfBlock<Duration>,
 
     // Limits
-    pub max_recipients: usize,
+    pub max_recipients: IfBlock<usize>,
 
     // Throttle
     pub throttle: Vec<Throttle>,
 }
 
 pub struct Data {
-    pub script: String,
-    pub timeout: u64,
+    pub script: IfBlock<Option<Arc<Script>>>,
 
     // Limits
-    pub max_messages: usize,
-    pub max_message_size: usize,
-    pub max_received_headers: usize,
-    pub max_mime_parts: usize,
-    pub max_nested_messages: usize,
+    pub max_messages: IfBlock<usize>,
+    pub max_message_size: IfBlock<usize>,
+    pub max_received_headers: IfBlock<usize>,
+    pub max_mime_parts: IfBlock<usize>,
+    pub max_nested_messages: IfBlock<usize>,
 
     // Headers
-    pub add_received: bool,
-    pub add_received_spf: bool,
-    pub add_return_path: bool,
-    pub add_auth_results: bool,
-    pub add_message_id: bool,
-    pub add_date: bool,
+    pub add_received: IfBlock<bool>,
+    pub add_received_spf: IfBlock<bool>,
+    pub add_return_path: IfBlock<bool>,
+    pub add_auth_results: IfBlock<bool>,
+    pub add_message_id: IfBlock<bool>,
+    pub add_date: IfBlock<bool>,
 }
 
-pub struct Queue {
-    pub script: String,
-    pub queue_id: usize,
+pub struct BeforeQueue {
+    pub script: IfBlock<Option<Arc<Script>>>,
+    pub queue: IfBlock<Arc<Queue>>,
 }
 
 pub struct Stage {
@@ -192,7 +213,7 @@ pub struct Stage {
     pub mail: Mail,
     pub rcpt: Rcpt,
     pub data: Data,
-    pub queue: Queue,
+    pub queue: BeforeQueue,
 }
 
 pub enum AuthLevel {
@@ -207,7 +228,12 @@ pub struct Config {
 }
 
 pub struct ConfigContext {
+    pub servers: Vec<Server>,
     pub rules: AHashMap<String, Arc<Conditions>>,
+    pub hosts: AHashMap<String, Arc<Host>>,
+    pub scripts: AHashMap<String, Arc<Script>>,
+    pub lists: AHashMap<String, Arc<List>>,
+    pub queues: AHashMap<String, Arc<Queue>>,
 }
 
 pub type Result<T> = std::result::Result<T, String>;

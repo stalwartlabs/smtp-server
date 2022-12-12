@@ -3,20 +3,17 @@ hostname = "mx.example.org"
 greeting = "Stalwart SMTP v0.1 at your service"
 protocol = "smtp"
 
-[[server.listener]]
-id = "smtp"
+[server.listener."smtp"]
 bind = ["0.0.0.0:25"]
 tls.implicit = false
 
-[[server.listener]]
-id = "smtps"
+[server.listener."smtps"]
 bind = ["0.0.0.0:465"]
 tls.implicit = true
 tls.sni = [{subject = "domain.org", pki = "abc"}]
 socket.backlog = 1024
 
-[[server.listener]]
-id = "submission"
+[server.listener."submission"]
 bind = ["0.0.0.0:465"]
 tls = {implicit = true}
 
@@ -45,6 +42,7 @@ backlog = 1024,
 [stage.connect]
 script = "connect.sieve"
 concurrency = 10000
+timeout = 10
 
 [[stage.connect.throttle]]
 key = ["remoteip", "localip"]
@@ -73,7 +71,7 @@ size = 100000
 expn = false
 
 [stage.auth]
-mechanisms = [
+enable = [
     {if = "is-submission", then = ["plain", "login"]},
     {else = []}
 ]
@@ -82,7 +80,6 @@ require = [
     {else = false}
 ]
 auth-host = "auth-server"
-timeout = 10
 errors = {total = 3, wait = "5s"}
 
 [stage.mail]
@@ -96,13 +93,18 @@ rate = [3, 60]
 
 [stage.rcpt]
 script = rcpt-to.sieve
-local-domains = "list-domains"
-local-addresses = "list-addresses"
-cache = { entries = 1000, ttl-positive = 10, ttl-negative = 5 }
+relay = false
 throttle = [{key = "rcpt-to", concurrency = 10, rate = [3, 60]}]
 errors = {total = 3, wait = "5s"}
-timeout = "5m"
 max-recipients = 100
+
+[stage.rcpt.local]
+domains = "list1"
+addresses = "list2"
+
+[stage.rcpt.cache]
+entries = 1000
+ttl = {positive = 10, negative = 5}
 
 [stage.data]
 script = data.sieve
@@ -167,7 +169,7 @@ set-body-length = false
 
 [external]
 
-[external.lmtp]
+[remote."lmtp"]
 address = 192.168.0.1
 port = 25
 protocol = "lmtp"
@@ -219,16 +221,13 @@ hash = 123
 
 [scripts]
 
-[scripts.ehlo]
-data = this is my script
+[scripts]
+ehlo = this is my script
+
 
 [lists]
-
-[lists.localdomains]
-data = ["example.org", "*.example.net"]
-
-[list.localaddresses]
-server = lmtp
+local-domains = ["example.org", "*.example.net"]
+local-addresses = "host://lmtp"
 
 [servers."relay".outgoing.dsn]
 name = "Mail Delivery Subsystem"

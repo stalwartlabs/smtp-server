@@ -2,7 +2,7 @@ use std::{collections::hash_map::Entry, net::IpAddr};
 
 use super::{
     utils::{AsKey, ParseKey, ParseValue},
-    Condition, Conditions, Config, ConfigContext, IpAddrMask, StringMatch,
+    Condition, Conditions, Config, ConfigContext, IpAddrMask, Server, StringMatch,
 };
 
 impl Config {
@@ -10,7 +10,10 @@ impl Config {
         for rule_name in self.sub_keys("rule") {
             match ctx.rules.entry(rule_name.to_string()) {
                 Entry::Vacant(e) => {
-                    e.insert(self.parse_conditions(("rule", rule_name))?.into());
+                    e.insert(
+                        self.parse_conditions(("rule", rule_name), &ctx.servers)?
+                            .into(),
+                    );
                 }
                 Entry::Occupied(_) => {
                     return Err(format!("Duplicate rule {:?} found.", rule_name));
@@ -21,7 +24,7 @@ impl Config {
         Ok(())
     }
 
-    fn parse_conditions(&self, key: impl AsKey) -> super::Result<Conditions> {
+    fn parse_conditions(&self, key: impl AsKey, listeners: &[Server]) -> super::Result<Conditions> {
         let mut conditions = Vec::new();
         let prefix = key.as_prefix();
 
@@ -82,7 +85,21 @@ impl Config {
                         }
                     }
                     "listener" => {
-                        let value = value.to_string();
+                        let value = listeners
+                            .iter()
+                            .find_map(|s| {
+                                if s.id.eq_ignore_ascii_case(value) {
+                                    s.internal_id.into()
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok_or_else(|| {
+                                format!(
+                                    "Listener with id {:?} does not exist for property {:?}.",
+                                    value, key_
+                                )
+                            })?;
                         if let Some(Condition::Listener(values)) = conditions.last_mut() {
                             values.push(value);
                         } else {

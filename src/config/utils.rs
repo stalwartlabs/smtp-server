@@ -122,7 +122,7 @@ impl Config {
     pub fn file_contents(&self, key: impl AsKey) -> super::Result<Vec<u8>> {
         let key = key.as_key();
         if let Some(value) = self.keys.get(&key) {
-            if value.starts_with("file://") {
+            if let Some(value) = value.strip_prefix("file://") {
                 std::fs::read(value).map_err(|err| {
                     format!(
                         "Failed to read file {:?} for property {:?}: {}",
@@ -210,6 +210,20 @@ impl<T: ParseValue + Default> ParseValues for T {
 
     fn is_multivalue() -> bool {
         false
+    }
+}
+
+impl<T: ParseValue> ParseValue for Option<T> {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        if !value.is_empty()
+            && !value.eq_ignore_ascii_case("false")
+            && !value.eq("0")
+            && !value.eq_ignore_ascii_case("disable")
+        {
+            T::parse_value(key, value).map(Some)
+        } else {
+            Ok(None)
+        }
     }
 }
 
