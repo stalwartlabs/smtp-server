@@ -1,0 +1,45 @@
+durations = [
+    {if = "rule1", then = "5d"},
+    {if = "rule2", then = "1h"},
+    {else = false}
+]
+
+string-list = [
+    {if = "rule1", then = ["From", "To", "Date"]},
+    {if = "rule2", then = "Other-ID"},
+    {else = []}
+]
+
+string-list-bis = [
+    {if = "rule1", then = ["From", "To", "Date"]},
+    {if = "rule2", then = []},
+    {else = ["ID-Bis"]}
+]
+
+single-value = "hello world"
+
+multi-rule = [
+    {if = ["rule1", "rule2"], then = true},
+    {else = false}
+]
+
+bad-multi-value = [
+    {if = "rule1", then = 100},
+    {if = "rule2", then = [1, 2, 3]},
+    {else = 2}
+]
+
+bad-if-without-then = [
+    {if = "rule1"},
+    {else = 1}
+]
+
+bad-if-without-else = [
+    {if = "rule1", then = 1}
+]
+
+bad-multiple-else = [
+    {if = "rule1", then = 1},
+    {else = 1},
+    {else = 2}
+]

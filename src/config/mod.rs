@@ -1,9 +1,9 @@
 pub mod certificate;
-pub mod condition;
 pub mod if_block;
 pub mod list;
 pub mod parser;
 pub mod remote;
+pub mod rule;
 pub mod server;
 pub mod stage;
 pub mod throttle;
@@ -21,7 +21,7 @@ use rustls::ServerConfig;
 use smtp_proto::MtPriority;
 use tokio::net::TcpSocket;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Server {
     pub id: String,
     pub internal_id: u64,
@@ -41,80 +41,121 @@ pub struct Listener {
     pub backlog: Option<u32>,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Host {}
+
+#[derive(Debug, Default)]
 pub struct Script {}
 
-#[derive(Default)]
-pub struct List {
-    entries: AHashSet<String>,
-    host: Option<Arc<Host>>,
+#[derive(Debug, PartialEq, Eq)]
+pub enum List {
+    Local(AHashSet<String>),
+    Remote(Arc<Host>),
 }
 
-#[derive(Default)]
+impl Default for List {
+    fn default() -> Self {
+        List::Local(AHashSet::default())
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Queue {}
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum ServerProtocol {
+    #[default]
     Smtp,
     Lmtp,
 }
 
-pub enum Condition {
-    Recipient(Vec<StringMatch>),
-    RecipientDomain(Vec<StringMatch>),
-    Sender(Vec<StringMatch>),
-    SenderDomain(Vec<StringMatch>),
-    Listener(Vec<u64>),
-    Mx(Vec<StringMatch>),
-    RemoteIp(Vec<IpAddrMask>),
-    LocalIp(Vec<IpAddrMask>),
-    Priority(Vec<i64>),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rule {
+    Condition {
+        key: ContextKey,
+        op: RuleOp,
+        value: RuleValue,
+    },
+    Logical {
+        op: LogicalOp,
+        value: Vec<Rule>,
+    },
 }
 
-pub struct Conditions {
-    pub conditions: Vec<Condition>,
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum RuleOp {
+    Equal,
+    NotEqual,
+    StartsWith,
+    EndsWith,
 }
 
-pub enum StringMatch {
-    EqualTo(String),
-    StartsWith(String),
-    EndsWith(String),
-    InList(String),
-    RegexMatch(String),
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LogicalOp {
+    And,
+    Or,
+    Not,
 }
 
-pub enum ThrottleKey {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleValue {
+    String(String),
+    UInt(u64),
+    Int(i64),
+    IpAddrMask(IpAddrMask),
+    List(Arc<List>),
+    Regex(String),
+}
+
+impl Default for Rule {
+    fn default() -> Self {
+        Rule::Logical {
+            op: LogicalOp::And,
+            value: vec![],
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ContextKey {
+    Recipient,
     RecipientDomain,
+    Sender,
     SenderDomain,
+    AuthenticatedAs,
     Listener,
     Mx,
     RemoteIp,
     LocalIp,
+    Priority,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct IfThen<T: Default> {
-    pub conditions: Vec<Arc<Conditions>>,
+    pub rules: Vec<Rule>,
     pub then: T,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct IfBlock<T: Default> {
     pub if_then: Vec<IfThen<T>>,
     pub default: T,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Throttle {
-    pub key: Vec<ThrottleKey>,
+    pub key: Vec<ContextKey>,
     pub concurrency: IfBlock<u64>,
     pub rate: IfBlock<ThrottleRate>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ThrottleRate {
     pub requests: u64,
     pub period: Duration,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpAddrMask {
     V4 { addr: Ipv4Addr, mask: u32 },
     V6 { addr: Ipv6Addr, mask: u128 },
@@ -160,16 +201,7 @@ pub struct Mail {
 
 pub struct Rcpt {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub allow_relay: IfBlock<bool>,
-
-    // Lookup
-    pub local_domains: IfBlock<Arc<List>>,
-    pub local_addresses: IfBlock<Arc<List>>,
-
-    // Recipient cache
-    pub cache_size: IfBlock<usize>,
-    pub cache_ttl_positive: IfBlock<Duration>,
-    pub cache_ttl_negative: IfBlock<Duration>,
+    pub relay: IfBlock<bool>,
 
     // Errors
     pub errors_max: IfBlock<usize>,
@@ -227,9 +259,10 @@ pub struct Config {
     keys: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Default)]
 pub struct ConfigContext {
     pub servers: Vec<Server>,
-    pub rules: AHashMap<String, Arc<Conditions>>,
+    pub rules: AHashMap<String, Rule>,
     pub hosts: AHashMap<String, Arc<Host>>,
     pub scripts: AHashMap<String, Arc<Script>>,
     pub lists: AHashMap<String, Arc<List>>,

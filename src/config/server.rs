@@ -20,11 +20,11 @@ use super::{
 };
 
 impl Config {
-    pub fn build_servers(&self) -> super::Result<Vec<Server>> {
+    pub fn parse_servers(&self) -> super::Result<Vec<Server>> {
         let mut servers: Vec<Server> = Vec::new();
 
         for (internal_id, id) in self.sub_keys("server.listener").enumerate() {
-            let mut server = self.build_server(id)?;
+            let mut server = self.parse_server(id)?;
             if !servers.iter().any(|s| s.id == server.id) {
                 server.internal_id = internal_id as u64;
                 servers.push(server);
@@ -40,7 +40,7 @@ impl Config {
         }
     }
 
-    fn build_server(&self, id: &str) -> super::Result<Server> {
+    fn parse_server(&self, id: &str) -> super::Result<Server> {
         // Build TLS config
         let (tls, tls_implicit) = if self
             .property_or_default(("server.listener", id, "tls.enable"), "server.tls.enable")?
@@ -68,7 +68,7 @@ impl Config {
             // Parse cipher suites
             let mut ciphers = Vec::new();
             for (key, protocol) in
-                self.values_or_default(("server.listener", id, "tls.cipher"), "server.tls.cipher")
+                self.values_or_default(("server.listener", id, "tls.ciphers"), "server.tls.ciphers")
             {
                 ciphers.push(protocol.parse_key(key)?);
             }
@@ -197,7 +197,6 @@ impl Config {
                 "reuse-port",
                 "send-buffer-size",
                 "recv-buffer-size",
-                "recv-buffer-size",
                 "linger",
                 "tos",
                 "backlog",
@@ -205,7 +204,7 @@ impl Config {
             ] {
                 if let Some(value) = self.value_or_default(
                     ("server.listener", id, "socket", option),
-                    ("server.listener.socket", option),
+                    ("server.socket", option),
                 ) {
                     let key = ("server.listener", id, "socket", option);
                     match option {
@@ -333,14 +332,16 @@ impl ParseValue for SupportedCipherSuite {
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use crate::config::Config;
+    use tokio::net::TcpSocket;
+
+    use crate::config::{Config, Listener, Server, ServerProtocol};
 
     #[test]
-    fn build_servers() {
+    fn parse_servers() {
         let mut file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         file.push("resources");
         file.push("tests");
-        file.push("parser");
+        file.push("config");
         file.push("servers.toml");
 
         let mut cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -357,9 +358,115 @@ mod tests {
             .replace("{CERT}", cert.as_path().to_str().unwrap())
             .replace("{PK}", pk.as_path().to_str().unwrap());
 
+        // Parse servers
         let config = Config::parse(&toml).unwrap();
-        let servers = config.build_servers().unwrap();
+        let servers = config.parse_servers().unwrap();
+        let expected_servers = vec![
+            Server {
+                id: "smtp".to_string(),
+                internal_id: 0,
+                hostname: "mx.example.org".to_string(),
+                greeting: "Stalwart SMTP - hi there!".to_string(),
+                protocol: ServerProtocol::Smtp,
+                listeners: vec![Listener {
+                    socket: TcpSocket::new_v4().unwrap(),
+                    addr: "127.0.0.1:9925".parse().unwrap(),
+                    ttl: 3600.into(),
+                    backlog: 1024.into(),
+                }],
+                tls: None,
+                tls_implicit: false,
+            },
+            Server {
+                id: "smtps".to_string(),
+                internal_id: 1,
+                hostname: "mx.example.org".to_string(),
+                greeting: "Stalwart SMTP - hi there!".to_string(),
+                protocol: ServerProtocol::Smtp,
+                listeners: vec![
+                    Listener {
+                        socket: TcpSocket::new_v4().unwrap(),
+                        addr: "127.0.0.1:9465".parse().unwrap(),
+                        ttl: 4096.into(),
+                        backlog: 1024.into(),
+                    },
+                    Listener {
+                        socket: TcpSocket::new_v4().unwrap(),
+                        addr: "127.0.0.1:9466".parse().unwrap(),
+                        ttl: 4096.into(),
+                        backlog: 1024.into(),
+                    },
+                ],
+                tls: None,
+                tls_implicit: true,
+            },
+            Server {
+                id: "submission".to_string(),
+                internal_id: 2,
+                hostname: "submit.example.org".to_string(),
+                greeting: "Stalwart SMTP submission at your service".to_string(),
+                protocol: ServerProtocol::Smtp,
+                listeners: vec![Listener {
+                    socket: TcpSocket::new_v4().unwrap(),
+                    addr: "127.0.0.1:9991".parse().unwrap(),
+                    ttl: 3600.into(),
+                    backlog: 2048.into(),
+                }],
+                tls: None,
+                tls_implicit: true,
+            },
+        ];
 
-        println!("{:#?}", servers);
+        for (server, expected_server) in servers.into_iter().zip(expected_servers) {
+            assert_eq!(
+                server.id, expected_server.id,
+                "failed for {}",
+                expected_server.id
+            );
+            assert_eq!(
+                server.internal_id, expected_server.internal_id,
+                "failed for {}",
+                expected_server.id
+            );
+            assert_eq!(
+                server.hostname, expected_server.hostname,
+                "failed for {}",
+                expected_server.id
+            );
+            assert_eq!(
+                server.greeting, expected_server.greeting,
+                "failed for {}",
+                expected_server.id
+            );
+            assert_eq!(
+                server.protocol, expected_server.protocol,
+                "failed for {}",
+                expected_server.id
+            );
+            assert_eq!(
+                server.tls_implicit, expected_server.tls_implicit,
+                "failed for {}",
+                expected_server.id
+            );
+            for (listener, expected_listener) in
+                server.listeners.into_iter().zip(expected_server.listeners)
+            {
+                assert_eq!(
+                    listener.addr, expected_listener.addr,
+                    "failed for {}",
+                    expected_server.id
+                );
+                assert_eq!(
+                    listener.ttl, expected_listener.ttl,
+                    "failed for {}",
+                    expected_server.id
+                );
+                assert_eq!(
+                    listener.backlog, expected_listener.backlog,
+                    "failed for {}",
+                    expected_server.id
+                );
+            }
+        }
     }
 }

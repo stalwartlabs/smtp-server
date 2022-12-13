@@ -307,21 +307,22 @@ impl ParseValue for bool {
 
 impl ParseValue for Duration {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
-        let duration = value.trim().to_ascii_uppercase();
-        let (num, multiplier) = if let Some(num) = duration.strip_prefix('d') {
+        let duration = value.trim_end().to_ascii_lowercase();
+        let (num, multiplier) = if let Some(num) = duration.strip_suffix('d') {
             (num, 24 * 60 * 60 * 1000)
-        } else if let Some(num) = duration.strip_prefix('h') {
+        } else if let Some(num) = duration.strip_suffix('h') {
             (num, 60 * 60 * 1000)
-        } else if let Some(num) = duration.strip_prefix('m') {
+        } else if let Some(num) = duration.strip_suffix('m') {
             (num, 60 * 1000)
-        } else if let Some(num) = duration.strip_prefix('s') {
+        } else if let Some(num) = duration.strip_suffix('s') {
             (num, 1000)
-        } else if let Some(num) = duration.strip_prefix("ms") {
+        } else if let Some(num) = duration.strip_suffix("ms") {
             (num, 1)
         } else {
             (duration.as_str(), 1)
         };
-        num.parse::<u64>()
+        num.trim()
+            .parse::<u64>()
             .ok()
             .and_then(|num| {
                 if num > 0 {
@@ -366,6 +367,16 @@ impl AsKey for String {
 }
 
 impl AsKey for (&str, &str) {
+    fn as_key(&self) -> String {
+        format!("{}.{}", self.0, self.1)
+    }
+
+    fn as_prefix(&self) -> String {
+        format!("{}.{}.", self.0, self.1)
+    }
+}
+
+impl AsKey for (&String, &str) {
     fn as_key(&self) -> String {
         format!("{}.{}", self.0, self.1)
     }

@@ -93,18 +93,13 @@ rate = [3, 60]
 
 [stage.rcpt]
 script = rcpt-to.sieve
-relay = false
+relay = [
+    {if = ["is-local-rcpt", "is-submission"], then = true},
+    {else = false}
+]
 throttle = [{key = "rcpt-to", concurrency = 10, rate = [3, 60]}]
 errors = {total = 3, wait = "5s"}
 max-recipients = 100
-
-[stage.rcpt.local]
-domains = "list1"
-addresses = "list2"
-
-[stage.rcpt.cache]
-entries = 1000
-ttl = {positive = 10, negative = 5}
 
 [stage.data]
 script = data.sieve
@@ -128,10 +123,6 @@ date = true
 [stage.queue]
 script = queue.sieve
 queue-id = "local"
-
-[[rule]]
-id = ""
-
 
 [dkim]
 verify = "strict"
@@ -173,27 +164,46 @@ set-body-length = false
 address = 192.168.0.1
 port = 25
 protocol = "lmtp"
-auth.username = "hello"
-auth.password = "world"
 tls = "optional, require, dane, dane-fallback-require, dane-require
 
-[queue."out"]
+[remote."lmtp".auth]
+username = "hello"
+password = "world"
+
+[remote."lmtp".cache]
+entries = 1000
+ttl = {positive = 10, negative = 5}
+
+
+[queue]
 retry = [0, 1, 15, 60, 90]
 notify = [9, 10]
 prefer = ipv6
 source-ips = ["192.168.0.2", "162.168.0.1"]
 tls = optional, require, dane, dane-fallback-require, dane-require
-limits = { attempts = 100, time = 3600, queued-messages = 10000, queue-size = 1000000 }
-throttle = { rate = 1/60, concurrency = 1000, key = all }
-
-[queue."local"]
 relay-host = "lmtp"
+
+[queue.limits]
+attempts = 100
+time = 3600
+queued-messages = 10000
+queue-size = 1000000
+
+[[queue.throttle]]
+rate = "1/60s"
+concurrency = 1000
+key = ["remote-ip"]
 
 
 [rule]
+is-local = { op = "any-of", value = [
+    {key = "rcpt-domain", op = "eq", value = ""}
+]}
 
-[rule."is-local"]
-rcpt-domain = ["*.example.org"]
+is-local = [
+    {key = "rcpt-domain", eq = ["example.org"]}
+]
+rcpt-domain = {equal-to = ["*.example.org"], match = any}
 rcpt = [""]
 server-id = "relay"
 mx = ["mx.gmail.com", "mx.coco.com"]
@@ -225,9 +235,15 @@ hash = 123
 ehlo = this is my script
 
 
-[lists]
+[list.inline]
 local-domains = ["example.org", "*.example.net"]
-local-addresses = "host://lmtp"
+
+[list.remote]
+local-addresses = "lmtp"
+
+[list.local]
+local-users = "/tmp/file.txt"
+
 
 [servers."relay".outgoing.dsn]
 name = "Mail Delivery Subsystem"

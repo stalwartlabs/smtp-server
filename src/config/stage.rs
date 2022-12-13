@@ -100,7 +100,7 @@ impl Config {
                     .if_then
                     .into_iter()
                     .map(|i| IfThen {
-                        conditions: i.conditions,
+                        rules: i.rules,
                         then: i.then.into_iter().fold(0, |acc, m| acc | m.mechanism),
                     })
                     .collect(),
@@ -134,28 +134,9 @@ impl Config {
                 .parse_if_block("stage.rcpt.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.rcpt.script", "script")?,
-            allow_relay: self
+            relay: self
                 .parse_if_block("stage.rcpt.relay", ctx)?
                 .unwrap_or_else(|| IfBlock::new(false)),
-            local_domains: self
-                .parse_if_block("stage.rcpt.local.domains", ctx)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.lists, "stage.rcpt.local.domains", "list")?
-                .try_unwrap("stage.rcpt.local.domains")?,
-            local_addresses: self
-                .parse_if_block("stage.rcpt.local.addresses", ctx)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.lists, "stage.rcpt.local.addresses", "list")?
-                .try_unwrap("stage.rcpt.local.addresses")?,
-            cache_size: self
-                .parse_if_block("stage.rcpt.cache.entries", ctx)?
-                .unwrap_or_else(|| IfBlock::new(1024)),
-            cache_ttl_positive: self
-                .parse_if_block("stage.rcpt.cache.ttl.positive", ctx)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(60 * 60))),
-            cache_ttl_negative: self
-                .parse_if_block("stage.rcpt.cache.ttl.negative", ctx)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
             errors_max: self
                 .parse_if_block("stage.rcpt.errors.max", ctx)?
                 .unwrap_or_else(|| IfBlock::new(10)),

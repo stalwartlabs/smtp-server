@@ -1,6 +1,6 @@
 use super::{
     utils::{AsKey, ParseKey, ParseValue},
-    Config, ConfigContext, IfBlock, Throttle, ThrottleKey, ThrottleRate,
+    Config, ConfigContext, ContextKey, IfBlock, Throttle, ThrottleRate,
 };
 
 impl Config {
@@ -78,6 +78,8 @@ impl ParseValue for ThrottleRate {
                     })?,
                 period: period.parse_key(key)?,
             })
+        } else if ["false", "none", "unlimited"].contains(&value) {
+            Ok(ThrottleRate::default())
         } else {
             Err(format!(
                 "Invalid rate value {:?} for property {:?}.",
@@ -88,22 +90,94 @@ impl ParseValue for ThrottleRate {
     }
 }
 
-impl ParseValue for ThrottleKey {
+impl ParseValue for ContextKey {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
         Ok(match value {
-            "rcpt-domain" => ThrottleKey::RecipientDomain,
-            "sender-domain" => ThrottleKey::SenderDomain,
-            "listener" => ThrottleKey::Listener,
-            "mx" => ThrottleKey::Mx,
-            "remote-ip" => ThrottleKey::RemoteIp,
-            "local-ip" => ThrottleKey::LocalIp,
+            "rcpt" => ContextKey::Recipient,
+            "rcpt-domain" => ContextKey::RecipientDomain,
+            "sender" => ContextKey::Sender,
+            "sender-domain" => ContextKey::SenderDomain,
+            "listener" => ContextKey::Listener,
+            "mx" => ContextKey::Mx,
+            "remote-ip" => ContextKey::RemoteIp,
+            "local-ip" => ContextKey::LocalIp,
+            "priority" => ContextKey::Priority,
+            "authenticated-as" => ContextKey::AuthenticatedAs,
             _ => {
                 return Err(format!(
-                    "Invalid throttle key {:?} for property {:?}.",
+                    "Invalid context key {:?} for property {:?}.",
                     value,
                     key.as_key()
                 ))
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf, time::Duration};
+
+    use crate::config::{
+        Config, ConfigContext, ContextKey, IfBlock, IfThen, Rule, Throttle, ThrottleRate,
+    };
+
+    #[test]
+    fn parse_throttle() {
+        let mut file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        file.push("resources");
+        file.push("tests");
+        file.push("config");
+        file.push("throttle.toml");
+
+        let config = Config::parse(&fs::read_to_string(file).unwrap()).unwrap();
+        let mut context = ConfigContext::default();
+        let rule = Rule::default();
+        context.rules.insert("rule1".to_string(), rule.clone());
+
+        config.parse_lists(&mut context).unwrap();
+
+        assert_eq!(
+            config.parse_throttle_list("throttle", &context).unwrap(),
+            vec![
+                Throttle {
+                    key: vec![ContextKey::RemoteIp, ContextKey::AuthenticatedAs],
+                    concurrency: IfBlock {
+                        if_then: vec![],
+                        default: 100
+                    },
+                    rate: IfBlock {
+                        if_then: vec![IfThen {
+                            rules: vec![rule.clone()],
+                            then: ThrottleRate {
+                                requests: 50,
+                                period: Duration::from_secs(30)
+                            }
+                        }],
+                        default: ThrottleRate {
+                            requests: 0,
+                            period: Duration::from_secs(0)
+                        }
+                    }
+                },
+                Throttle {
+                    key: vec![ContextKey::SenderDomain],
+                    concurrency: IfBlock {
+                        if_then: vec![IfThen {
+                            rules: vec![rule],
+                            then: 10000
+                        }],
+                        default: 100
+                    },
+                    rate: IfBlock {
+                        if_then: vec![],
+                        default: ThrottleRate {
+                            requests: 0,
+                            period: Duration::from_secs(0)
+                        }
+                    }
+                }
+            ]
+        );
     }
 }

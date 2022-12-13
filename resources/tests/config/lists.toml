@@ -1,0 +1,10 @@
+[list.inline]
+local-domains = ["example.org", "example.net"]
+spammer-domains = "thatdomain.net"
+
+[list.remote]
+local-addresses = "lmtp"
+
+[list.local]
+local-users = "{LIST1}"
+power-users = ["{LIST1}", "{LIST2}"]

@@ -7,7 +7,7 @@ use std::{
 use super::{Config, Result};
 use std::fmt::Write;
 
-const MAX_NEST_LEVEL: usize = 4;
+const MAX_NEST_LEVEL: usize = 10;
 
 // Simple TOML parser for Stalwart Mail Server configuration files.
 
@@ -335,11 +335,11 @@ impl<'x> TomlParser<'x> {
                     }
                 }
             }
-            ch if ch.is_alphanumeric() => {
+            ch if ch.is_alphanumeric() || ['.', '+', '-'].contains(&ch) => {
                 let mut value = String::with_capacity(4);
                 value.push(ch);
                 while let Some(ch) = self.iter.peek() {
-                    if ch.is_alphanumeric() || ['.', '+', '.', ':'].contains(ch) {
+                    if ch.is_alphanumeric() || ['.', '+', '-'].contains(ch) {
                         value.push(self.next_char(true, false)?);
                     } else {
                         break;
@@ -405,8 +405,8 @@ mod tests {
         let mut file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         file.push("resources");
         file.push("tests");
-        file.push("parser");
-        file.push("toml_parser.toml");
+        file.push("config");
+        file.push("toml-parser.toml");
 
         let config = Config::parse(&fs::read_to_string(file).unwrap()).unwrap();
         assert_eq!(

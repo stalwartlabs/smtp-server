@@ -1,0 +1,14 @@
+[[throttle]]
+key = ["remote-ip", "authenticated-as"]
+concurrency = 100
+rate = [
+    {if = "rule1", then = "50/30s"},
+    {else = false}
+]
+
+[[throttle]]
+key = "sender-domain"
+concurrency = [
+    {if = "rule1", then = 10000},
+    {else = 100}
+]
