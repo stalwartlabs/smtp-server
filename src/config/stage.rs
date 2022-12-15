@@ -24,23 +24,26 @@ impl Config {
     fn parse_stage_connect(&self, ctx: &ConfigContext) -> super::Result<Connect> {
         Ok(Connect {
             script: self
-                .parse_if_block("stage.connect.script", ctx)?
+                .parse_if_block::<Option<String>>("stage.connect.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.connect.script", "script")?,
-            concurrency: self
-                .parse_if_block("stage.connect.concurrency", ctx)?
-                .unwrap_or_else(|| IfBlock::new(10000)),
-            throttle: self.parse_throttle_list("stage.connect.throttle", ctx)?,
+            throttle: self
+                .parse_if_block::<Vec<String>>("stage.connect.throttle", ctx)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.throttle, "stage.connect.throttle", "throttle")?,
+            concurrency: self.property("stage.connect.concurrency")?.unwrap_or(1024),
             timeout: self
-                .parse_if_block("stage.connect.timeout", ctx)?
-                .unwrap_or_else(|| IfBlock::new(Some(Duration::from_secs(5 * 60)))),
+                .parse_if_block::<Option<Duration>>("stage.connect.timeout", ctx)?
+                .unwrap_or_else(|| IfBlock::new(Some(Duration::from_secs(5 * 60))))
+                .try_unwrap("stage.connect.timeout")
+                .unwrap_or_else(|_| IfBlock::new(Duration::from_secs(5 * 60))),
         })
     }
 
     fn parse_stage_ehlo(&self, ctx: &ConfigContext) -> super::Result<Ehlo> {
         Ok(Ehlo {
             script: self
-                .parse_if_block("stage.ehlo.script", ctx)?
+                .parse_if_block::<Option<String>>("stage.ehlo.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.ehlo.script", "script")?,
             require: self
@@ -85,14 +88,14 @@ impl Config {
             .unwrap_or_default();
         Ok(Auth {
             script: self
-                .parse_if_block("stage.auth.script", ctx)?
+                .parse_if_block::<Option<String>>("stage.auth.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.auth.script", "script")?,
             require: self
                 .parse_if_block("stage.auth.require", ctx)?
                 .unwrap_or_default(),
             auth_host: self
-                .parse_if_block("stage.auth.auth-host", ctx)?
+                .parse_if_block::<Option<String>>("stage.auth.auth-host", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.hosts, "stage.auth.auth-host", "auth host")?,
             mechanisms: IfBlock {
@@ -121,17 +124,20 @@ impl Config {
     fn parse_stage_mail(&self, ctx: &ConfigContext) -> super::Result<Mail> {
         Ok(Mail {
             script: self
-                .parse_if_block("stage.mail.script", ctx)?
+                .parse_if_block::<Option<String>>("stage.mail.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.mail.script", "script")?,
-            throttle: self.parse_throttle_list("stage.mail.throttle", ctx)?,
+            throttle: self
+                .parse_if_block::<Vec<String>>("stage.mail.throttle", ctx)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.throttle, "stage.mail.throttle", "throttle")?,
         })
     }
 
     fn parse_stage_rcpt(&self, ctx: &ConfigContext) -> super::Result<Rcpt> {
         Ok(Rcpt {
             script: self
-                .parse_if_block("stage.rcpt.script", ctx)?
+                .parse_if_block::<Option<String>>("stage.rcpt.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.rcpt.script", "script")?,
             relay: self
@@ -146,14 +152,17 @@ impl Config {
             max_recipients: self
                 .parse_if_block("stage.rcpt.errors.max-recipients", ctx)?
                 .unwrap_or_else(|| IfBlock::new(100)),
-            throttle: self.parse_throttle_list("stage.rcpt.throttle", ctx)?,
+            throttle: self
+                .parse_if_block::<Vec<String>>("stage.rcpt.throttle", ctx)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.throttle, "stage.rcpt.throttle", "throttle")?,
         })
     }
 
     fn parse_stage_data(&self, ctx: &ConfigContext) -> super::Result<Data> {
         Ok(Data {
             script: self
-                .parse_if_block("stage.data.script", ctx)?
+                .parse_if_block::<Option<String>>("stage.data.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.data.script", "script")?,
             max_messages: self
@@ -195,11 +204,11 @@ impl Config {
     fn parse_stage_queue(&self, ctx: &ConfigContext) -> super::Result<BeforeQueue> {
         Ok(BeforeQueue {
             script: self
-                .parse_if_block("stage.queue.script", ctx)?
+                .parse_if_block::<Option<String>>("stage.queue.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.queue.script", "script")?,
             queue: self
-                .parse_if_block("stage.queue.queue-id", ctx)?
+                .parse_if_block::<Option<String>>("stage.queue.queue-id", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.queues, "stage.queue.queue-id", "list")?
                 .try_unwrap("stage.queue.queue-id")?,

@@ -17,7 +17,7 @@ pub struct RateLimiter {
 
 #[derive(Debug)]
 pub struct ConcurrencyLimiter {
-    max_concurrent: u64,
+    pub max_concurrent: u64,
     concurrent: Arc<AtomicU64>,
 }
 

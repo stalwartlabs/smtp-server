@@ -212,10 +212,9 @@ priority = 1
 
 [resolver]
 type = system, google, cloudflare
+strategy = "ipv6"
 dnssec = true
 preserve-intermediates = true
-
-[resolver.limits]
 concurrency = 2
 timeout = 100
 attempts = 3

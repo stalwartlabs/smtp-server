@@ -1,9 +1,16 @@
-use std::net::IpAddr;
+use std::{net::IpAddr, sync::Arc};
 
-pub mod context;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tracing::Span;
+
+use crate::config::Stage;
+
+use self::rate_limit::{ConcurrencyLimiter, InFlightRequest};
+
+pub mod if_block;
 pub mod rate_limit;
 
-pub struct Context {
+pub struct Envelope {
     pub local_ip: IpAddr,
     pub remote_ip: IpAddr,
     pub sender_domain: String,
@@ -14,4 +21,39 @@ pub struct Context {
     pub mx: String,
     pub listener_id: u64,
     pub priority: i64,
+}
+
+pub struct Core {
+    pub stage: Stage,
+    pub concurrency: ConcurrencyLimiter,
+}
+
+pub struct Session<T: AsyncWrite + AsyncRead> {
+    pub envelope: Envelope,
+    pub core: Arc<Core>,
+    pub span: Span,
+    pub stream: T,
+    pub in_flight: Vec<InFlightRequest>,
+}
+
+impl Envelope {
+    pub fn new(local_ip: IpAddr, remote_ip: IpAddr) -> Self {
+        Self {
+            local_ip,
+            remote_ip,
+            sender_domain: String::new(),
+            sender: String::new(),
+            rcpt_domain: String::new(),
+            rcpt: String::new(),
+            authenticated_as: String::new(),
+            mx: String::new(),
+            listener_id: 0,
+            priority: 0,
+        }
+    }
+
+    pub fn with_listener_id(mut self, listener_id: u64) -> Self {
+        self.listener_id = listener_id;
+        self
+    }
 }

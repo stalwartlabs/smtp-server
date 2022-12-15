@@ -1,8 +1,10 @@
 use std::{collections::hash_map::Entry, net::IpAddr};
 
+use regex::Regex;
+
 use super::{
     utils::{AsKey, ParseValue},
-    Config, ConfigContext, ContextKey, IpAddrMask, LogicalOp, Rule, RuleOp, RuleValue,
+    Config, ConfigContext, EnvelopeKey, IpAddrMask, Rule, RuleOp, RuleValue,
 };
 
 impl Config {
@@ -22,91 +24,197 @@ impl Config {
         Ok(())
     }
 
-    fn parse_rule(&self, key_: impl AsKey, ctx: &ConfigContext) -> super::Result<Rule> {
-        let prefix = key_.as_key();
-        let op_str = self.value_require((&prefix, "op"))?;
+    fn parse_rule(&self, key_: impl AsKey, ctx: &ConfigContext) -> super::Result<Vec<Rule>> {
+        let mut rules = Vec::new();
+        let mut stack = Vec::new();
+        let mut iter = None;
+        let mut jmp_pos = Vec::new();
+        let mut prefix = key_.as_key();
+        let mut is_all = false;
+        let mut is_not = false;
 
-        if ["any-of", "all-of", "none-of"].contains(&op_str) {
-            let mut value = Vec::new();
-            for array_pos in self.sub_keys((&prefix, "value")) {
-                value.push(self.parse_rule((prefix.as_str(), "value", array_pos), ctx)?);
-            }
+        'outer: loop {
+            let op_str = self.value_require((&prefix, "op"))?;
 
-            return Ok(Rule::Logical {
-                op: match op_str {
-                    "any-of" => LogicalOp::Or,
-                    "all-of" => LogicalOp::And,
-                    _ => LogicalOp::Not,
-                },
-                value,
-            });
-        }
+            if ["any-of", "all-of", "none-of"].contains(&op_str) {
+                stack.push((
+                    std::mem::replace(
+                        &mut iter,
+                        self.sub_keys((&prefix, "value").as_key()).peekable().into(),
+                    ),
+                    std::mem::take(&mut prefix),
+                    std::mem::take(&mut jmp_pos),
+                    is_all,
+                    is_not,
+                ));
 
-        let key = self.property_require::<ContextKey>((&prefix, "key"))?;
-        let op = self.property_require::<RuleOp>((&prefix, "op"))?;
-        let value = match (key, op) {
-            (ContextKey::Listener, RuleOp::Equal | RuleOp::NotEqual) => {
-                let id = self.value_require((&prefix, "value"))?;
-                RuleValue::UInt(
-                    ctx.servers
-                        .iter()
-                        .find_map(|s| {
-                            if s.id == id {
-                                s.internal_id.into()
-                            } else {
-                                None
-                            }
-                        })
-                        .ok_or_else(|| {
-                            format!(
-                                "Listener {:?} does not exist for property {:?}.",
-                                id,
-                                (&prefix, "value").as_key()
-                            )
-                        })?,
-                )
-            }
-            (ContextKey::LocalIp | ContextKey::RemoteIp, RuleOp::Equal | RuleOp::EndsWith) => {
-                RuleValue::IpAddrMask(self.property_require((&prefix, "value"))?)
-            }
-            (ContextKey::Priority, RuleOp::Equal | RuleOp::NotEqual) => {
-                RuleValue::Int(self.property_require((&prefix, "value"))?)
-            }
-            (
-                ContextKey::Recipient
-                | ContextKey::RecipientDomain
-                | ContextKey::Sender
-                | ContextKey::SenderDomain
-                | ContextKey::AuthenticatedAs
-                | ContextKey::Mx,
-                _,
-            ) => {
-                let value = self.value_require((&prefix, "value"))?;
-                if op_str.contains("regex") {
-                    RuleValue::Regex(value.to_string())
-                } else if op_str.contains("in-list") {
-                    if let Some(list) = ctx.lists.get(value) {
-                        RuleValue::List(list.clone())
-                    } else {
+                match op_str {
+                    "any-of" => {
+                        if !is_not {
+                            is_all = false;
+                            is_not = false;
+                        } else {
+                            is_all = true;
+                            is_not = true;
+                        }
+                    }
+                    "all-of" => {
+                        if !is_not {
+                            is_all = true;
+                            is_not = false;
+                        } else {
+                            is_all = false;
+                            is_not = true;
+                        }
+                    }
+                    _ => {
+                        is_not = !is_not;
+                        if !is_not {
+                            is_all = true;
+                            is_not = false;
+                        } else {
+                            is_all = false;
+                            is_not = true;
+                        }
+                    }
+                }
+            } else {
+                let key = self.property_require::<EnvelopeKey>((&prefix, "key"))?;
+                let (op, op_is_not) = match op_str {
+                    "eq" | "equal-to" | "in-list" | "regex" | "regex-match" => {
+                        (RuleOp::Equal, false)
+                    }
+                    "ne" | "not-equal-to" | "not-in-list" | "not-regex" | "not-regex-match" => {
+                        (RuleOp::Equal, true)
+                    }
+                    "starts-with" => (RuleOp::StartsWith, false),
+                    "ends-with" => (RuleOp::EndsWith, false),
+                    op => {
                         return Err(format!(
-                            "List {:?} not found for property {:?}.",
-                            value,
-                            (&prefix, value).as_key()
+                            "Invalid rule 'op' value {:?} for key {:?}.",
+                            op,
+                            (&prefix, "op").as_key()
                         ));
                     }
-                } else {
-                    RuleValue::String(value.to_string())
+                };
+
+                let value = match (key, op) {
+                    (EnvelopeKey::Listener, RuleOp::Equal) => {
+                        let id = self.value_require((&prefix, "value"))?;
+                        RuleValue::UInt(
+                            ctx.servers
+                                .iter()
+                                .find_map(|s| {
+                                    if s.id == id {
+                                        s.internal_id.into()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .ok_or_else(|| {
+                                    format!(
+                                        "Listener {:?} does not exist for property {:?}.",
+                                        id,
+                                        (&prefix, "value").as_key()
+                                    )
+                                })?,
+                        )
+                    }
+                    (EnvelopeKey::LocalIp | EnvelopeKey::RemoteIp, RuleOp::Equal) => {
+                        RuleValue::IpAddrMask(self.property_require((&prefix, "value"))?)
+                    }
+                    (EnvelopeKey::Priority, RuleOp::Equal) => {
+                        RuleValue::Int(self.property_require((&prefix, "value"))?)
+                    }
+                    (
+                        EnvelopeKey::Recipient
+                        | EnvelopeKey::RecipientDomain
+                        | EnvelopeKey::Sender
+                        | EnvelopeKey::SenderDomain
+                        | EnvelopeKey::AuthenticatedAs
+                        | EnvelopeKey::Mx
+                        | EnvelopeKey::LocalIp
+                        | EnvelopeKey::RemoteIp,
+                        _,
+                    ) => {
+                        let value = self.value_require((&prefix, "value"))?;
+                        if op_str.contains("regex") {
+                            RuleValue::Regex(Regex::new(value).map_err(|err| {
+                                format!(
+                                    "Failed to compile regular expression {:?} for key {:?}: {}.",
+                                    value,
+                                    (&prefix, value).as_key(),
+                                    err
+                                )
+                            })?)
+                        } else if op_str.contains("in-list") {
+                            if let Some(list) = ctx.lists.get(value) {
+                                RuleValue::List(list.clone())
+                            } else {
+                                return Err(format!(
+                                    "List {:?} not found for property {:?}.",
+                                    value,
+                                    (&prefix, value).as_key()
+                                ));
+                            }
+                        } else {
+                            RuleValue::String(value.to_string())
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Invalid 'op'/'value' combination for key {:?}.",
+                            key_.as_key()
+                        ));
+                    }
+                };
+                rules.push(Rule::Condition {
+                    key,
+                    op,
+                    value,
+                    not: is_not ^ op_is_not,
+                });
+                if iter.as_mut().map_or(false, |it| it.peek().is_some()) {
+                    jmp_pos.push(rules.len());
+                    rules.push(if is_all {
+                        Rule::JumpIfFalse {
+                            positions: usize::MAX,
+                        }
+                    } else {
+                        Rule::JumpIfTrue {
+                            positions: usize::MAX,
+                        }
+                    });
                 }
             }
-            _ => {
-                return Err(format!(
-                    "Invalid 'op'/'value' combination for key {:?}.",
-                    key_.as_key()
-                ));
-            }
-        };
 
-        Ok(Rule::Condition { key, op, value })
+            loop {
+                if let Some(array_pos) = iter.as_mut().and_then(|it| it.next()) {
+                    prefix = (stack.last().unwrap().1.as_str(), "value", array_pos).as_key();
+                    break;
+                } else if let Some((prev_iter, _, prev_jmp_pos, prev_is_all, prev_is_not)) =
+                    stack.pop()
+                {
+                    let cur_pos = rules.len() - 1;
+                    for pos in jmp_pos {
+                        if let Rule::JumpIfFalse { positions } | Rule::JumpIfTrue { positions } =
+                            &mut rules[pos]
+                        {
+                            *positions = cur_pos - pos;
+                        }
+                    }
+
+                    iter = prev_iter;
+                    jmp_pos = prev_jmp_pos;
+                    is_all = prev_is_all;
+                    is_not = prev_is_not;
+                } else {
+                    break 'outer;
+                }
+            }
+        }
+
+        Ok(rules)
     }
 }
 
@@ -158,26 +266,6 @@ impl ParseValue for IpAddrMask {
     }
 }
 
-impl ParseValue for RuleOp {
-    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
-        Ok(match value {
-            "eq" | "equal-to" | "in-list" | "regex" | "regex-match" => RuleOp::Equal,
-            "new" | "not-equal-to" | "not-in-list" | "not-regex" | "not-regex-match" => {
-                RuleOp::NotEqual
-            }
-            "starts-with" => RuleOp::StartsWith,
-            "ends-with" => RuleOp::EndsWith,
-            op => {
-                return Err(format!(
-                    "Invalid rule 'op' value {:?} for key {:?}.",
-                    op,
-                    key.as_key()
-                ));
-            }
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::PathBuf, sync::Arc};
@@ -185,8 +273,7 @@ mod tests {
     use ahash::AHashMap;
 
     use crate::config::{
-        Config, ConfigContext, ContextKey, IpAddrMask, List, LogicalOp, Rule, RuleOp, RuleValue,
-        Server,
+        Config, ConfigContext, EnvelopeKey, IpAddrMask, List, Rule, RuleOp, RuleValue, Server,
     };
 
     #[test]
@@ -207,93 +294,94 @@ mod tests {
             ..Default::default()
         });
         config.parse_rules(&mut context).unwrap();
+        //println!("{:#?}", context.rules);
         assert_eq!(
             context.rules,
             AHashMap::from_iter([
                 (
                     "simple".to_string(),
-                    Rule::Condition {
-                        key: ContextKey::Listener,
+                    vec![Rule::Condition {
+                        key: EnvelopeKey::Listener,
                         op: RuleOp::Equal,
-                        value: RuleValue::UInt(123)
-                    }
+                        value: RuleValue::UInt(123),
+                        not: false,
+                    }]
                 ),
                 (
                     "is-authenticated".to_string(),
-                    Rule::Condition {
-                        key: ContextKey::AuthenticatedAs,
-                        op: RuleOp::NotEqual,
-                        value: RuleValue::String("".to_string())
-                    }
+                    vec![Rule::Condition {
+                        key: EnvelopeKey::AuthenticatedAs,
+                        op: RuleOp::Equal,
+                        value: RuleValue::String("".to_string()),
+                        not: true,
+                    }]
                 ),
                 (
                     "expanded".to_string(),
-                    Rule::Logical {
-                        op: LogicalOp::And,
-                        value: vec![
-                            Rule::Condition {
-                                key: ContextKey::SenderDomain,
-                                op: RuleOp::StartsWith,
-                                value: RuleValue::String("example".to_string())
-                            },
-                            Rule::Condition {
-                                key: ContextKey::Mx,
-                                op: RuleOp::Equal,
-                                value: RuleValue::List(list),
-                            }
-                        ]
-                    }
+                    vec![
+                        Rule::Condition {
+                            key: EnvelopeKey::SenderDomain,
+                            op: RuleOp::StartsWith,
+                            value: RuleValue::String("example".to_string()),
+                            not: false,
+                        },
+                        Rule::JumpIfFalse { positions: 1 },
+                        Rule::Condition {
+                            key: EnvelopeKey::Mx,
+                            op: RuleOp::Equal,
+                            value: RuleValue::List(list),
+                            not: false,
+                        }
+                    ]
                 ),
                 (
                     "my-nested-rule".to_string(),
-                    Rule::Logical {
-                        op: LogicalOp::Or,
-                        value: vec![
-                            Rule::Condition {
-                                key: ContextKey::RecipientDomain,
-                                op: RuleOp::Equal,
-                                value: RuleValue::String("example.org".to_string()),
-                            },
-                            Rule::Condition {
-                                key: ContextKey::RemoteIp,
-                                op: RuleOp::Equal,
-                                value: RuleValue::IpAddrMask(IpAddrMask::V4 {
-                                    addr: "192.168.0.0".parse().unwrap(),
-                                    mask: u32::MAX << (32 - 24),
-                                })
-                            },
-                            Rule::Logical {
-                                op: LogicalOp::And,
-                                value: vec![
-                                    Rule::Condition {
-                                        key: ContextKey::Recipient,
-                                        op: RuleOp::StartsWith,
-                                        value: RuleValue::String("no-reply@".to_string()),
-                                    },
-                                    Rule::Condition {
-                                        key: ContextKey::Sender,
-                                        op: RuleOp::EndsWith,
-                                        value: RuleValue::String("@domain.org".to_string()),
-                                    },
-                                    Rule::Logical {
-                                        op: LogicalOp::Not,
-                                        value: vec![
-                                            Rule::Condition {
-                                                key: ContextKey::Priority,
-                                                op: RuleOp::Equal,
-                                                value: RuleValue::Int(1),
-                                            },
-                                            Rule::Condition {
-                                                key: ContextKey::Priority,
-                                                op: RuleOp::NotEqual,
-                                                value: RuleValue::Int(-2),
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    }
+                    vec![
+                        Rule::Condition {
+                            key: EnvelopeKey::RecipientDomain,
+                            op: RuleOp::Equal,
+                            value: RuleValue::String("example.org".to_string()),
+                            not: false,
+                        },
+                        Rule::JumpIfTrue { positions: 9 },
+                        Rule::Condition {
+                            key: EnvelopeKey::RemoteIp,
+                            op: RuleOp::Equal,
+                            value: RuleValue::IpAddrMask(IpAddrMask::V4 {
+                                addr: "192.168.0.0".parse().unwrap(),
+                                mask: u32::MAX << (32 - 24),
+                            }),
+                            not: false,
+                        },
+                        Rule::JumpIfTrue { positions: 7 },
+                        Rule::Condition {
+                            key: EnvelopeKey::Recipient,
+                            op: RuleOp::StartsWith,
+                            value: RuleValue::String("no-reply@".to_string()),
+                            not: false,
+                        },
+                        Rule::JumpIfFalse { positions: 5 },
+                        Rule::Condition {
+                            key: EnvelopeKey::Sender,
+                            op: RuleOp::EndsWith,
+                            value: RuleValue::String("@domain.org".to_string()),
+                            not: false,
+                        },
+                        Rule::JumpIfFalse { positions: 3 },
+                        Rule::Condition {
+                            key: EnvelopeKey::Priority,
+                            op: RuleOp::Equal,
+                            value: RuleValue::Int(1),
+                            not: true,
+                        },
+                        Rule::JumpIfFalse { positions: 1 },
+                        Rule::Condition {
+                            key: EnvelopeKey::Priority,
+                            op: RuleOp::Equal,
+                            value: RuleValue::Int(-2),
+                            not: false,
+                        }
+                    ]
                 )
             ])
         );

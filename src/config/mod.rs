@@ -3,6 +3,7 @@ pub mod if_block;
 pub mod list;
 pub mod parser;
 pub mod remote;
+pub mod resolver;
 pub mod rule;
 pub mod server;
 pub mod stage;
@@ -17,6 +18,7 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
+use regex::Regex;
 use rustls::ServerConfig;
 use smtp_proto::MtPriority;
 use tokio::net::TcpSocket;
@@ -72,52 +74,60 @@ pub enum ServerProtocol {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rule {
     Condition {
-        key: ContextKey,
+        key: EnvelopeKey,
         op: RuleOp,
         value: RuleValue,
+        not: bool,
     },
-    Logical {
-        op: LogicalOp,
-        value: Vec<Rule>,
+    JumpIfTrue {
+        positions: usize,
+    },
+    JumpIfFalse {
+        positions: usize,
     },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RuleOp {
     Equal,
-    NotEqual,
     StartsWith,
     EndsWith,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LogicalOp {
-    And,
-    Or,
-    Not,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum RuleValue {
     String(String),
     UInt(u64),
     Int(i64),
     IpAddrMask(IpAddrMask),
     List(Arc<List>),
-    Regex(String),
+    Regex(Regex),
 }
 
-impl Default for Rule {
-    fn default() -> Self {
-        Rule::Logical {
-            op: LogicalOp::And,
-            value: vec![],
+impl PartialEq for RuleValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::String(l0), Self::String(r0)) => l0 == r0,
+            (Self::UInt(l0), Self::UInt(r0)) => l0 == r0,
+            (Self::Int(l0), Self::Int(r0)) => l0 == r0,
+            (Self::IpAddrMask(l0), Self::IpAddrMask(r0)) => l0 == r0,
+            (Self::List(l0), Self::List(r0)) => l0 == r0,
+            (Self::Regex(_), Self::Regex(_)) => false,
+            _ => false,
         }
     }
 }
 
+impl Eq for RuleValue {}
+
+impl Default for Rule {
+    fn default() -> Self {
+        Rule::JumpIfFalse { positions: 0 }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum ContextKey {
+pub enum EnvelopeKey {
     Recipient,
     RecipientDomain,
     Sender,
@@ -144,9 +154,9 @@ pub struct IfBlock<T: Default> {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Throttle {
-    pub key: Vec<ContextKey>,
-    pub concurrency: IfBlock<u64>,
-    pub rate: IfBlock<ThrottleRate>,
+    pub key: Vec<EnvelopeKey>,
+    pub concurrency: Option<u64>,
+    pub rate: Option<ThrottleRate>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -163,9 +173,9 @@ pub enum IpAddrMask {
 
 pub struct Connect {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub concurrency: IfBlock<u64>,
-    pub timeout: IfBlock<Option<Duration>>,
-    pub throttle: Vec<Throttle>,
+    pub concurrency: u64,
+    pub timeout: IfBlock<Duration>,
+    pub throttle: IfBlock<Vec<Arc<Throttle>>>,
 }
 
 pub struct Ehlo {
@@ -196,7 +206,7 @@ pub struct Auth {
 
 pub struct Mail {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub throttle: Vec<Throttle>,
+    pub throttle: IfBlock<Vec<Arc<Throttle>>>,
 }
 
 pub struct Rcpt {
@@ -211,7 +221,7 @@ pub struct Rcpt {
     pub max_recipients: IfBlock<usize>,
 
     // Throttle
-    pub throttle: Vec<Throttle>,
+    pub throttle: IfBlock<Vec<Arc<Throttle>>>,
 }
 
 pub struct Data {
@@ -262,11 +272,12 @@ pub struct Config {
 #[derive(Debug, Default)]
 pub struct ConfigContext {
     pub servers: Vec<Server>,
-    pub rules: AHashMap<String, Rule>,
+    pub rules: AHashMap<String, Vec<Rule>>,
     pub hosts: AHashMap<String, Arc<Host>>,
     pub scripts: AHashMap<String, Arc<Script>>,
     pub lists: AHashMap<String, Arc<List>>,
     pub queues: AHashMap<String, Arc<Queue>>,
+    pub throttle: AHashMap<String, Arc<Throttle>>,
 }
 
 pub type Result<T> = std::result::Result<T, String>;

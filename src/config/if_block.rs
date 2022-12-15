@@ -4,7 +4,7 @@ use ahash::AHashMap;
 
 use super::{
     utils::{AsKey, ParseValues},
-    Config, ConfigContext, IfBlock, IfThen,
+    Config, ConfigContext, IfBlock, IfThen, Rule,
 };
 
 impl Config {
@@ -51,12 +51,13 @@ impl Config {
                         }
 
                         if let Some(rules) = ctx.rules.get(value) {
-                            if_block
-                                .if_then
-                                .last_mut()
-                                .unwrap()
-                                .rules
-                                .push(rules.clone());
+                            let cur_rules = &mut if_block.if_then.last_mut().unwrap().rules;
+                            if !cur_rules.is_empty() {
+                                cur_rules.push(Rule::JumpIfTrue {
+                                    positions: usize::MAX,
+                                });
+                            }
+                            cur_rules.extend(rules.iter().cloned());
                         } else {
                             return Err(format!(
                                 "Rule {:?} does not exist for property {:?}.",
@@ -178,39 +179,79 @@ impl IfBlock<Option<String>> {
         object_name: &str,
     ) -> super::Result<IfBlock<Option<Arc<T>>>> {
         let mut if_then = Vec::with_capacity(self.if_then.len());
-        for (pos, if_clause) in self.if_then.into_iter().enumerate() {
+        for if_clause in self.if_then.into_iter() {
             if_then.push(IfThen {
                 rules: if_clause.rules,
-                then: if let Some(then) = if_clause.then {
-                    if let Some(value) = map.get(&then) {
-                        Some(value.clone())
-                    } else {
-                        return Err(format!(
-                            "Unable to find {} {:?} declared as 'if' number {}'s 'then' value for {:?}",
-                            object_name, then, pos + 1, key_name
-                        ));
-                    }
-                } else {
-                    None
-                },
+                then: Self::map_value(map, if_clause.then, object_name, key_name)?,
             });
         }
 
         Ok(IfBlock {
             if_then,
-            default: if let Some(default) = self.default {
-                if let Some(value) = map.get(&default) {
-                    Some(value.clone())
-                } else {
-                    return Err(format!(
-                        "Unable to find {} {:?} declared as the 'else' value for {:?}",
-                        object_name, default, key_name
-                    ));
-                }
-            } else {
-                None
-            },
+            default: Self::map_value(map, self.default, object_name, key_name)?,
         })
+    }
+
+    fn map_value<T>(
+        map: &AHashMap<String, Arc<T>>,
+        value: Option<String>,
+        object_name: &str,
+        key_name: &str,
+    ) -> super::Result<Option<Arc<T>>> {
+        if let Some(value) = value {
+            if let Some(value) = map.get(&value) {
+                Ok(Some(value.clone()))
+            } else {
+                Err(format!(
+                    "Unable to find {} {:?} declared for {:?}",
+                    object_name, value, key_name
+                ))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl IfBlock<Vec<String>> {
+    pub fn map_if_block<T>(
+        self,
+        map: &AHashMap<String, Arc<T>>,
+        key_name: &str,
+        object_name: &str,
+    ) -> super::Result<IfBlock<Vec<Arc<T>>>> {
+        let mut if_then = Vec::with_capacity(self.if_then.len());
+        for if_clause in self.if_then.into_iter() {
+            if_then.push(IfThen {
+                rules: if_clause.rules,
+                then: Self::map_value(map, if_clause.then, object_name, key_name)?,
+            });
+        }
+
+        Ok(IfBlock {
+            if_then,
+            default: Self::map_value(map, self.default, object_name, key_name)?,
+        })
+    }
+
+    fn map_value<T>(
+        map: &AHashMap<String, Arc<T>>,
+        values: Vec<String>,
+        object_name: &str,
+        key_name: &str,
+    ) -> super::Result<Vec<Arc<T>>> {
+        let mut result = Vec::with_capacity(values.len());
+        for value in values {
+            if let Some(value) = map.get(&value) {
+                result.push(value.clone());
+            } else {
+                return Err(format!(
+                    "Unable to find {} {:?} declared for {:?}",
+                    object_name, value, key_name
+                ));
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -218,7 +259,7 @@ impl IfBlock<Option<String>> {
 mod tests {
     use std::{fs, path::PathBuf, time::Duration};
 
-    use crate::config::{Config, ConfigContext, IfBlock, IfThen, LogicalOp, Rule};
+    use crate::config::{Config, ConfigContext, IfBlock, IfThen, Rule};
 
     #[test]
     fn parse_if_blocks() {
@@ -232,16 +273,14 @@ mod tests {
 
         // Create context and add some rules
         let mut context = ConfigContext::default();
-        let rule1 = Rule::Logical {
-            op: LogicalOp::And,
-            value: vec![],
-        };
-        let rule2 = Rule::Logical {
-            op: LogicalOp::Or,
-            value: vec![],
-        };
-        context.rules.insert("rule1".to_string(), rule1.clone());
-        context.rules.insert("rule2".to_string(), rule2.clone());
+        let rule1 = Rule::JumpIfFalse { positions: 0 };
+        let rule2 = Rule::JumpIfTrue { positions: 0 };
+        context
+            .rules
+            .insert("rule1".to_string(), vec![rule1.clone()]);
+        context
+            .rules
+            .insert("rule2".to_string(), vec![rule2.clone()]);
 
         assert_eq!(
             config
