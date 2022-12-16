@@ -4,7 +4,7 @@ use ahash::AHashMap;
 
 use super::{
     utils::{AsKey, ParseValues},
-    Config, ConfigContext, IfBlock, IfThen, Rule,
+    Config, ConfigContext, IfBlock, IfThen,
 };
 
 impl Config {
@@ -24,7 +24,7 @@ impl Config {
         let mut if_block = IfBlock::new(T::default());
         let mut last_array_pos = usize::MAX;
 
-        for (item, value) in &self.keys {
+        for item in self.keys.keys() {
             if let Some(suffix_) = item.strip_prefix(&prefix) {
                 if let Some((array_pos, suffix)) =
                     suffix_.split_once('.').and_then(|(array_pos, suffix)| {
@@ -42,7 +42,10 @@ impl Config {
                             }
 
                             if_block.if_then.push(IfThen {
-                                rules: Vec::new(),
+                                rules: self.parse_condition(
+                                    (key.as_str(), suffix_.split_once(".if").unwrap().0, "if"),
+                                    ctx,
+                                )?,
                                 then: T::default(),
                             });
 
@@ -50,30 +53,14 @@ impl Config {
                             last_array_pos = array_pos;
                         }
 
-                        if let Some(rules) = ctx.rules.get(value) {
-                            let cur_rules = &mut if_block.if_then.last_mut().unwrap().rules;
-                            if !cur_rules.is_empty() {
-                                cur_rules.push(Rule::JumpIfTrue {
-                                    positions: usize::MAX,
-                                });
-                            }
-                            cur_rules.extend(rules.iter().cloned());
-                        } else {
-                            return Err(format!(
-                                "Rule {:?} does not exist for property {:?}.",
-                                value, key
-                            ));
-                        }
-
                         found_if = true;
                     } else if suffix == "else" || suffix.starts_with("else.") {
                         if found_else == usize::MAX {
                             if found_if {
-                                if_block.default = self.parse_values((
-                                    key.as_str(),
-                                    suffix_.split_once(".else").unwrap().0,
-                                    "else",
-                                ))?;
+                                if_block.default = T::parse_values(
+                                    (key.as_str(), suffix_.split_once(".else").unwrap().0, "else"),
+                                    self,
+                                )?;
                                 found_else = array_pos;
                             } else {
                                 return Err(format!(
@@ -88,12 +75,14 @@ impl Config {
                         if found_else == usize::MAX {
                             if array_pos == last_array_pos {
                                 if !found_then {
-                                    if_block.if_then.last_mut().unwrap().then =
-                                        self.parse_values((
+                                    if_block.if_then.last_mut().unwrap().then = T::parse_values(
+                                        (
                                             key.as_str(),
                                             suffix_.split_once(".then").unwrap().0,
                                             "then",
-                                        ))?;
+                                        ),
+                                        self,
+                                    )?;
                                     found_then = true;
                                 }
                             } else {
@@ -113,14 +102,14 @@ impl Config {
                     }
                 } else if !found_if {
                     // Found probably a multi-value, parse and return
-                    if_block.default = self.parse_values(key.as_str())?;
+                    if_block.default = T::parse_values(key.as_str(), self)?;
                     return Ok(Some(if_block));
                 } else {
                     return Err(format!("Invalid property {:?} found in 'if' block.", item));
                 }
             } else if item == &key {
                 // There is a single value, parse and return
-                if_block.default = self.parse_values(key.as_str())?;
+                if_block.default = T::parse_values(key.as_str(), self)?;
                 return Ok(Some(if_block));
             }
         }
@@ -259,7 +248,9 @@ impl IfBlock<Vec<String>> {
 mod tests {
     use std::{fs, path::PathBuf, time::Duration};
 
-    use crate::config::{Config, ConfigContext, IfBlock, IfThen, Rule};
+    use crate::config::{
+        Condition, ConditionOp, ConditionValue, Config, ConfigContext, EnvelopeKey, IfBlock, IfThen,
+    };
 
     #[test]
     fn parse_if_blocks() {
@@ -272,15 +263,7 @@ mod tests {
         let config = Config::parse(&fs::read_to_string(file).unwrap()).unwrap();
 
         // Create context and add some rules
-        let mut context = ConfigContext::default();
-        let rule1 = Rule::JumpIfFalse { positions: 0 };
-        let rule2 = Rule::JumpIfTrue { positions: 0 };
-        context
-            .rules
-            .insert("rule1".to_string(), vec![rule1.clone()]);
-        context
-            .rules
-            .insert("rule2".to_string(), vec![rule2.clone()]);
+        let context = ConfigContext::default();
 
         assert_eq!(
             config
@@ -290,11 +273,30 @@ mod tests {
             IfBlock {
                 if_then: vec![
                     IfThen {
-                        rules: vec![rule1.clone()],
+                        rules: vec![Condition::Match {
+                            key: EnvelopeKey::Sender,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::String("jdoe".to_string()),
+                            not: false
+                        }],
                         then: Duration::from_secs(5 * 86400).into()
                     },
                     IfThen {
-                        rules: vec![rule2.clone()],
+                        rules: vec![
+                            Condition::Match {
+                                key: EnvelopeKey::Priority,
+                                op: ConditionOp::Equal,
+                                value: ConditionValue::Int(-1),
+                                not: false
+                            },
+                            Condition::JumpIfTrue { positions: 1 },
+                            Condition::Match {
+                                key: EnvelopeKey::Recipient,
+                                op: ConditionOp::StartsWith,
+                                value: ConditionValue::String("jane".to_string()),
+                                not: false
+                            }
+                        ],
                         then: Duration::from_secs(3600).into()
                     }
                 ],
@@ -310,11 +312,30 @@ mod tests {
             IfBlock {
                 if_then: vec![
                     IfThen {
-                        rules: vec![rule1.clone()],
+                        rules: vec![Condition::Match {
+                            key: EnvelopeKey::Sender,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::String("jdoe".to_string()),
+                            not: false
+                        }],
                         then: vec!["From".to_string(), "To".to_string(), "Date".to_string()]
                     },
                     IfThen {
-                        rules: vec![rule2.clone()],
+                        rules: vec![
+                            Condition::Match {
+                                key: EnvelopeKey::Priority,
+                                op: ConditionOp::Equal,
+                                value: ConditionValue::Int(-1),
+                                not: false
+                            },
+                            Condition::JumpIfTrue { positions: 1 },
+                            Condition::Match {
+                                key: EnvelopeKey::Recipient,
+                                op: ConditionOp::StartsWith,
+                                value: ConditionValue::String("jane".to_string()),
+                                not: false
+                            }
+                        ],
                         then: vec!["Other-ID".to_string()]
                     }
                 ],
@@ -330,11 +351,30 @@ mod tests {
             IfBlock {
                 if_then: vec![
                     IfThen {
-                        rules: vec![rule1.clone()],
+                        rules: vec![Condition::Match {
+                            key: EnvelopeKey::Sender,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::String("jdoe".to_string()),
+                            not: false
+                        }],
                         then: vec!["From".to_string(), "To".to_string(), "Date".to_string()]
                     },
                     IfThen {
-                        rules: vec![rule2.clone()],
+                        rules: vec![
+                            Condition::Match {
+                                key: EnvelopeKey::Priority,
+                                op: ConditionOp::Equal,
+                                value: ConditionValue::Int(-1),
+                                not: false
+                            },
+                            Condition::JumpIfTrue { positions: 1 },
+                            Condition::Match {
+                                key: EnvelopeKey::Recipient,
+                                op: ConditionOp::StartsWith,
+                                value: ConditionValue::String("jane".to_string()),
+                                not: false
+                            }
+                        ],
                         then: vec![]
                     }
                 ],
@@ -353,20 +393,6 @@ mod tests {
             }
         );
 
-        assert_eq!(
-            config
-                .parse_if_block::<bool>("multi-rule", &context)
-                .unwrap()
-                .unwrap(),
-            IfBlock {
-                if_then: vec![IfThen {
-                    rules: vec![rule1, rule2],
-                    then: true
-                }],
-                default: false
-            }
-        );
-
         for bad_rule in [
             "bad-multi-value",
             "bad-if-without-then",
@@ -374,7 +400,7 @@ mod tests {
             "bad-multiple-else",
         ] {
             if let Ok(value) = config.parse_if_block::<u32>(bad_rule, &context) {
-                panic!("Rule {:?} had unexpected result {:?}", bad_rule, value);
+                panic!("Condition {:?} had unexpected result {:?}", bad_rule, value);
             }
         }
     }

@@ -3,121 +3,125 @@ use std::{
     net::{IpAddr, Ipv4Addr},
 };
 
-use crate::config::{EnvelopeKey, IfBlock, IpAddrMask, List, Rule, RuleOp, RuleValue};
+use crate::config::{
+    Condition, ConditionOp, ConditionValue, EnvelopeKey, IfBlock, IpAddrMask, List,
+};
 
 use super::Envelope;
 
 impl<T: Default> IfBlock<T> {
     pub fn eval(&self, envelope: &Envelope) -> &T {
         for if_then in &self.if_then {
-            let mut rules = if_then.rules.iter();
-            let mut matched = false;
-
-            while let Some(rule) = rules.next() {
-                match rule {
-                    Rule::Condition {
-                        key,
-                        op,
-                        value,
-                        not,
-                    } => {
-                        matched = match value {
-                            RuleValue::String(value) => {
-                                let ctx_value = envelope.key_to_string(key);
-                                match op {
-                                    RuleOp::Equal => value.eq(ctx_value.as_ref()),
-                                    RuleOp::StartsWith => ctx_value.starts_with(value),
-                                    RuleOp::EndsWith => ctx_value.ends_with(value),
-                                }
-                            }
-                            RuleValue::IpAddrMask(value) => {
-                                let ctx_value = match key {
-                                    EnvelopeKey::RemoteIp => envelope.remote_ip,
-                                    EnvelopeKey::LocalIp => envelope.local_ip,
-                                    _ => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                                };
-
-                                match op {
-                                    RuleOp::Equal => value.matches(&ctx_value),
-                                    RuleOp::StartsWith | RuleOp::EndsWith => false,
-                                }
-                            }
-                            RuleValue::UInt(value) => {
-                                let ctx_value = if key == &EnvelopeKey::Listener {
-                                    &envelope.listener_id
-                                } else {
-                                    debug_assert!(false, "Invalid value for UInt context key.");
-                                    &u64::MAX
-                                };
-                                match op {
-                                    RuleOp::Equal => value == ctx_value,
-                                    RuleOp::StartsWith | RuleOp::EndsWith => false,
-                                }
-                            }
-                            RuleValue::Int(value) => {
-                                let ctx_value = if key == &EnvelopeKey::Listener {
-                                    &envelope.priority
-                                } else {
-                                    debug_assert!(false, "Invalid value for UInt context key.");
-                                    &i64::MAX
-                                };
-                                match op {
-                                    RuleOp::Equal => value == ctx_value,
-                                    RuleOp::StartsWith | RuleOp::EndsWith => false,
-                                }
-                            }
-                            RuleValue::List(value) => {
-                                let ctx_value = envelope.key_to_string(key);
-                                match value.as_ref() {
-                                    List::Local(list) => match op {
-                                        RuleOp::Equal => list.contains(ctx_value.as_ref()),
-                                        RuleOp::StartsWith | RuleOp::EndsWith => false,
-                                    },
-                                    List::Remote(_) => {
-                                        let ococ = "fd";
-                                        //TODO
-                                        false
-                                    }
-                                }
-                            }
-                            RuleValue::Regex(value) => {
-                                value.is_match(envelope.key_to_string(key).as_ref())
-                            }
-                        } ^ not;
-                    }
-                    Rule::JumpIfTrue { positions } => {
-                        if matched {
-                            //TODO use advance_by when stabilized
-                            if *positions != usize::MAX {
-                                for _ in 0..*positions {
-                                    rules.next();
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    Rule::JumpIfFalse { positions } => {
-                        if !matched {
-                            //TODO use advance_by when stabilized
-                            if *positions != usize::MAX {
-                                for _ in 0..*positions {
-                                    rules.next();
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if matched {
+            if if_then.rules.eval(envelope) {
                 return &if_then.then;
             }
         }
 
         &self.default
+    }
+}
+
+pub trait ConditionEval {
+    fn eval(&self, envelope: &Envelope) -> bool;
+}
+
+impl ConditionEval for Vec<Condition> {
+    fn eval(&self, envelope: &Envelope) -> bool {
+        let mut rules = self.iter();
+        let mut matched = false;
+
+        while let Some(rule) = rules.next() {
+            match rule {
+                Condition::Match {
+                    key,
+                    op,
+                    value,
+                    not,
+                } => {
+                    matched = match value {
+                        ConditionValue::String(value) => {
+                            let ctx_value = envelope.key_to_string(key);
+                            match op {
+                                ConditionOp::Equal => value.eq(ctx_value.as_ref()),
+                                ConditionOp::StartsWith => ctx_value.starts_with(value),
+                                ConditionOp::EndsWith => ctx_value.ends_with(value),
+                            }
+                        }
+                        ConditionValue::IpAddrMask(value) => {
+                            let ctx_value = match key {
+                                EnvelopeKey::RemoteIp => envelope.remote_ip,
+                                EnvelopeKey::LocalIp => envelope.local_ip,
+                                _ => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                            };
+
+                            match op {
+                                ConditionOp::Equal => value.matches(&ctx_value),
+                                ConditionOp::StartsWith | ConditionOp::EndsWith => false,
+                            }
+                        }
+                        ConditionValue::UInt(value) => {
+                            let ctx_value = if key == &EnvelopeKey::Listener {
+                                &envelope.listener_id
+                            } else {
+                                debug_assert!(false, "Invalid value for UInt context key.");
+                                &u16::MAX
+                            };
+                            match op {
+                                ConditionOp::Equal => value == ctx_value,
+                                ConditionOp::StartsWith | ConditionOp::EndsWith => false,
+                            }
+                        }
+                        ConditionValue::Int(value) => {
+                            let ctx_value = if key == &EnvelopeKey::Listener {
+                                &envelope.priority
+                            } else {
+                                debug_assert!(false, "Invalid value for UInt context key.");
+                                &i16::MAX
+                            };
+                            match op {
+                                ConditionOp::Equal => value == ctx_value,
+                                ConditionOp::StartsWith | ConditionOp::EndsWith => false,
+                            }
+                        }
+                        ConditionValue::List(value) => {
+                            let ctx_value = envelope.key_to_string(key);
+                            match value.as_ref() {
+                                List::Local(list) => match op {
+                                    ConditionOp::Equal => list.contains(ctx_value.as_ref()),
+                                    ConditionOp::StartsWith | ConditionOp::EndsWith => false,
+                                },
+                                List::Remote(_) => {
+                                    let ococ = "fd";
+                                    //TODO
+                                    false
+                                }
+                            }
+                        }
+                        ConditionValue::Regex(value) => {
+                            value.is_match(envelope.key_to_string(key).as_ref())
+                        }
+                    } ^ not;
+                }
+                Condition::JumpIfTrue { positions } => {
+                    if matched {
+                        //TODO use advance_by when stabilized
+                        for _ in 0..*positions {
+                            rules.next();
+                        }
+                    }
+                }
+                Condition::JumpIfFalse { positions } => {
+                    if !matched {
+                        //TODO use advance_by when stabilized
+                        for _ in 0..*positions {
+                            rules.next();
+                        }
+                    }
+                }
+            }
+        }
+
+        matched
     }
 }
 
@@ -215,7 +219,7 @@ mod tests {
             ..Default::default()
         });
         config.parse_lists(&mut context).unwrap();
-        config.parse_rules(&mut context).unwrap();
+        let rules = config.parse_rules(&context).unwrap();
 
         let envelope = Envelope {
             local_ip: config.property_require("envelope.local-ip").unwrap(),
@@ -232,7 +236,7 @@ mod tests {
             priority: config.property_require("envelope.priority").unwrap(),
         };
 
-        for (key, rules) in context.rules {
+        for (key, rules) in rules {
             //println!("============= Testing {:?} ==================", key);
             let (_, expected_result) = key.rsplit_once('-').unwrap();
             assert_eq!(

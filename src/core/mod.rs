@@ -1,15 +1,19 @@
 use std::{net::IpAddr, sync::Arc};
 
+use dashmap::DashMap;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::Span;
 
 use crate::config::Stage;
 
-use self::rate_limit::{ConcurrencyLimiter, InFlightRequest};
+use self::throttle::{
+    ConcurrencyLimiter, InFlightRequest, Limiter, ThrottleKey, ThrottleKeyHasherBuilder,
+};
 
 pub mod if_block;
-pub mod rate_limit;
+pub mod throttle;
 
+#[derive(Debug, Clone)]
 pub struct Envelope {
     pub local_ip: IpAddr,
     pub remote_ip: IpAddr,
@@ -19,13 +23,14 @@ pub struct Envelope {
     pub rcpt: String,
     pub authenticated_as: String,
     pub mx: String,
-    pub listener_id: u64,
-    pub priority: i64,
+    pub listener_id: u16,
+    pub priority: i16,
 }
 
 pub struct Core {
     pub stage: Stage,
     pub concurrency: ConcurrencyLimiter,
+    pub throttle: DashMap<ThrottleKey, Limiter, ThrottleKeyHasherBuilder>,
 }
 
 pub struct Session<T: AsyncWrite + AsyncRead> {
@@ -52,7 +57,7 @@ impl Envelope {
         }
     }
 
-    pub fn with_listener_id(mut self, listener_id: u64) -> Self {
+    pub fn with_listener_id(mut self, listener_id: u16) -> Self {
         self.listener_id = listener_id;
         self
     }

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -71,9 +71,9 @@ impl Server {
                                     } else {
                                         tracing::info!(
                                             parent: &span,
-                                            event = "disconnect",
-                                            reason = "concurrency",
-                                            limit = core.concurrency.max_concurrent,
+                                            event = "throttle",
+                                            class = "concurrency",
+                                            max_concurrent = core.concurrency.max_concurrent,
                                             "Too many concurrent connections."
                                         );
                                         continue;
@@ -88,6 +88,11 @@ impl Server {
                                         stream,
                                         in_flight,
                                     };
+
+                                    // Enforce throttle
+                                    if !session.is_allowed(&core.stage.connect.throttle) {
+                                        continue;
+                                    }
 
                                     // Spawn connection
                                     let shutdown_rx = shutdown_rx.clone();

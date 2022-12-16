@@ -1,39 +1,71 @@
-use std::collections::hash_map::Entry;
-
 use super::{
     utils::{AsKey, ParseKey, ParseValue},
-    Config, ConfigContext, EnvelopeKey, Throttle, ThrottleRate,
+    *,
 };
 
 impl Config {
-    pub fn parse_throttle(&self, ctx: &mut ConfigContext) -> super::Result<()> {
-        for id in self.sub_keys("throttle") {
-            let throttle = self.parse_throttle_item(("throttle", id))?;
-            match ctx.throttle.entry(id.to_string()) {
-                Entry::Vacant(e) => {
-                    e.insert(throttle.into());
-                }
-                Entry::Occupied(_) => {
-                    return Err(format!("Duplicate throttle {:?} found.", id));
-                }
-            }
+    pub fn parse_throttle(
+        &self,
+        prefix: impl AsKey,
+        ctx: &ConfigContext,
+    ) -> super::Result<Vec<Throttle>> {
+        let prefix_ = prefix.as_key();
+        let mut throttles = Vec::new();
+        for array_pos in self.sub_keys(prefix) {
+            throttles.push(self.parse_throttle_item((&prefix_, array_pos), ctx)?);
         }
 
-        Ok(())
+        Ok(throttles)
     }
 
-    fn parse_throttle_item(&self, prefix: impl AsKey) -> super::Result<Throttle> {
+    fn parse_throttle_item(
+        &self,
+        prefix: impl AsKey,
+        ctx: &ConfigContext,
+    ) -> super::Result<Throttle> {
         let prefix = prefix.as_key();
+        let mut keys = 0;
+        for (key, value) in self.values((&prefix, "key")) {
+            keys |= match value {
+                "rcpt" => THROTTLE_RCPT,
+                "rcpt-domain" => THROTTLE_RCPT_DOMAIN,
+                "sender" => THROTTLE_SENDER,
+                "sender-domain" => THROTTLE_SENDER_DOMAIN,
+                "authenticated-as" => THROTTLE_AUTH_AS,
+                "listener-id" => THROTTLE_LISTENER,
+                "mx" => THROTTLE_MX,
+                "remote-ip" => THROTTLE_REMOTE_IP,
+                "local_ip" => THROTTLE_LOCAL_IP,
+                _ => {
+                    return Err(format!(
+                        "Invalid throttle key {:?} found in {:?}",
+                        key, prefix
+                    ))
+                }
+            };
+        }
+
+        if keys == 0 {
+            return Err(format!("No throttle keys found in {:?}", prefix));
+        }
+
         let throttle = Throttle {
-            key: self.parse_values((prefix.as_str(), "key"))?,
-            concurrency: self.property((prefix.as_str(), "concurrency"))?,
-            rate: self.property((prefix.as_str(), "rate"))?,
+            condition: if self.values((&prefix, "if")).next().is_some() {
+                self.parse_condition((&prefix, "if"), ctx)?
+            } else {
+                Vec::with_capacity(0)
+            },
+            keys,
+            concurrency: self
+                .property::<u64>((prefix.as_str(), "concurrency"))?
+                .filter(|&v| v > 0),
+            rate: self
+                .property::<ThrottleRate>((prefix.as_str(), "rate"))?
+                .filter(|v| v.requests > 0),
         };
 
         // Validate
-        if throttle.key.is_empty() {
-            Err(format!("No throttle keys found in {:?}", prefix))
-        } else if throttle.rate.is_none() && throttle.concurrency.is_none() {
+        if throttle.rate.is_none() && throttle.concurrency.is_none() {
             Err(format!(
                 concat!(
                     "Throttle {:?} needs to define a ",
@@ -103,11 +135,12 @@ impl ParseValue for EnvelopeKey {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+    use std::{fs, path::PathBuf, time::Duration};
 
-    use ahash::AHashMap;
-
-    use crate::config::{Config, ConfigContext, EnvelopeKey, Throttle, ThrottleRate};
+    use crate::config::{
+        Condition, ConditionOp, ConditionValue, Config, ConfigContext, EnvelopeKey, IpAddrMask,
+        Throttle, ThrottleRate, THROTTLE_AUTH_AS, THROTTLE_REMOTE_IP, THROTTLE_SENDER_DOMAIN,
+    };
 
     #[test]
     fn parse_throttle() {
@@ -118,33 +151,37 @@ mod tests {
         file.push("throttle.toml");
 
         let config = Config::parse(&fs::read_to_string(file).unwrap()).unwrap();
-        let mut context = ConfigContext::default();
-        config.parse_throttle(&mut context).unwrap();
+        let context = ConfigContext::default();
+        let throttle = config.parse_throttle("throttle", &context).unwrap();
 
         assert_eq!(
-            context.throttle,
-            AHashMap::from_iter([
-                (
-                    "remote".to_string(),
-                    Arc::new(Throttle {
-                        key: vec![EnvelopeKey::RemoteIp, EnvelopeKey::AuthenticatedAs],
-                        concurrency: 100.into(),
-                        rate: ThrottleRate {
-                            requests: 50,
-                            period: Duration::from_secs(30)
-                        }
-                        .into()
-                    })
-                ),
-                (
-                    "sender".to_string(),
-                    Arc::new(Throttle {
-                        key: vec![EnvelopeKey::SenderDomain],
-                        concurrency: 10000.into(),
-                        rate: None
-                    })
-                )
-            ])
+            throttle,
+            vec![
+                Throttle {
+                    condition: vec![Condition::Match {
+                        key: EnvelopeKey::RemoteIp,
+                        op: ConditionOp::Equal,
+                        value: ConditionValue::IpAddrMask(IpAddrMask::V4 {
+                            addr: "127.0.0.1".parse().unwrap(),
+                            mask: u32::MAX
+                        }),
+                        not: false
+                    }],
+                    keys: THROTTLE_REMOTE_IP | THROTTLE_AUTH_AS,
+                    concurrency: 100.into(),
+                    rate: ThrottleRate {
+                        requests: 50,
+                        period: Duration::from_secs(30)
+                    }
+                    .into()
+                },
+                Throttle {
+                    condition: vec![],
+                    keys: THROTTLE_SENDER_DOMAIN,
+                    concurrency: 10000.into(),
+                    rate: None
+                }
+            ]
         );
     }
 }

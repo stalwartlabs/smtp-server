@@ -27,10 +27,7 @@ impl Config {
                 .parse_if_block::<Option<String>>("stage.connect.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.connect.script", "script")?,
-            throttle: self
-                .parse_if_block::<Vec<String>>("stage.connect.throttle", ctx)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.throttle, "stage.connect.throttle", "throttle")?,
+            throttle: self.parse_throttle("stage.connect.throttle", ctx)?,
             concurrency: self.property("stage.connect.concurrency")?.unwrap_or(1024),
             timeout: self
                 .parse_if_block::<Option<Duration>>("stage.connect.timeout", ctx)?
@@ -127,10 +124,7 @@ impl Config {
                 .parse_if_block::<Option<String>>("stage.mail.script", ctx)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "stage.mail.script", "script")?,
-            throttle: self
-                .parse_if_block::<Vec<String>>("stage.mail.throttle", ctx)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.throttle, "stage.mail.throttle", "throttle")?,
+            throttle: self.parse_throttle("stage.mail.throttle", ctx)?,
         })
     }
 
@@ -152,10 +146,7 @@ impl Config {
             max_recipients: self
                 .parse_if_block("stage.rcpt.errors.max-recipients", ctx)?
                 .unwrap_or_else(|| IfBlock::new(100)),
-            throttle: self
-                .parse_if_block::<Vec<String>>("stage.rcpt.throttle", ctx)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.throttle, "stage.rcpt.throttle", "throttle")?,
+            throttle: self.parse_throttle("stage.rcpt.throttle", ctx)?,
         })
     }
 

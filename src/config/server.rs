@@ -26,7 +26,7 @@ impl Config {
         for (internal_id, id) in self.sub_keys("server.listener").enumerate() {
             let mut server = self.parse_server(id)?;
             if !servers.iter().any(|s| s.id == server.id) {
-                server.internal_id = internal_id as u64;
+                server.internal_id = internal_id as u16;
                 servers.push(server);
             } else {
                 return Err(format!("Duplicate listener id {:?}.", server.id));

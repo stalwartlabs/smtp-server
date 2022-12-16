@@ -1,10 +1,10 @@
 pub mod certificate;
+pub mod condition;
 pub mod if_block;
 pub mod list;
 pub mod parser;
 pub mod remote;
 pub mod resolver;
-pub mod rule;
 pub mod server;
 pub mod stage;
 pub mod throttle;
@@ -26,7 +26,7 @@ use tokio::net::TcpSocket;
 #[derive(Debug, Default)]
 pub struct Server {
     pub id: String,
-    pub internal_id: u64,
+    pub internal_id: u16,
     pub hostname: String,
     pub greeting: String,
     pub protocol: ServerProtocol,
@@ -72,11 +72,11 @@ pub enum ServerProtocol {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Rule {
-    Condition {
+pub enum Condition {
+    Match {
         key: EnvelopeKey,
-        op: RuleOp,
-        value: RuleValue,
+        op: ConditionOp,
+        value: ConditionValue,
         not: bool,
     },
     JumpIfTrue {
@@ -88,23 +88,23 @@ pub enum Rule {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum RuleOp {
+pub enum ConditionOp {
     Equal,
     StartsWith,
     EndsWith,
 }
 
 #[derive(Debug, Clone)]
-pub enum RuleValue {
+pub enum ConditionValue {
     String(String),
-    UInt(u64),
-    Int(i64),
+    UInt(u16),
+    Int(i16),
     IpAddrMask(IpAddrMask),
     List(Arc<List>),
     Regex(Regex),
 }
 
-impl PartialEq for RuleValue {
+impl PartialEq for ConditionValue {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::String(l0), Self::String(r0)) => l0 == r0,
@@ -118,11 +118,11 @@ impl PartialEq for RuleValue {
     }
 }
 
-impl Eq for RuleValue {}
+impl Eq for ConditionValue {}
 
-impl Default for Rule {
+impl Default for Condition {
     fn default() -> Self {
-        Rule::JumpIfFalse { positions: 0 }
+        Condition::JumpIfFalse { positions: 0 }
     }
 }
 
@@ -142,7 +142,7 @@ pub enum EnvelopeKey {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct IfThen<T: Default> {
-    pub rules: Vec<Rule>,
+    pub rules: Vec<Condition>,
     pub then: T,
 }
 
@@ -154,10 +154,21 @@ pub struct IfBlock<T: Default> {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Throttle {
-    pub key: Vec<EnvelopeKey>,
+    pub condition: Vec<Condition>,
+    pub keys: u16,
     pub concurrency: Option<u64>,
     pub rate: Option<ThrottleRate>,
 }
+
+pub const THROTTLE_RCPT: u16 = 1 << 0;
+pub const THROTTLE_RCPT_DOMAIN: u16 = 1 << 1;
+pub const THROTTLE_SENDER: u16 = 1 << 2;
+pub const THROTTLE_SENDER_DOMAIN: u16 = 1 << 3;
+pub const THROTTLE_AUTH_AS: u16 = 1 << 4;
+pub const THROTTLE_LISTENER: u16 = 1 << 5;
+pub const THROTTLE_MX: u16 = 1 << 6;
+pub const THROTTLE_REMOTE_IP: u16 = 1 << 7;
+pub const THROTTLE_LOCAL_IP: u16 = 1 << 8;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ThrottleRate {
@@ -175,7 +186,7 @@ pub struct Connect {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub concurrency: u64,
     pub timeout: IfBlock<Duration>,
-    pub throttle: IfBlock<Vec<Arc<Throttle>>>,
+    pub throttle: Vec<Throttle>,
 }
 
 pub struct Ehlo {
@@ -206,7 +217,7 @@ pub struct Auth {
 
 pub struct Mail {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub throttle: IfBlock<Vec<Arc<Throttle>>>,
+    pub throttle: Vec<Throttle>,
 }
 
 pub struct Rcpt {
@@ -221,7 +232,7 @@ pub struct Rcpt {
     pub max_recipients: IfBlock<usize>,
 
     // Throttle
-    pub throttle: IfBlock<Vec<Arc<Throttle>>>,
+    pub throttle: Vec<Throttle>,
 }
 
 pub struct Data {
@@ -272,12 +283,10 @@ pub struct Config {
 #[derive(Debug, Default)]
 pub struct ConfigContext {
     pub servers: Vec<Server>,
-    pub rules: AHashMap<String, Vec<Rule>>,
     pub hosts: AHashMap<String, Arc<Host>>,
     pub scripts: AHashMap<String, Arc<Script>>,
     pub lists: AHashMap<String, Arc<List>>,
     pub queues: AHashMap<String, Arc<Queue>>,
-    pub throttle: AHashMap<String, Arc<Throttle>>,
 }
 
 pub type Result<T> = std::result::Result<T, String>;

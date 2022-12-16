@@ -139,27 +139,10 @@ impl Config {
             ))
         }
     }
-
-    pub fn parse_values<T: ParseValues>(&self, prefix: impl AsKey) -> super::Result<T> {
-        let mut result = T::default();
-        for (pos, (key, value)) in self.values(prefix.clone()).enumerate() {
-            if pos == 0 || T::is_multivalue() {
-                result.add_value(T::Item::parse_value(key, value)?);
-            } else {
-                return Err(format!(
-                    "Property {:?} cannot have multiple values.",
-                    prefix.as_key()
-                ));
-            }
-        }
-        Ok(result)
-    }
 }
 
 pub trait ParseValues: Sized + Default {
-    type Item: ParseValue;
-
-    fn add_value(&mut self, value: Self::Item);
+    fn parse_values(key: impl AsKey, values: &Config) -> super::Result<Self>;
     fn is_multivalue() -> bool;
 }
 
@@ -190,26 +173,39 @@ impl<T: ParseValue> ParseKey<T> for &String {
 }
 
 impl<T: ParseValue> ParseValues for Vec<T> {
-    type Item = T;
-
-    fn add_value(&mut self, value: Self::Item) {
-        self.push(value);
-    }
-
     fn is_multivalue() -> bool {
         true
+    }
+
+    fn parse_values(key: impl AsKey, values: &Config) -> super::Result<Self> {
+        let mut result = Vec::new();
+        for (key, value) in values.values(key) {
+            result.push(T::parse_value(key, value)?);
+        }
+        Ok(result)
     }
 }
 
 impl<T: ParseValue + Default> ParseValues for T {
-    type Item = T;
-
-    fn add_value(&mut self, value: Self::Item) {
-        *self = value;
-    }
-
     fn is_multivalue() -> bool {
         false
+    }
+
+    fn parse_values(key: impl AsKey, values: &Config) -> super::Result<Self> {
+        let mut iter = values.values(key.clone());
+        if let Some((key, value)) = iter.next() {
+            let result = T::parse_value(key, value)?;
+            if iter.next().is_none() {
+                Ok(result)
+            } else {
+                Err(format!(
+                    "Property {:?} cannot have multiple values.",
+                    key.as_key()
+                ))
+            }
+        } else {
+            Ok(T::default())
+        }
     }
 }
 
@@ -245,7 +241,19 @@ impl ParseValue for u64 {
     }
 }
 
-impl ParseValue for i64 {
+impl ParseValue for u16 {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        value.parse().map_err(|_| {
+            format!(
+                "Invalid integer value {:?} for property {:?}.",
+                value,
+                key.as_key()
+            )
+        })
+    }
+}
+
+impl ParseValue for i16 {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
         value.parse().map_err(|_| {
             format!(
@@ -438,7 +446,7 @@ idle = 20
 
 [servers."submissions"]
 hostname = "submit.example.org"
-ip = a:b::1:1
+ip = "a:b::1:1"
 "#;
         let config = Config::parse(toml).unwrap();
 

@@ -11,155 +11,155 @@ priority = -4
 listener-id = 123
 
 [rule]
-"eq-true" = {key = "rcpt-domain", op = "eq", value = "example.org"}
-"eq-false" = {key = "rcpt-domain", op = "eq", value = "example.com"}
-"listener-eq-true" = {key = "listener", op = "eq", value = "smtp"}
-"listener-eq-false" = {key = "listener", op = "eq", value = "smtps"}
-"ip-eq-true" = {key = "local-ip", op = "eq", value = "192.168.9.0/24"}
-"ip-eq-false" = {key = "remote-ip", op = "eq", value = "A:B:C::D:F/128"}
-"ne-true" = {key = "authenticated-as", op = "ne", value = ""}
-"ne-false" = {key = "authenticated-as", op = "ne", value = "john@foobar.org"}
-"starts-with-true" = {key = "mx", op = "starts-with", value = "mx.some"}
-"starts-with-false" = {key = "mx", op = "starts-with", value = "enchilada"}
-"ends-with-true" = {key = "sender", op = "ends-with", value = "@foo.net"}
-"ends-with-false" = {key = "sender", op = "ends-with", value = "chimichanga"}
-"in-list-true" = {key = "sender-domain", op = "in-list", value = "domains"}
-"in-list-false" = {key = "rcpt-domain", op = "in-list", value = "domains"}
-"not-in-list-true" = {key = "rcpt-domain", op = "not-in-list", value = "domains"}
-"not-in-list-false" = {key = "sender-domain", op = "not-in-list", value = "domains"}
-"regex-true" = {key = "sender", op = "regex-match", value = "^(.+)@(.+)$"}
-"regex-false" = {key = "mx", op = "regex-match", value = "/^\\S+@\\S+\\.\\S+$/"}
+"eq-true" = {key = "rcpt-domain", eq = "example.org"}
+"eq-false" = {key = "rcpt-domain", eq = "example.com"}
+"listener-eq-true" = {key = "listener", eq = "smtp"}
+"listener-eq-false" = {key = "listener", eq = "smtps"}
+"ip-eq-true" = {key = "local-ip", eq = "192.168.9.0/24"}
+"ip-eq-false" = {key = "remote-ip", eq = "A:B:C::D:F/128"}
+"ne-true" = {key = "authenticated-as", ne = ""}
+"ne-false" = {key = "authenticated-as", ne = "john@foobar.org"}
+"starts-with-true" = {key = "mx", starts-with = "mx.some"}
+"starts-with-false" = {key = "mx", starts-with = "enchilada"}
+"ends-with-true" = {key = "sender", ends-with = "@foo.net"}
+"ends-with-false" = {key = "sender", ends-with = "chimichanga"}
+"in-list-true" = {key = "sender-domain", in-list = "domains"}
+"in-list-false" = {key = "rcpt-domain", in-list = "domains"}
+"not-in-list-true" = {key = "rcpt-domain", not-in-list = "domains"}
+"not-in-list-false" = {key = "sender-domain", not-in-list = "domains"}
+"regex-true" = {key = "sender", regex-match = "^(.+)@(.+)$"}
+"regex-false" = {key = "mx", regex-match = "/^\\S+@\\S+\\.\\S+$/"}
 
-"any-of-true" = { op = "any-of", value = [
-    {key = "authenticated-as", op = "ne", value = "john@foobar.org"},
-    {key = "rcpt-domain", op = "eq", value = "example.org"},
-    {key = "mx", op = "starts-with", value = "mx.some"},
+"any-of-true" = { any-of = [
+    {key = "authenticated-as", ne = "john@foobar.org"},
+    {key = "rcpt-domain", eq = "example.org"},
+    {key = "mx", starts-with = "mx.some"},
 ]}
-"any-of-false" = { op = "any-of", value = [
-    {key = "authenticated-as", op = "eq", value = "something else"},
-    {key = "rcpt-domain", op = "eq", value = "something else"},
-    {key = "mx", op = "starts-with", value = "something else"},
+"any-of-false" = { any-of = [
+    {key = "authenticated-as", eq = "something else"},
+    {key = "rcpt-domain", eq = "something else"},
+    {key = "mx", starts-with = "something else"},
 ]}
-"all-of-true" = { op = "all-of", value = [
-    {key = "rcpt-domain", op = "eq", value = "example.org"},
-    {key = "listener", op = "eq", value = "smtp"},
-    {key = "mx", op = "starts-with", value = "mx.some"}
+"all-of-true" = { all-of = [
+    {key = "rcpt-domain", eq = "example.org"},
+    {key = "listener", eq = "smtp"},
+    {key = "mx", starts-with = "mx.some"}
 ]}
-"all-of-false" = { op = "all-of", value = [
-    {key = "rcpt-domain", op = "eq", value = "example.org"},
-    {key = "listener", op = "eq", value = "smtp"},
-    {key = "mx", op = "starts-with", value = "something else"}
+"all-of-false" = { all-of = [
+    {key = "rcpt-domain", eq = "example.org"},
+    {key = "listener", eq = "smtp"},
+    {key = "mx", starts-with = "something else"}
 ]}
-"none-of-true" = { op = "none-of", value = [
-    {key = "authenticated-as", op = "eq", value = "something else"},
-    {key = "rcpt-domain", op = "eq", value = "something else"},
-    {key = "mx", op = "starts-with", value = "something else"},
+"none-of-true" = { none-of = [
+    {key = "authenticated-as", eq = "something else"},
+    {key = "rcpt-domain", eq = "something else"},
+    {key = "mx", starts-with = "something else"},
 ]}
-"none-of-false" = { op = "none-of", value = [
-    {key = "rcpt-domain", op = "eq", value = "example.org"},
-    {key = "listener", op = "eq", value = "smtp"},
-    {key = "mx", op = "starts-with", value = "mx.some"}
+"none-of-false" = { none-of = [
+    {key = "rcpt-domain", eq = "example.org"},
+    {key = "listener", eq = "smtp"},
+    {key = "mx", starts-with = "mx.some"}
 ]}
-nested-any-of-true = { op = "any-of", value = [
-    { op = "all-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "something else"}
+nested-any-of-true = { any-of = [
+    { all-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "something else"}
     ]},
-    { op = "none-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "mx.some"}
+    { none-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "mx.some"}
     ]},
-    { op = "any-of", value = [
-        {key = "authenticated-as", op = "ne", value = "john@foobar.org"},
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "mx", op = "starts-with", value = "mx.some"},
+    { any-of = [
+        {key = "authenticated-as", ne = "john@foobar.org"},
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "mx", starts-with = "mx.some"},
     ]}
 ]}
-nested-any-of-false = { op = "any-of", value = [
-    { op = "none-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "mx.some"}
+nested-any-of-false = { any-of = [
+    { none-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "mx.some"}
     ]},
-    { op = "all-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "something else"}
+    { all-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "something else"}
     ]},
-    { op = "any-of", value = [
-        {key = "authenticated-as", op = "eq", value = "something else"},
-        {key = "rcpt-domain", op = "eq", value = "something else"},
-        {key = "mx", op = "starts-with", value = "something else"},
+    { any-of = [
+        {key = "authenticated-as", eq = "something else"},
+        {key = "rcpt-domain", eq = "something else"},
+        {key = "mx", starts-with = "something else"},
     ]}
 ]}
-nested-all-of-true = { op = "all-of", value = [
-    { op = "any-of", value = [
-        {key = "authenticated-as", op = "ne", value = "john@foobar.org"},
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "mx", op = "starts-with", value = "mx.some"},
+nested-all-of-true = { all-of = [
+    { any-of = [
+        {key = "authenticated-as", ne = "john@foobar.org"},
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "mx", starts-with = "mx.some"},
     ]},
-    { op = "all-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "mx.some"}
+    { all-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "mx.some"}
     ]},
-    { op = "none-of", value = [
-        {key = "authenticated-as", op = "eq", value = "something else"},
-        {key = "rcpt-domain", op = "eq", value = "something else"},
-        {key = "mx", op = "starts-with", value = "something else"},
+    { none-of = [
+        {key = "authenticated-as", eq = "something else"},
+        {key = "rcpt-domain", eq = "something else"},
+        {key = "mx", starts-with = "something else"},
     ]}
 ]}
-nested-all-of-false = { op = "all-of", value = [
-    { op = "any-of", value = [
-        {key = "authenticated-as", op = "ne", value = "john@foobar.org"},
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "mx", op = "starts-with", value = "mx.some"},
+nested-all-of-false = { all-of = [
+    { any-of = [
+        {key = "authenticated-as", ne = "john@foobar.org"},
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "mx", starts-with = "mx.some"},
     ]},
-    { op = "all-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "mx.some"}
+    { all-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "mx.some"}
     ]},
-    { op = "none-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "mx.some"}
+    { none-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "mx.some"}
     ]}
 ]}
-nested-none-of-true = { op = "none-of", value = [
-    { op = "none-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "mx.some"}
+nested-none-of-true = { none-of = [
+    { none-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "mx.some"}
     ]},
-    { op = "all-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "something else"}
+    { all-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "something else"}
     ]},
-    { op = "any-of", value = [
-        {key = "authenticated-as", op = "eq", value = "something else"},
-        {key = "rcpt-domain", op = "eq", value = "something else"},
-        {key = "mx", op = "starts-with", value = "something else"},
+    { any-of = [
+        {key = "authenticated-as", eq = "something else"},
+        {key = "rcpt-domain", eq = "something else"},
+        {key = "mx", starts-with = "something else"},
     ]}
 ]}
-nested-none-of-false = { op = "none-of", value = [
-    { op = "any-of", value = [
-        {key = "authenticated-as", op = "ne", value = "john@foobar.org"},
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "mx", op = "starts-with", value = "mx.some"},
+nested-none-of-false = { none-of = [
+    { any-of = [
+        {key = "authenticated-as", ne = "john@foobar.org"},
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "mx", starts-with = "mx.some"},
     ]},
-    { op = "all-of", value = [
-        {key = "rcpt-domain", op = "eq", value = "example.org"},
-        {key = "listener", op = "eq", value = "smtp"},
-        {key = "mx", op = "starts-with", value = "mx.some"}
+    { all-of = [
+        {key = "rcpt-domain", eq = "example.org"},
+        {key = "listener", eq = "smtp"},
+        {key = "mx", starts-with = "mx.some"}
     ]},
-    { op = "none-of", value = [
-        {key = "authenticated-as", op = "eq", value = "something else"},
-        {key = "rcpt-domain", op = "eq", value = "something else"},
-        {key = "mx", op = "starts-with", value = "something else"},
+    { none-of = [
+        {key = "authenticated-as", eq = "something else"},
+        {key = "rcpt-domain", eq = "something else"},
+        {key = "mx", starts-with = "something else"},
     ]}
 ]}
 
