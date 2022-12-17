@@ -192,7 +192,7 @@ impl<T: ParseValue + Default> ParseValues for T {
     }
 
     fn parse_values(key: impl AsKey, values: &Config) -> super::Result<Self> {
-        let mut iter = values.values(key.clone());
+        let mut iter = values.values(key);
         if let Some((key, value)) = iter.next() {
             let result = T::parse_value(key, value)?;
             if iter.next().is_none() {

@@ -141,32 +141,35 @@ impl BuildHasher for ThrottleKeyHasherBuilder {
 }
 
 impl ThrottleKey {
-    pub fn new(e: &Envelope, t: &Throttle) -> Self {
+    pub fn new(e: &impl Envelope, t: &Throttle) -> Self {
         let mut hasher = blake3::Hasher::new();
 
         if (t.keys & THROTTLE_RCPT) != 0 {
-            hasher.update(e.rcpt.as_bytes());
+            hasher.update(e.rcpt().as_bytes());
         }
         if (t.keys & THROTTLE_RCPT_DOMAIN) != 0 {
-            hasher.update(e.rcpt_domain.as_bytes());
+            hasher.update(e.rcpt_domain().as_bytes());
         }
         if (t.keys & THROTTLE_SENDER) != 0 {
-            hasher.update(e.sender.as_bytes());
+            hasher.update(e.sender().as_bytes());
         }
         if (t.keys & THROTTLE_SENDER_DOMAIN) != 0 {
-            hasher.update(e.sender_domain.as_bytes());
+            hasher.update(e.sender_domain().as_bytes());
+        }
+        if (t.keys & THROTTLE_HELO_DOMAIN) != 0 {
+            hasher.update(e.helo_domain().as_bytes());
         }
         if (t.keys & THROTTLE_AUTH_AS) != 0 {
-            hasher.update(e.authenticated_as.as_bytes());
+            hasher.update(e.authenticated_as().as_bytes());
         }
         if (t.keys & THROTTLE_LISTENER) != 0 {
-            hasher.update(&e.listener_id.to_ne_bytes()[..]);
+            hasher.update(&e.listener_id().to_ne_bytes()[..]);
         }
         if (t.keys & THROTTLE_MX) != 0 {
-            hasher.update(e.mx.as_bytes());
+            hasher.update(e.mx().as_bytes());
         }
         if (t.keys & THROTTLE_REMOTE_IP) != 0 {
-            match &e.local_ip {
+            match &e.local_ip() {
                 IpAddr::V4(ip) => {
                     hasher.update(&ip.octets()[..]);
                 }
@@ -176,7 +179,7 @@ impl ThrottleKey {
             }
         }
         if (t.keys & THROTTLE_LOCAL_IP) != 0 {
-            match &e.remote_ip {
+            match &e.remote_ip() {
                 IpAddr::V4(ip) => {
                     hasher.update(&ip.octets()[..]);
                 }
@@ -199,59 +202,12 @@ impl ThrottleKey {
     }
 }
 
-impl Throttle {
-    pub fn to_key(&self, e: &Envelope) -> String {
-        use std::fmt::Write;
-
-        let mut result = String::with_capacity(32);
-        if (self.keys & THROTTLE_RCPT) != 0 {
-            result.push_str(e.rcpt.as_str());
-        }
-        if (self.keys & THROTTLE_RCPT_DOMAIN) != 0 {
-            result.push_str(e.rcpt_domain.as_str());
-        }
-        if (self.keys & THROTTLE_SENDER) != 0 {
-            result.push_str(e.sender.as_str());
-        }
-        if (self.keys & THROTTLE_SENDER_DOMAIN) != 0 {
-            result.push_str(e.sender_domain.as_str());
-        }
-        if (self.keys & THROTTLE_AUTH_AS) != 0 {
-            result.push_str(e.authenticated_as.as_str());
-        }
-        if (self.keys & THROTTLE_LISTENER) != 0 {
-            write!(result, "{}", e.listener_id).ok();
-        }
-        if (self.keys & THROTTLE_MX) != 0 {
-            result.push_str(e.mx.as_str());
-        }
-        if (self.keys & THROTTLE_REMOTE_IP) != 0 {
-            write!(result, "{}", e.local_ip).ok();
-        }
-        if (self.keys & THROTTLE_LOCAL_IP) != 0 {
-            write!(result, "{}", e.remote_ip).ok();
-        }
-        if let Some(rate_limit) = &self.rate {
-            write!(result, "{}", rate_limit.period.as_secs()).ok();
-            write!(result, "{}", rate_limit.requests).ok();
-        }
-        if let Some(concurrency) = &self.concurrency {
-            write!(result, "{}", concurrency).ok();
-        }
-        result
-    }
-}
-
 impl<T: AsyncRead + AsyncWrite> Session<T> {
     pub fn is_allowed(&mut self, throttle: &[Throttle]) -> bool {
         for t in throttle {
-            if t.condition.is_empty() || t.condition.eval(&self.envelope) {
+            if t.condition.is_empty() || t.condition.eval(self) {
                 // Build throttle key
-                match self
-                    .core
-                    .throttle
-                    .entry(ThrottleKey::new(&self.envelope, t))
-                {
+                match self.core.throttle.entry(ThrottleKey::new(self, t)) {
                     Entry::Occupied(e) => {
                         let limiter = e.get();
                         if let Some(limiter) = &limiter.concurrency {

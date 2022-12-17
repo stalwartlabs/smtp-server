@@ -12,6 +12,7 @@ impl Config {
         &self,
         key_: impl AsKey,
         ctx: &ConfigContext,
+        available_keys: &[EnvelopeKey],
     ) -> super::Result<Vec<Condition>> {
         let mut rules = Vec::new();
         let mut stack = Vec::new();
@@ -83,6 +84,13 @@ impl Config {
                 }
             } else {
                 let key = self.property_require::<EnvelopeKey>((&prefix, "key"))?;
+                if !available_keys.contains(&key) {
+                    return Err(format!(
+                        "Envelope key {:?} is not available in this context for property {:?}",
+                        key, prefix
+                    ));
+                }
+
                 let (op, op_is_not) = match op_str {
                     "eq" | "equal-to" | "in-list" | "regex" | "regex-match" => {
                         (ConditionOp::Equal, false)
@@ -223,11 +231,23 @@ impl Config {
     ) -> super::Result<ahash::AHashMap<String, Vec<Condition>>> {
         use ahash::AHashMap;
         let mut rules = AHashMap::new();
+        let available_keys = vec![
+            EnvelopeKey::Recipient,
+            EnvelopeKey::RecipientDomain,
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::AuthenticatedAs,
+            EnvelopeKey::Listener,
+            EnvelopeKey::Mx,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+            EnvelopeKey::Priority,
+        ];
 
         for rule_name in self.sub_keys("rule") {
             rules.insert(
                 rule_name.to_string(),
-                self.parse_condition(("rule", rule_name), ctx)?,
+                self.parse_condition(("rule", rule_name), ctx, &available_keys)?,
             );
         }
 

@@ -4,7 +4,7 @@ use ahash::AHashMap;
 
 use super::{
     utils::{AsKey, ParseValues},
-    Config, ConfigContext, IfBlock, IfThen,
+    Config, ConfigContext, EnvelopeKey, IfBlock, IfThen,
 };
 
 impl Config {
@@ -12,6 +12,7 @@ impl Config {
         &self,
         prefix: impl AsKey,
         ctx: &ConfigContext,
+        available_keys: &[EnvelopeKey],
     ) -> super::Result<Option<IfBlock<T>>> {
         let key = prefix.as_key();
         let prefix = prefix.as_prefix();
@@ -45,6 +46,7 @@ impl Config {
                                 rules: self.parse_condition(
                                     (key.as_str(), suffix_.split_once(".if").unwrap().0, "if"),
                                     ctx,
+                                    available_keys,
                                 )?,
                                 then: T::default(),
                             });
@@ -264,10 +266,22 @@ mod tests {
 
         // Create context and add some rules
         let context = ConfigContext::default();
+        let available_keys = vec![
+            EnvelopeKey::Recipient,
+            EnvelopeKey::RecipientDomain,
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::AuthenticatedAs,
+            EnvelopeKey::Listener,
+            EnvelopeKey::Mx,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+            EnvelopeKey::Priority,
+        ];
 
         assert_eq!(
             config
-                .parse_if_block::<Option<Duration>>("durations", &context)
+                .parse_if_block::<Option<Duration>>("durations", &context, &available_keys)
                 .unwrap()
                 .unwrap(),
             IfBlock {
@@ -306,7 +320,7 @@ mod tests {
 
         assert_eq!(
             config
-                .parse_if_block::<Vec<String>>("string-list", &context)
+                .parse_if_block::<Vec<String>>("string-list", &context, &available_keys)
                 .unwrap()
                 .unwrap(),
             IfBlock {
@@ -345,7 +359,7 @@ mod tests {
 
         assert_eq!(
             config
-                .parse_if_block::<Vec<String>>("string-list-bis", &context)
+                .parse_if_block::<Vec<String>>("string-list-bis", &context, &available_keys)
                 .unwrap()
                 .unwrap(),
             IfBlock {
@@ -384,7 +398,7 @@ mod tests {
 
         assert_eq!(
             config
-                .parse_if_block::<String>("single-value", &context)
+                .parse_if_block::<String>("single-value", &context, &available_keys)
                 .unwrap()
                 .unwrap(),
             IfBlock {
@@ -399,7 +413,7 @@ mod tests {
             "bad-if-without-else",
             "bad-multiple-else",
         ] {
-            if let Ok(value) = config.parse_if_block::<u32>(bad_rule, &context) {
+            if let Ok(value) = config.parse_if_block::<u32>(bad_rule, &context, &available_keys) {
                 panic!("Condition {:?} had unexpected result {:?}", bad_rule, value);
             }
         }

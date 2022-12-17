@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -9,7 +9,7 @@ use tokio_rustls::{server::TlsStream, TlsAcceptor};
 
 use crate::{
     config::Server,
-    core::{Core, Envelope, Session},
+    core::{Core, ServerInstance, Session, SessionData, SessionParameters, State},
 };
 
 impl Server {
@@ -17,10 +17,17 @@ impl Server {
         // Build TLS acceptor
         let tls_acceptor = self.tls.map(|config| TlsAcceptor::from(Arc::new(config)));
         let tls_implicit = self.tls_implicit;
-        let listener_id = self.internal_id;
 
-        // Build concurrency limiter for
+        // Prepare instance
+        let instance = Arc::new(ServerInstance {
+            greeting: format!("220 {} {}\r\n", self.hostname, self.greeting).into_bytes(),
+            id: self.id,
+            listener_id: self.internal_id,
+            protocol: self.protocol,
+            hostname: self.hostname,
+        });
 
+        // Spawn listeners
         for listener_config in self.listeners {
             // Bind socket
             let local_ip = listener_config.addr.ip();
@@ -41,7 +48,7 @@ impl Server {
             // Create tracing span
             let listener_span = tracing::info_span!(
                 "listener",
-                id = self.id,
+                id = instance.id,
                 bind.ip = listener_config.addr.ip().to_string(),
                 bind.port = listener_config.addr.port(),
                 tls = tls_implicit
@@ -50,6 +57,7 @@ impl Server {
             // Spawn listener
             let mut shutdown_rx = shutdown_rx.clone();
             let core = core.clone();
+            let instance = instance.clone();
             let tls_acceptor = tls_acceptor.clone();
             tokio::spawn(async move {
                 loop {
@@ -81,12 +89,15 @@ impl Server {
 
                                     // Create session
                                     let mut session = Session {
-                                        envelope: Envelope::new(local_ip, remote_addr.ip())
-                                                    .with_listener_id(listener_id),
                                         core: core.clone(),
+                                        instance: instance.clone(),
+                                        state: State::default(),
                                         span,
                                         stream,
                                         in_flight,
+                                        data: SessionData::new(local_ip, remote_addr.ip()),
+                                        params: SessionParameters::default()
+                                                .can_starttls(tls_acceptor.is_some() && !tls_implicit),
                                     };
 
                                     // Enforce throttle
@@ -96,17 +107,19 @@ impl Server {
 
                                     // Spawn connection
                                     let shutdown_rx = shutdown_rx.clone();
-                                    let greeting = "a".as_bytes();
                                     let tls_acceptor = tls_acceptor.clone();
+                                    let instance = instance.clone();
 
                                     tokio::spawn(async move {
                                         if tls_implicit {
                                             if let Ok(mut session) = session.into_tls(tls_acceptor.unwrap()).await {
-                                                if session.write(greeting).await.is_ok() {
+                                                if session.write(&instance.greeting).await.is_ok() {
+                                                    session.eval_connect_params();
                                                     session.handle_conn(shutdown_rx).await;
                                                 }
                                             }
-                                        } else if session.write(greeting).await.is_ok() {
+                                        } else if session.write(&instance.greeting).await.is_ok() {
+                                            session.eval_connect_params();
                                             session.handle_conn(tls_acceptor, shutdown_rx).await;
                                         }
                                     });
@@ -136,10 +149,11 @@ impl Server {
 
 impl Session<TcpStream> {
     pub async fn into_tls(
-        self,
+        mut self,
         acceptor: TlsAcceptor,
     ) -> Result<Session<TlsStream<TcpStream>>, ()> {
         let span = self.span;
+        self.params.starttls = false;
         Ok(Session {
             stream: match acceptor.accept(self.stream).await {
                 Ok(stream) => stream,
@@ -154,9 +168,12 @@ impl Session<TcpStream> {
                     return Err(());
                 }
             },
-            envelope: self.envelope,
+            state: self.state,
+            data: self.data,
+            instance: self.instance,
             core: self.core,
             in_flight: self.in_flight,
+            params: self.params,
             span,
         })
     }
@@ -187,8 +204,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
         mut self,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> Option<(Session<T>, watch::Receiver<bool>)> {
-        let mut buf = vec![0; 4096];
-        let timeout = *self.core.stage.connect.timeout.eval(&self.envelope);
+        let mut buf = vec![0; 8192];
+        let timeout = *self.core.stage.connect.timeout.eval(&self);
 
         loop {
             tokio::select! {
@@ -198,14 +215,28 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
                         match result {
                             Ok(Ok(bytes_read)) => {
                                 if bytes_read > 0 {
-                                    match self.ingest(&buf[..bytes_read]).await {
-                                        Ok(true) => (),
-                                        Ok(false) => {
-                                            return (self, shutdown_rx).into();
+                                    if Instant::now() < self.data.valid_until {
+                                        match self.ingest(&buf[..bytes_read]).await {
+                                            Ok(true) => (),
+                                            Ok(false) => {
+                                                return (self, shutdown_rx).into();
+                                            }
+                                            Err(_) => {
+                                                break;
+                                            }
                                         }
-                                        Err(_) => {
-                                            break;
-                                        }
+                                    } else {
+                                        self
+                                            .write(format!("221 2.0.0 {} Session open for too long, disconnecting.\r\n", self.instance.hostname).as_bytes())
+                                            .await
+                                            .ok();
+                                        tracing::debug!(
+                                            parent: &self.span,
+                                            event = "disconnect",
+                                            reason = "loiter",
+                                            "Session open for too long."
+                                        );
+                                        break;
                                     }
                                 } else {
                                     tracing::debug!(
@@ -228,7 +259,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
                                     "Connection timed out."
                                 );
                                 self
-                                    .write(b"221 2.0.0 Disconnecting inactive client.\r\n")
+                                    .write(format!("221 2.0.0 {} Disconnecting inactive client.\r\n", self.instance.hostname).as_bytes())
                                     .await
                                     .ok();
                                 break;

@@ -8,11 +8,18 @@ impl Config {
         &self,
         prefix: impl AsKey,
         ctx: &ConfigContext,
+        available_envelope_keys: &[EnvelopeKey],
+        available_throttle_keys: u16,
     ) -> super::Result<Vec<Throttle>> {
         let prefix_ = prefix.as_key();
         let mut throttles = Vec::new();
         for array_pos in self.sub_keys(prefix) {
-            throttles.push(self.parse_throttle_item((&prefix_, array_pos), ctx)?);
+            throttles.push(self.parse_throttle_item(
+                (&prefix_, array_pos),
+                ctx,
+                available_envelope_keys,
+                available_throttle_keys,
+            )?);
         }
 
         Ok(throttles)
@@ -22,11 +29,13 @@ impl Config {
         &self,
         prefix: impl AsKey,
         ctx: &ConfigContext,
+        available_envelope_keys: &[EnvelopeKey],
+        available_throttle_keys: u16,
     ) -> super::Result<Throttle> {
         let prefix = prefix.as_key();
         let mut keys = 0;
         for (key, value) in self.values((&prefix, "key")) {
-            keys |= match value {
+            let key = match value {
                 "rcpt" => THROTTLE_RCPT,
                 "rcpt-domain" => THROTTLE_RCPT_DOMAIN,
                 "sender" => THROTTLE_SENDER,
@@ -35,7 +44,8 @@ impl Config {
                 "listener-id" => THROTTLE_LISTENER,
                 "mx" => THROTTLE_MX,
                 "remote-ip" => THROTTLE_REMOTE_IP,
-                "local_ip" => THROTTLE_LOCAL_IP,
+                "local-ip" => THROTTLE_LOCAL_IP,
+                "helo-domain" => THROTTLE_HELO_DOMAIN,
                 _ => {
                     return Err(format!(
                         "Invalid throttle key {:?} found in {:?}",
@@ -43,6 +53,14 @@ impl Config {
                     ))
                 }
             };
+            if (key & available_throttle_keys) != 0 {
+                keys |= key;
+            } else {
+                return Err(format!(
+                    "Throttle key {:?} is not available in this context for property {:?}",
+                    key, prefix
+                ));
+            }
         }
 
         if keys == 0 {
@@ -51,7 +69,7 @@ impl Config {
 
         let throttle = Throttle {
             condition: if self.values((&prefix, "if")).next().is_some() {
-                self.parse_condition((&prefix, "if"), ctx)?
+                self.parse_condition((&prefix, "if"), ctx, available_envelope_keys)?
             } else {
                 Vec::with_capacity(0)
             },
@@ -150,9 +168,24 @@ mod tests {
         file.push("config");
         file.push("throttle.toml");
 
+        let available_keys = vec![
+            EnvelopeKey::Recipient,
+            EnvelopeKey::RecipientDomain,
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::AuthenticatedAs,
+            EnvelopeKey::Listener,
+            EnvelopeKey::Mx,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+            EnvelopeKey::Priority,
+        ];
+
         let config = Config::parse(&fs::read_to_string(file).unwrap()).unwrap();
         let context = ConfigContext::default();
-        let throttle = config.parse_throttle("throttle", &context).unwrap();
+        let throttle = config
+            .parse_throttle("throttle", &context, &available_keys, u16::MAX)
+            .unwrap();
 
         assert_eq!(
             throttle,

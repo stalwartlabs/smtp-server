@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    net::{IpAddr, Ipv4Addr},
-};
+use std::net::{IpAddr, Ipv4Addr};
 
 use crate::config::{
     Condition, ConditionOp, ConditionValue, EnvelopeKey, IfBlock, IpAddrMask, List,
@@ -10,7 +7,7 @@ use crate::config::{
 use super::Envelope;
 
 impl<T: Default> IfBlock<T> {
-    pub fn eval(&self, envelope: &Envelope) -> &T {
+    pub fn eval(&self, envelope: &impl Envelope) -> &T {
         for if_then in &self.if_then {
             if if_then.rules.eval(envelope) {
                 return &if_then.then;
@@ -22,11 +19,11 @@ impl<T: Default> IfBlock<T> {
 }
 
 pub trait ConditionEval {
-    fn eval(&self, envelope: &Envelope) -> bool;
+    fn eval(&self, envelope: &impl Envelope) -> bool;
 }
 
 impl ConditionEval for Vec<Condition> {
-    fn eval(&self, envelope: &Envelope) -> bool {
+    fn eval(&self, envelope: &impl Envelope) -> bool {
         let mut rules = self.iter();
         let mut matched = false;
 
@@ -49,8 +46,8 @@ impl ConditionEval for Vec<Condition> {
                         }
                         ConditionValue::IpAddrMask(value) => {
                             let ctx_value = match key {
-                                EnvelopeKey::RemoteIp => envelope.remote_ip,
-                                EnvelopeKey::LocalIp => envelope.local_ip,
+                                EnvelopeKey::RemoteIp => *envelope.remote_ip(),
+                                EnvelopeKey::LocalIp => *envelope.local_ip(),
                                 _ => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
                             };
 
@@ -61,25 +58,25 @@ impl ConditionEval for Vec<Condition> {
                         }
                         ConditionValue::UInt(value) => {
                             let ctx_value = if key == &EnvelopeKey::Listener {
-                                &envelope.listener_id
+                                envelope.listener_id()
                             } else {
                                 debug_assert!(false, "Invalid value for UInt context key.");
-                                &u16::MAX
+                                u16::MAX
                             };
                             match op {
-                                ConditionOp::Equal => value == ctx_value,
+                                ConditionOp::Equal => *value == ctx_value,
                                 ConditionOp::StartsWith | ConditionOp::EndsWith => false,
                             }
                         }
                         ConditionValue::Int(value) => {
                             let ctx_value = if key == &EnvelopeKey::Listener {
-                                &envelope.priority
+                                envelope.priority()
                             } else {
                                 debug_assert!(false, "Invalid value for UInt context key.");
-                                &i16::MAX
+                                i16::MAX
                             };
                             match op {
-                                ConditionOp::Equal => value == ctx_value,
+                                ConditionOp::Equal => *value == ctx_value,
                                 ConditionOp::StartsWith | ConditionOp::EndsWith => false,
                             }
                         }
@@ -122,23 +119,6 @@ impl ConditionEval for Vec<Condition> {
         }
 
         matched
-    }
-}
-
-impl Envelope {
-    pub fn key_to_string(&self, key: &EnvelopeKey) -> Cow<'_, str> {
-        match key {
-            EnvelopeKey::Recipient => self.rcpt.as_str().into(),
-            EnvelopeKey::RecipientDomain => self.rcpt_domain.as_str().into(),
-            EnvelopeKey::Sender => self.sender.as_str().into(),
-            EnvelopeKey::SenderDomain => self.sender_domain.as_str().into(),
-            EnvelopeKey::AuthenticatedAs => self.authenticated_as.as_str().into(),
-            EnvelopeKey::Mx => self.mx.as_str().into(),
-            EnvelopeKey::Listener => self.listener_id.to_string().into(),
-            EnvelopeKey::RemoteIp => self.remote_ip.to_string().into(),
-            EnvelopeKey::LocalIp => self.local_ip.to_string().into(),
-            EnvelopeKey::Priority => self.priority.to_string().into(),
-        }
     }
 }
 
@@ -191,12 +171,72 @@ impl IpAddrMask {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{fs, net::IpAddr, path::PathBuf};
 
     use crate::{
         config::{Config, ConfigContext, IfBlock, IfThen, Server},
         core::Envelope,
     };
+
+    struct TestEnvelope {
+        pub local_ip: IpAddr,
+        pub remote_ip: IpAddr,
+        pub sender_domain: String,
+        pub sender: String,
+        pub rcpt_domain: String,
+        pub rcpt: String,
+        pub helo_domain: String,
+        pub authenticated_as: String,
+        pub mx: String,
+        pub listener_id: u16,
+        pub priority: i16,
+    }
+
+    impl Envelope for TestEnvelope {
+        fn local_ip(&self) -> &IpAddr {
+            &self.local_ip
+        }
+
+        fn remote_ip(&self) -> &IpAddr {
+            &self.remote_ip
+        }
+
+        fn sender_domain(&self) -> &str {
+            self.sender_domain.as_str()
+        }
+
+        fn sender(&self) -> &str {
+            self.sender.as_str()
+        }
+
+        fn rcpt_domain(&self) -> &str {
+            self.rcpt_domain.as_str()
+        }
+
+        fn rcpt(&self) -> &str {
+            self.rcpt.as_str()
+        }
+
+        fn helo_domain(&self) -> &str {
+            self.helo_domain.as_str()
+        }
+
+        fn authenticated_as(&self) -> &str {
+            self.authenticated_as.as_str()
+        }
+
+        fn mx(&self) -> &str {
+            self.mx.as_str()
+        }
+
+        fn listener_id(&self) -> u16 {
+            self.listener_id
+        }
+
+        fn priority(&self) -> i16 {
+            self.priority
+        }
+    }
 
     #[test]
     fn eval_if() {
@@ -221,7 +261,7 @@ mod tests {
         config.parse_lists(&mut context).unwrap();
         let rules = config.parse_rules(&context).unwrap();
 
-        let envelope = Envelope {
+        let envelope = TestEnvelope {
             local_ip: config.property_require("envelope.local-ip").unwrap(),
             remote_ip: config.property_require("envelope.remote-ip").unwrap(),
             sender_domain: config.property_require("envelope.sender-domain").unwrap(),
@@ -234,6 +274,7 @@ mod tests {
             mx: config.property_require("envelope.mx").unwrap(),
             listener_id: config.property_require("envelope.listener-id").unwrap(),
             priority: config.property_require("envelope.priority").unwrap(),
+            helo_domain: config.property_require("envelope.helo-domain").unwrap(),
         };
 
         for (key, rules) in rules {

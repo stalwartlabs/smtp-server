@@ -9,6 +9,7 @@ mx = "mx.somedomain.com"
 authenticated-as = "john@foobar.org"
 priority = -4
 listener-id = 123
+helo-domain = "hi-domain.net"
 
 [rule]
 "eq-true" = {key = "rcpt-domain", eq = "example.org"}

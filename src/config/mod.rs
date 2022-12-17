@@ -132,6 +132,7 @@ pub enum EnvelopeKey {
     RecipientDomain,
     Sender,
     SenderDomain,
+    HeloDomain,
     AuthenticatedAs,
     Listener,
     Mx,
@@ -169,6 +170,7 @@ pub const THROTTLE_LISTENER: u16 = 1 << 5;
 pub const THROTTLE_MX: u16 = 1 << 6;
 pub const THROTTLE_REMOTE_IP: u16 = 1 << 7;
 pub const THROTTLE_LOCAL_IP: u16 = 1 << 8;
+pub const THROTTLE_HELO_DOMAIN: u16 = 1 << 9;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ThrottleRate {
@@ -186,13 +188,14 @@ pub struct Connect {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub concurrency: u64,
     pub timeout: IfBlock<Duration>,
+    pub max_duration: IfBlock<Duration>,
     pub throttle: Vec<Throttle>,
 }
 
 pub struct Ehlo {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub require: IfBlock<bool>,
-    pub max_commands: IfBlock<Option<u64>>,
+    pub multiple: IfBlock<bool>,
 
     // Capabilities
     pub pipelining: IfBlock<bool>,
