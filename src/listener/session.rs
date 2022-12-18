@@ -1,14 +1,14 @@
 use std::{net::IpAddr, time::SystemTime};
 
 use smtp_proto::{
-    request::receiver::{BdatReceiver, DataReceiver},
+    request::receiver::{BdatReceiver, DataReceiver, DummyDataReceiver},
     Capability, EhloResponse, Error, Request,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     config::ServerProtocol,
-    core::{Envelope, Session, State},
+    core::{Envelope, RcptTo, Session, State},
 };
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
@@ -21,7 +21,50 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 State::Request(receiver) => loop {
                     match receiver.ingest(&mut iter, bytes) {
                         Ok(request) => match request {
-                            Request::Rcpt { to, parameters } => todo!(),
+                            Request::Rcpt { to, parameters } => {
+                                if !self.data.mail_from.is_empty() {
+                                    if self.data.rcpt_to.len() < self.params.rcpt_max {
+                                        if self.params.rcpt_relay || do_auth() {
+                                            self.data.rcpt_to.push(RcptTo {
+                                                value_lcase: to.to_lowercase(),
+                                                value: to,
+                                            });
+                                            if self
+                                                .is_allowed(&self.core.clone().config.rcpt.throttle)
+                                            {
+                                                self.eval_data_params();
+                                                self.write(b"250 2.1.5 OK\r\n").await?;
+                                            } else {
+                                                self.data.rcpt_to.pop();
+                                                self.write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n").await?;
+                                            }
+                                        } else {
+                                            tokio::time::sleep(self.params.rcpt_errors_wait).await;
+                                            self.data.rcpt_errors += 1;
+                                            if self.data.rcpt_errors < self.params.rcpt_errors_max {
+                                                self.write(
+                                                    b"550 5.1.2 Mailbox does not exist.\r\n",
+                                                )
+                                                .await?;
+                                            } else {
+                                                self.write(b"550 5.1.2 Too many RCPT errors, disconnecting.\r\n")
+                                                    .await?;
+                                                tracing::debug!(
+                                                    parent: &self.span,
+                                                    event = "disconnect",
+                                                    reason = "rcpt-errors",
+                                                    "Too many invalid RCPT commands."
+                                                );
+                                                return Err(());
+                                            }
+                                        }
+                                    } else {
+                                        self.write(b"451 4.5.3 Too many recipients.\r\n").await?;
+                                    }
+                                } else {
+                                    self.write(b"503 5.5.1 MAIL is required first.\r\n").await?;
+                                }
+                            }
                             Request::Mail { from, parameters } => {
                                 if !self.data.helo_domain.is_empty() || !self.params.ehlo_require {
                                     if self.data.mail_from.is_empty() {
@@ -32,7 +75,17 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                                 self.data.mail_from_lcase = from.to_lowercase();
                                                 self.data.mail_from = from;
                                             } else {
-                                                self.data.mail_from_lcase = "<>".to_string();
+                                                self.data.mail_from = "<>".to_string();
+                                            }
+                                            if self
+                                                .is_allowed(&self.core.clone().config.mail.throttle)
+                                            {
+                                                self.eval_rcpt_params();
+                                                self.write(b"250 2.1.0 OK\r\n").await?;
+                                            } else {
+                                                self.data.mail_from.clear();
+                                                self.data.mail_from_lcase.clear();
+                                                self.write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n").await?;
                                             }
                                         } else {
                                             self.write(
@@ -59,16 +112,33 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 }
                             }
                             Request::Data => {
-                                self.write(b"354 Start mail input; end with <CRLF>.<CRLF>\r\n")
-                                    .await?;
-                                state = State::Data(DataReceiver::new());
-                                continue 'outer;
+                                if self.can_send_data().await? {
+                                    self.write(b"354 Start mail input; end with <CRLF>.<CRLF>\r\n")
+                                        .await?;
+                                    self.data.message = Vec::with_capacity(1024);
+                                    state = State::Data(DataReceiver::new());
+                                    continue 'outer;
+                                }
                             }
                             Request::Bdat {
                                 chunk_size,
                                 is_last,
                             } => {
-                                state = State::Bdat(BdatReceiver::new(chunk_size, is_last));
+                                if chunk_size + self.data.message.len()
+                                    < self.params.data_max_message_size
+                                {
+                                    if self.data.message.is_empty() {
+                                        self.data.message = Vec::with_capacity(chunk_size);
+                                    } else {
+                                        self.data.message.reserve(chunk_size);
+                                    }
+                                    state = State::Bdat(BdatReceiver::new(chunk_size, is_last));
+                                } else {
+                                    // Chunk is too large, ignore.
+                                    state = State::DataTooLarge(DummyDataReceiver::new_bdat(
+                                        chunk_size,
+                                    ));
+                                }
                                 continue 'outer;
                             }
                             Request::Auth {
@@ -107,10 +177,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 }
                             }
                             Request::Rset => {
-                                self.data.mail_from.clear();
-                                self.data.mail_from_lcase.clear();
-                                self.data.rcpt_to.clear();
-                                self.data.priority = 0;
+                                self.reset();
                                 self.write(b"250 2.0.0 OK\r\n").await?;
                             }
                             Request::Quit => {
@@ -129,6 +196,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                     || self.params.ehlo_multiple
                                 {
                                     self.data.helo_domain = host;
+                                    self.eval_mail_params();
                                     self.write(
                                         format!("250 {} says hello\r\n", self.instance.hostname)
                                             .as_bytes(),
@@ -190,18 +258,44 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     }
                 },
                 State::Data(receiver) => {
-                    if receiver.ingest(&mut iter) {
-                        // TODO finish
+                    if self.data.message.len() + bytes.len() < self.params.data_max_message_size {
+                        if receiver.ingest(&mut iter, &mut self.data.message) {
+                            // TODO finish
+                            self.data.messages_sent += 1;
+                            self.reset();
+                            self.write(b"250 2.6.0 Message accepted.\r\n").await?;
+                            state = State::default();
+                        } else {
+                            break 'outer;
+                        }
+                    } else {
+                        state = State::DataTooLarge(DummyDataReceiver::new_data(receiver));
+                    }
+                }
+                State::Bdat(receiver) => {
+                    if receiver.ingest(&mut iter, &mut self.data.message) {
+                        if self.can_send_data().await? {
+                            if receiver.is_last {
+                                // TODO
+                                self.data.messages_sent += 1;
+                                self.reset();
+                                self.write(b"250 2.6.0 Message accepted.\r\n").await?;
+                            } else {
+                                self.write(b"250 2.6.0 Chunk accepted.\r\n").await?;
+                            }
+                        } else {
+                            self.data.message = Vec::with_capacity(0);
+                        }
                         state = State::default();
                     } else {
                         break 'outer;
                     }
                 }
-                State::Bdat(receiver) => {
+                State::DataTooLarge(receiver) => {
                     if receiver.ingest(&mut iter) {
-                        if receiver.is_last {
-                            // TODO
-                        }
+                        self.data.message = Vec::with_capacity(0);
+                        self.write(b"552 5.3.4 Message too big for system.\r\n")
+                            .await?;
                         state = State::default();
                     } else {
                         break 'outer;
@@ -217,7 +311,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
 
     async fn say_ehlo(&mut self, domain: String) -> Result<(), ()> {
         if self.data.helo_domain.is_empty() || self.params.ehlo_multiple {
+            // Set EHLO domain
             self.data.helo_domain = domain;
+
+            // Eval mail parameters
+            self.eval_mail_params();
+
             let mut response = EhloResponse::new(self.instance.hostname.as_str());
             response.capabilities.push(Capability::EnhancedStatusCodes);
             response.capabilities.push(Capability::EightBitMime);
@@ -277,11 +376,37 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     },
                 });
             }
+
+            // Generate response
             let mut buf = Vec::with_capacity(64);
             response.write(&mut buf).ok();
             self.write(&buf).await
         } else {
             self.write(b"503 5.5.1 Already said hello.\r\n").await
+        }
+    }
+
+    fn reset(&mut self) {
+        self.data.mail_from.clear();
+        self.data.mail_from_lcase.clear();
+        self.data.rcpt_to.clear();
+        self.data.message = Vec::with_capacity(0);
+        self.data.priority = 0;
+    }
+
+    async fn can_send_data(&mut self) -> Result<bool, ()> {
+        if !self.data.rcpt_to.is_empty() {
+            if self.data.messages_sent < self.params.data_max_messages {
+                Ok(true)
+            } else {
+                self.write(b"501 5.1.3 Bad destination mailbox address syntax.\r\n")
+                    .await?;
+                Ok(false)
+            }
+        } else {
+            self.write(b"451 4.4.5 Maximum number of messages per session exceeded.\r\n")
+                .await?;
+            Ok(false)
         }
     }
 
@@ -331,15 +456,23 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     }
 }
 
+fn do_auth() -> bool {
+    let coco = "fdf";
+    false
+}
+
 impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
+    #[inline(always)]
     fn local_ip(&self) -> &IpAddr {
         &self.data.local_ip
     }
 
+    #[inline(always)]
     fn remote_ip(&self) -> &IpAddr {
         &self.data.remote_ip
     }
 
+    #[inline(always)]
     fn sender_domain(&self) -> &str {
         self.data
             .mail_from_lcase
@@ -348,10 +481,12 @@ impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
             .unwrap_or_default()
     }
 
+    #[inline(always)]
     fn sender(&self) -> &str {
         self.data.mail_from_lcase.as_str()
     }
 
+    #[inline(always)]
     fn rcpt_domain(&self) -> &str {
         self.data
             .rcpt_to
@@ -361,6 +496,7 @@ impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
             .unwrap_or_default()
     }
 
+    #[inline(always)]
     fn rcpt(&self) -> &str {
         self.data
             .rcpt_to
@@ -369,22 +505,27 @@ impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
             .unwrap_or_default()
     }
 
+    #[inline(always)]
     fn helo_domain(&self) -> &str {
         self.data.helo_domain.as_str()
     }
 
+    #[inline(always)]
     fn authenticated_as(&self) -> &str {
         self.data.authenticated_as.as_str()
     }
 
+    #[inline(always)]
     fn mx(&self) -> &str {
         ""
     }
 
+    #[inline(always)]
     fn listener_id(&self) -> u16 {
         self.instance.listener_id
     }
 
+    #[inline(always)]
     fn priority(&self) -> i16 {
         self.data.priority
     }

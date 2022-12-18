@@ -6,7 +6,7 @@ pub mod parser;
 pub mod remote;
 pub mod resolver;
 pub mod server;
-pub mod stage;
+pub mod session;
 pub mod throttle;
 pub mod utils;
 
@@ -186,9 +186,6 @@ pub enum IpAddrMask {
 
 pub struct Connect {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub concurrency: u64,
-    pub timeout: IfBlock<Duration>,
-    pub max_duration: IfBlock<Duration>,
     pub throttle: Vec<Throttle>,
 }
 
@@ -257,19 +254,17 @@ pub struct Data {
     pub add_date: IfBlock<bool>,
 }
 
-pub struct BeforeQueue {
-    pub script: IfBlock<Option<Arc<Script>>>,
-    pub queue: IfBlock<Arc<Queue>>,
-}
+pub struct SessionConfig {
+    pub timeout: IfBlock<Duration>,
+    pub duration: IfBlock<Duration>,
+    pub transfer_limit: IfBlock<usize>,
 
-pub struct Stage {
     pub connect: Connect,
     pub ehlo: Ehlo,
     pub auth: Auth,
     pub mail: Mail,
     pub rcpt: Rcpt,
     pub data: Data,
-    pub queue: BeforeQueue,
 }
 
 pub enum AuthLevel {

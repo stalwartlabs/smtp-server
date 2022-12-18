@@ -101,7 +101,7 @@ impl Server {
                                     };
 
                                     // Enforce throttle
-                                    if !session.is_allowed(&core.stage.connect.throttle) {
+                                    if !session.is_allowed(&core.config.connect.throttle) {
                                         continue;
                                     }
 
@@ -114,12 +114,20 @@ impl Server {
                                         if tls_implicit {
                                             if let Ok(mut session) = session.into_tls(tls_acceptor.unwrap()).await {
                                                 if session.write(&instance.greeting).await.is_ok() {
-                                                    session.eval_connect_params();
+                                                    session.eval_ehlo_params();
+                                                    session.eval_auth_params();
+                                                    if !session.params.ehlo_require {
+                                                        session.eval_mail_params();
+                                                    }
                                                     session.handle_conn(shutdown_rx).await;
                                                 }
                                             }
                                         } else if session.write(&instance.greeting).await.is_ok() {
-                                            session.eval_connect_params();
+                                            session.eval_ehlo_params();
+                                            session.eval_auth_params();
+                                            if !session.params.ehlo_require {
+                                                session.eval_mail_params();
+                                            }
                                             session.handle_conn(tls_acceptor, shutdown_rx).await;
                                         }
                                     });
@@ -205,7 +213,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> Option<(Session<T>, watch::Receiver<bool>)> {
         let mut buf = vec![0; 8192];
-        let timeout = *self.core.stage.connect.timeout.eval(&self);
+        let timeout = *self.core.config.timeout.eval(&self);
+        let max_bytes = *self.core.config.transfer_limit.eval(&self);
+        let mut bytes_received = 0;
 
         loop {
             tokio::select! {
@@ -215,7 +225,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
                         match result {
                             Ok(Ok(bytes_read)) => {
                                 if bytes_read > 0 {
-                                    if Instant::now() < self.data.valid_until {
+                                    bytes_received += bytes_read;
+                                    if Instant::now() < self.data.valid_until && bytes_received < max_bytes {
                                         match self.ingest(&buf[..bytes_read]).await {
                                             Ok(true) => (),
                                             Ok(false) => {
@@ -225,9 +236,21 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
                                                 break;
                                             }
                                         }
+                                    } else if bytes_received >= max_bytes {
+                                        self
+                                            .write(format!("451 4.7.28 {} Session exceeded transfer quota.\r\n", self.instance.hostname).as_bytes())
+                                            .await
+                                            .ok();
+                                        tracing::debug!(
+                                            parent: &self.span,
+                                            event = "disconnect",
+                                            reason = "transfer-limit",
+                                            "Client exceeded incoming transfer limit."
+                                        );
+                                        break;
                                     } else {
                                         self
-                                            .write(format!("221 2.0.0 {} Session open for too long, disconnecting.\r\n", self.instance.hostname).as_bytes())
+                                            .write(format!("453 4.3.2 {} Session open for too long.\r\n", self.instance.hostname).as_bytes())
                                             .await
                                             .ok();
                                         tracing::debug!(

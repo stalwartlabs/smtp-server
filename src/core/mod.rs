@@ -7,13 +7,13 @@ use std::{
 
 use dashmap::DashMap;
 use smtp_proto::{
-    request::receiver::{BdatReceiver, DataReceiver, Receiver},
+    request::receiver::{BdatReceiver, DataReceiver, DummyDataReceiver, Receiver},
     MtPriority, Request,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::Span;
 
-use crate::config::{EnvelopeKey, Host, Script, ServerProtocol, Stage};
+use crate::config::{EnvelopeKey, Host, Script, ServerProtocol, SessionConfig};
 
 use self::throttle::{
     ConcurrencyLimiter, InFlightRequest, Limiter, ThrottleKey, ThrottleKeyHasherBuilder,
@@ -24,7 +24,7 @@ pub mod params;
 pub mod throttle;
 
 pub struct Core {
-    pub stage: Stage,
+    pub config: SessionConfig,
     pub concurrency: ConcurrencyLimiter,
     pub throttle: DashMap<ThrottleKey, Limiter, ThrottleKeyHasherBuilder>,
 }
@@ -33,6 +33,7 @@ pub enum State {
     Request(Receiver<Request<String>>),
     Bdat(BdatReceiver),
     Data(DataReceiver),
+    DataTooLarge(DummyDataReceiver),
     None,
 }
 
@@ -62,9 +63,13 @@ pub struct SessionData {
     pub mail_from: String,
     pub mail_from_lcase: String,
     pub rcpt_to: Vec<RcptTo>,
+    pub rcpt_errors: usize,
+    pub message: Vec<u8>,
     pub authenticated_as: String,
+    pub auth_errors: usize,
     pub priority: i16,
     pub valid_until: Instant,
+    pub messages_sent: usize,
 }
 
 pub struct RcptTo {
@@ -98,6 +103,30 @@ pub struct SessionParameters {
     pub auth_mechanisms: u64,
     pub auth_errors_max: usize,
     pub auth_errors_wait: Duration,
+
+    // Mail parameters
+    pub mail_script: Option<Arc<Script>>,
+
+    // Rcpt parameters
+    pub rcpt_script: Option<Arc<Script>>,
+    pub rcpt_relay: bool,
+    pub rcpt_errors_max: usize,
+    pub rcpt_errors_wait: Duration,
+    pub rcpt_max: usize,
+
+    // Data parameters
+    pub data_script: Option<Arc<Script>>,
+    pub data_max_messages: usize,
+    pub data_max_message_size: usize,
+    pub data_max_received_headers: usize,
+    pub data_max_mime_parts: usize,
+    pub data_max_nested_messages: usize,
+    pub data_add_received: bool,
+    pub data_add_received_spf: bool,
+    pub data_add_return_path: bool,
+    pub data_add_auth_results: bool,
+    pub data_add_message_id: bool,
+    pub data_add_date: bool,
 }
 
 impl SessionData {
@@ -112,6 +141,10 @@ impl SessionData {
             authenticated_as: String::new(),
             priority: 0,
             valid_until: Instant::now(),
+            rcpt_errors: 0,
+            message: Vec::with_capacity(0),
+            auth_errors: 0,
+            messages_sent: 0,
         }
     }
 }

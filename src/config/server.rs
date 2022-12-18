@@ -16,25 +16,23 @@ use tokio::net::TcpSocket;
 use super::{
     certificate::{CertificateResolver, TLS12_VERSION, TLS13_VERSION},
     utils::{AsKey, ParseKey, ParseValue},
-    Config, Listener, Server, ServerProtocol,
+    Config, ConfigContext, Listener, Server, ServerProtocol,
 };
 
 impl Config {
-    pub fn parse_servers(&self) -> super::Result<Vec<Server>> {
-        let mut servers: Vec<Server> = Vec::new();
-
+    pub fn parse_servers(&self, context: &mut ConfigContext) -> super::Result<()> {
         for (internal_id, id) in self.sub_keys("server.listener").enumerate() {
             let mut server = self.parse_server(id)?;
-            if !servers.iter().any(|s| s.id == server.id) {
+            if !context.servers.iter().any(|s| s.id == server.id) {
                 server.internal_id = internal_id as u16;
-                servers.push(server);
+                context.servers.push(server);
             } else {
                 return Err(format!("Duplicate listener id {:?}.", server.id));
             }
         }
 
-        if !servers.is_empty() {
-            Ok(servers)
+        if !context.servers.is_empty() {
+            Ok(())
         } else {
             Err("No server directives found in config file.".to_string())
         }
@@ -161,8 +159,8 @@ impl Config {
             //config.key_log = Arc::new(KeyLogger::default());
             config.ignore_client_order = self
                 .property_or_default(
-                    ("server.listener", id, "tls.ignore_client_order"),
-                    "server.tls.ignore_client_order",
+                    ("server.listener", id, "tls.ignore-client-order"),
+                    "server.tls.ignore-client-order",
                 )?
                 .unwrap_or(true);
             (
@@ -328,13 +326,25 @@ impl ParseValue for SupportedCipherSuite {
     }
 }
 
+impl ParseValue for tracing::Level {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        value.parse().map_err(|_| {
+            format!(
+                "Invalid log level {:?} for property {:?}.",
+                value,
+                key.as_key()
+            )
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::PathBuf};
 
     use tokio::net::TcpSocket;
 
-    use crate::config::{Config, Listener, Server, ServerProtocol};
+    use crate::config::{Config, ConfigContext, Listener, Server, ServerProtocol};
 
     #[test]
     fn parse_servers() {
@@ -360,7 +370,8 @@ mod tests {
 
         // Parse servers
         let config = Config::parse(&toml).unwrap();
-        let servers = config.parse_servers().unwrap();
+        let mut context = ConfigContext::default();
+        config.parse_servers(&mut context).unwrap();
         let expected_servers = vec![
             Server {
                 id: "smtp".to_string(),
@@ -417,7 +428,7 @@ mod tests {
             },
         ];
 
-        for (server, expected_server) in servers.into_iter().zip(expected_servers) {
+        for (server, expected_server) in context.servers.into_iter().zip(expected_servers) {
             assert_eq!(
                 server.id, expected_server.id,
                 "failed for {}",

@@ -8,19 +8,35 @@ use super::{
 };
 
 impl Config {
-    pub fn parse_stage(&self, ctx: &ConfigContext) -> super::Result<Stage> {
-        Ok(Stage {
-            connect: self.parse_stage_connect(ctx)?,
-            ehlo: self.parse_stage_ehlo(ctx)?,
-            auth: self.parse_stage_auth(ctx)?,
-            mail: self.parse_stage_mail(ctx)?,
-            rcpt: self.parse_stage_rcpt(ctx)?,
-            data: self.parse_stage_data(ctx)?,
-            queue: self.parse_stage_queue(ctx)?,
+    pub fn parse_session_config(&self, ctx: &ConfigContext) -> super::Result<SessionConfig> {
+        let available_keys = [
+            EnvelopeKey::Listener,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+        ];
+
+        Ok(SessionConfig {
+            duration: self
+                .parse_if_block("session.duration", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(15 * 60))),
+            transfer_limit: self
+                .parse_if_block("session.transfer-limit", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(500 * 1024 * 1024)),
+            timeout: self
+                .parse_if_block::<Option<Duration>>("session.timeout", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(Some(Duration::from_secs(5 * 60))))
+                .try_unwrap("session.timeout")
+                .unwrap_or_else(|_| IfBlock::new(Duration::from_secs(5 * 60))),
+            connect: self.parse_session_connect(ctx)?,
+            ehlo: self.parse_session_ehlo(ctx)?,
+            auth: self.parse_session_auth(ctx)?,
+            mail: self.parse_session_mail(ctx)?,
+            rcpt: self.parse_session_rcpt(ctx)?,
+            data: self.parse_session_data(ctx)?,
         })
     }
 
-    fn parse_stage_connect(&self, ctx: &ConfigContext) -> super::Result<Connect> {
+    fn parse_session_connect(&self, ctx: &ConfigContext) -> super::Result<Connect> {
         let available_keys = [
             EnvelopeKey::Listener,
             EnvelopeKey::RemoteIp,
@@ -28,28 +44,19 @@ impl Config {
         ];
         Ok(Connect {
             script: self
-                .parse_if_block::<Option<String>>("stage.connect.script", ctx, &available_keys)?
+                .parse_if_block::<Option<String>>("session.connect.script", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "stage.connect.script", "script")?,
+                .map_if_block(&ctx.scripts, "session.connect.script", "script")?,
             throttle: self.parse_throttle(
-                "stage.connect.throttle",
+                "session.connect.throttle",
                 ctx,
                 &available_keys,
                 THROTTLE_LISTENER | THROTTLE_REMOTE_IP | THROTTLE_LOCAL_IP,
             )?,
-            max_duration: self
-                .parse_if_block("stage.connect.max-duration", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(15 * 60))),
-            concurrency: self.property("stage.connect.concurrency")?.unwrap_or(1024),
-            timeout: self
-                .parse_if_block::<Option<Duration>>("stage.connect.timeout", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(Some(Duration::from_secs(5 * 60))))
-                .try_unwrap("stage.connect.timeout")
-                .unwrap_or_else(|_| IfBlock::new(Duration::from_secs(5 * 60))),
         })
     }
 
-    fn parse_stage_ehlo(&self, ctx: &ConfigContext) -> super::Result<Ehlo> {
+    fn parse_session_ehlo(&self, ctx: &ConfigContext) -> super::Result<Ehlo> {
         let available_keys = [
             EnvelopeKey::Listener,
             EnvelopeKey::RemoteIp,
@@ -57,54 +64,58 @@ impl Config {
         ];
         Ok(Ehlo {
             script: self
-                .parse_if_block::<Option<String>>("stage.ehlo.script", ctx, &available_keys)?
+                .parse_if_block::<Option<String>>("session.ehlo.script", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "stage.ehlo.script", "script")?,
+                .map_if_block(&ctx.scripts, "session.ehlo.script", "script")?,
             require: self
-                .parse_if_block("stage.ehlo.require", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.require", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             multiple: self
-                .parse_if_block("stage.ehlo.multiple", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.multiple", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             pipelining: self
-                .parse_if_block("stage.ehlo.capabilities.pipelining", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.capabilities.pipelining", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             chunking: self
-                .parse_if_block("stage.ehlo.capabilities.chunking", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.capabilities.chunking", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             requiretls: self
-                .parse_if_block("stage.ehlo.capabilities.requiretls", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.capabilities.requiretls", ctx, &available_keys)?
                 .unwrap_or_default(),
             no_soliciting: self
                 .parse_if_block(
-                    "stage.ehlo.capabilities.no-soliciting",
+                    "session.ehlo.capabilities.no-soliciting",
                     ctx,
                     &available_keys,
                 )?
                 .unwrap_or_default(),
             future_release: self
                 .parse_if_block(
-                    "stage.ehlo.capabilities.future-release",
+                    "session.ehlo.capabilities.future-release",
                     ctx,
                     &available_keys,
                 )?
                 .unwrap_or_default(),
             deliver_by: self
-                .parse_if_block("stage.ehlo.capabilities.deliver-by", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.capabilities.deliver-by", ctx, &available_keys)?
                 .unwrap_or_default(),
             mt_priority: self
-                .parse_if_block("stage.ehlo.capabilities.mt-priority", ctx, &available_keys)?
+                .parse_if_block(
+                    "session.ehlo.capabilities.mt-priority",
+                    ctx,
+                    &available_keys,
+                )?
                 .unwrap_or_default(),
             size: self
-                .parse_if_block("stage.ehlo.capabilities.size", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.capabilities.size", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(Some(25 * 1024 * 1024))),
             expn: self
-                .parse_if_block("stage.ehlo.capabilities.expn", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.capabilities.expn", ctx, &available_keys)?
                 .unwrap_or_default(),
         })
     }
 
-    fn parse_stage_auth(&self, ctx: &ConfigContext) -> super::Result<Auth> {
+    fn parse_session_auth(&self, ctx: &ConfigContext) -> super::Result<Auth> {
         let available_keys = [
             EnvelopeKey::Listener,
             EnvelopeKey::RemoteIp,
@@ -112,20 +123,20 @@ impl Config {
             EnvelopeKey::HeloDomain,
         ];
         let mechanisms = self
-            .parse_if_block::<Vec<Mechanism>>("stage.auth.enable", ctx, &available_keys)?
+            .parse_if_block::<Vec<Mechanism>>("session.auth.enable", ctx, &available_keys)?
             .unwrap_or_default();
         Ok(Auth {
             script: self
-                .parse_if_block::<Option<String>>("stage.auth.script", ctx, &available_keys)?
+                .parse_if_block::<Option<String>>("session.auth.script", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "stage.auth.script", "script")?,
+                .map_if_block(&ctx.scripts, "session.auth.script", "script")?,
             require: self
-                .parse_if_block("stage.auth.require", ctx, &available_keys)?
+                .parse_if_block("session.auth.require", ctx, &available_keys)?
                 .unwrap_or_default(),
             auth_host: self
-                .parse_if_block::<Option<String>>("stage.auth.auth-host", ctx, &available_keys)?
+                .parse_if_block::<Option<String>>("session.auth.auth-host", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.hosts, "stage.auth.auth-host", "auth host")?,
+                .map_if_block(&ctx.hosts, "session.auth.auth-host", "auth host")?,
             mechanisms: IfBlock {
                 if_then: mechanisms
                     .if_then
@@ -141,15 +152,15 @@ impl Config {
                     .fold(0, |acc, m| acc | m.mechanism),
             },
             errors_max: self
-                .parse_if_block("stage.auth.errors.max", ctx, &available_keys)?
+                .parse_if_block("session.auth.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(3)),
             errors_wait: self
-                .parse_if_block("stage.auth.errors.wait", ctx, &available_keys)?
+                .parse_if_block("session.auth.errors.wait", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(Duration::from_secs(30))),
         })
     }
 
-    fn parse_stage_mail(&self, ctx: &ConfigContext) -> super::Result<Mail> {
+    fn parse_session_mail(&self, ctx: &ConfigContext) -> super::Result<Mail> {
         let available_keys = [
             EnvelopeKey::AuthenticatedAs,
             EnvelopeKey::Listener,
@@ -159,23 +170,25 @@ impl Config {
         ];
         Ok(Mail {
             script: self
-                .parse_if_block::<Option<String>>("stage.mail.script", ctx, &available_keys)?
+                .parse_if_block::<Option<String>>("session.mail.script", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "stage.mail.script", "script")?,
+                .map_if_block(&ctx.scripts, "session.mail.script", "script")?,
             throttle: self.parse_throttle(
-                "stage.mail.throttle",
+                "session.mail.throttle",
                 ctx,
                 &available_keys,
                 THROTTLE_LISTENER
                     | THROTTLE_REMOTE_IP
                     | THROTTLE_LOCAL_IP
                     | THROTTLE_AUTH_AS
-                    | THROTTLE_HELO_DOMAIN,
+                    | THROTTLE_HELO_DOMAIN
+                    | THROTTLE_SENDER
+                    | THROTTLE_SENDER_DOMAIN,
             )?,
         })
     }
 
-    fn parse_stage_rcpt(&self, ctx: &ConfigContext) -> super::Result<Rcpt> {
+    fn parse_session_rcpt(&self, ctx: &ConfigContext) -> super::Result<Rcpt> {
         let available_keys = [
             EnvelopeKey::Sender,
             EnvelopeKey::SenderDomain,
@@ -187,23 +200,23 @@ impl Config {
         ];
         Ok(Rcpt {
             script: self
-                .parse_if_block::<Option<String>>("stage.rcpt.script", ctx, &available_keys)?
+                .parse_if_block::<Option<String>>("session.rcpt.script", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "stage.rcpt.script", "script")?,
+                .map_if_block(&ctx.scripts, "session.rcpt.script", "script")?,
             relay: self
-                .parse_if_block("stage.rcpt.relay", ctx, &available_keys)?
+                .parse_if_block("session.rcpt.relay", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(false)),
             errors_max: self
-                .parse_if_block("stage.rcpt.errors.max", ctx, &available_keys)?
+                .parse_if_block("session.rcpt.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(10)),
             errors_wait: self
-                .parse_if_block("stage.rcpt.errors.wait", ctx, &available_keys)?
+                .parse_if_block("session.rcpt.errors.wait", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(Duration::from_secs(30))),
             max_recipients: self
-                .parse_if_block("stage.rcpt.errors.max-recipients", ctx, &available_keys)?
+                .parse_if_block("session.rcpt.max-recipients", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(100)),
             throttle: self.parse_throttle(
-                "stage.rcpt.throttle",
+                "session.rcpt.throttle",
                 ctx,
                 &available_keys,
                 THROTTLE_LISTENER
@@ -219,7 +232,7 @@ impl Config {
         })
     }
 
-    fn parse_stage_data(&self, ctx: &ConfigContext) -> super::Result<Data> {
+    fn parse_session_data(&self, ctx: &ConfigContext) -> super::Result<Data> {
         let available_keys = [
             EnvelopeKey::Sender,
             EnvelopeKey::SenderDomain,
@@ -232,66 +245,50 @@ impl Config {
         ];
         Ok(Data {
             script: self
-                .parse_if_block::<Option<String>>("stage.data.script", ctx, &available_keys)?
+                .parse_if_block::<Option<String>>("session.data.script", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "stage.data.script", "script")?,
+                .map_if_block(&ctx.scripts, "session.data.script", "script")?,
             max_messages: self
-                .parse_if_block("stage.data.limits.messages", ctx, &available_keys)?
+                .parse_if_block("session.data.limits.messages", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(10)),
             max_message_size: self
-                .parse_if_block("stage.data.limits.size", ctx, &available_keys)?
+                .parse_if_block("session.data.limits.size", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(25 * 1024 * 1024)),
             max_received_headers: self
-                .parse_if_block("stage.data.limits.received-headers", ctx, &available_keys)?
+                .parse_if_block("session.data.limits.received-headers", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(50)),
             max_mime_parts: self
-                .parse_if_block("stage.data.limits.mime-parts", ctx, &available_keys)?
+                .parse_if_block("session.data.limits.mime-parts", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(50)),
             max_nested_messages: self
-                .parse_if_block("stage.data.limits.nested-messages", ctx, &available_keys)?
+                .parse_if_block("session.data.limits.nested-messages", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(3)),
             add_received: self
-                .parse_if_block("stage.data.add-headers.received", ctx, &available_keys)?
+                .parse_if_block("session.data.add-headers.received", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             add_received_spf: self
-                .parse_if_block("stage.data.add-headers.received-spf", ctx, &available_keys)?
+                .parse_if_block(
+                    "session.data.add-headers.received-spf",
+                    ctx,
+                    &available_keys,
+                )?
                 .unwrap_or_else(|| IfBlock::new(true)),
             add_return_path: self
-                .parse_if_block("stage.data.add-headers.return-path", ctx, &available_keys)?
+                .parse_if_block("session.data.add-headers.return-path", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             add_auth_results: self
-                .parse_if_block("stage.data.add-headers.auth-results", ctx, &available_keys)?
+                .parse_if_block(
+                    "session.data.add-headers.auth-results",
+                    ctx,
+                    &available_keys,
+                )?
                 .unwrap_or_else(|| IfBlock::new(true)),
             add_message_id: self
-                .parse_if_block("stage.data.add-headers.message-id", ctx, &available_keys)?
+                .parse_if_block("session.data.add-headers.message-id", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             add_date: self
-                .parse_if_block("stage.data.add-headers.date", ctx, &available_keys)?
+                .parse_if_block("session.data.add-headers.date", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
-        })
-    }
-
-    fn parse_stage_queue(&self, ctx: &ConfigContext) -> super::Result<BeforeQueue> {
-        let available_keys = [
-            EnvelopeKey::Sender,
-            EnvelopeKey::SenderDomain,
-            EnvelopeKey::AuthenticatedAs,
-            EnvelopeKey::Listener,
-            EnvelopeKey::RemoteIp,
-            EnvelopeKey::LocalIp,
-            EnvelopeKey::Priority,
-            EnvelopeKey::HeloDomain,
-        ];
-        Ok(BeforeQueue {
-            script: self
-                .parse_if_block::<Option<String>>("stage.queue.script", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "stage.queue.script", "script")?,
-            queue: self
-                .parse_if_block::<Option<String>>("stage.queue.queue-id", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.queues, "stage.queue.queue-id", "list")?
-                .try_unwrap("stage.queue.queue-id")?,
         })
     }
 }

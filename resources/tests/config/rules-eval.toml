@@ -8,7 +8,7 @@ remote-ip = "A:B:C::D:E"
 mx = "mx.somedomain.com"
 authenticated-as = "john@foobar.org"
 priority = -4
-listener-id = 123
+listener = 123
 helo-domain = "hi-domain.net"
 
 [rule]

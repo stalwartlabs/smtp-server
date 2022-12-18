@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::{Config, ConfigContext, Host};
 
 impl Config {
-    pub fn parse_remote(&self, ctx: &mut ConfigContext) -> super::Result<()> {
+    pub fn parse_remote_hosts(&self, ctx: &mut ConfigContext) -> super::Result<()> {
         for id in self.sub_keys("remote") {
             let host = self.parse_host(id, ctx)?;
             ctx.hosts.insert(id.to_string(), Arc::new(host));

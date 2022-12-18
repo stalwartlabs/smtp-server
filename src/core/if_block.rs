@@ -272,7 +272,7 @@ mod tests {
                 .property_require("envelope.authenticated-as")
                 .unwrap(),
             mx: config.property_require("envelope.mx").unwrap(),
-            listener_id: config.property_require("envelope.listener-id").unwrap(),
+            listener_id: config.property_require("envelope.listener").unwrap(),
             priority: config.property_require("envelope.priority").unwrap(),
             helo_domain: config.property_require("envelope.helo-domain").unwrap(),
         };

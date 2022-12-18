@@ -34,14 +34,14 @@ impl Config {
     ) -> super::Result<Throttle> {
         let prefix = prefix.as_key();
         let mut keys = 0;
-        for (key, value) in self.values((&prefix, "key")) {
+        for (key_, value) in self.values((&prefix, "key")) {
             let key = match value {
                 "rcpt" => THROTTLE_RCPT,
                 "rcpt-domain" => THROTTLE_RCPT_DOMAIN,
                 "sender" => THROTTLE_SENDER,
                 "sender-domain" => THROTTLE_SENDER_DOMAIN,
                 "authenticated-as" => THROTTLE_AUTH_AS,
-                "listener-id" => THROTTLE_LISTENER,
+                "listener" => THROTTLE_LISTENER,
                 "mx" => THROTTLE_MX,
                 "remote-ip" => THROTTLE_REMOTE_IP,
                 "local-ip" => THROTTLE_LOCAL_IP,
@@ -49,7 +49,7 @@ impl Config {
                 _ => {
                     return Err(format!(
                         "Invalid throttle key {:?} found in {:?}",
-                        key, prefix
+                        value, key_
                     ))
                 }
             };
@@ -58,7 +58,7 @@ impl Config {
             } else {
                 return Err(format!(
                     "Throttle key {:?} is not available in this context for property {:?}",
-                    key, prefix
+                    value, key_
                 ));
             }
         }
