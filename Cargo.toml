@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 mail-auth = { path = "/home/vagrant/code/mail-auth" }
+mail-send = { path = "/home/vagrant/code/mail-send", default-features = false, features = ["cram-md5"] }
 smtp-proto = { path = "/home/vagrant/code/smtp-proto" }
 ahash = { version = "0.8" }
 rustls = "0.20"

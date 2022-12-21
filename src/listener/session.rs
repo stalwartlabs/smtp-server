@@ -1,8 +1,8 @@
 use std::{net::IpAddr, time::SystemTime};
 
 use smtp_proto::{
-    request::receiver::{BdatReceiver, DataReceiver, DummyDataReceiver},
-    Capability, EhloResponse, Error, Request,
+    request::receiver::{BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver},
+    *,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -254,6 +254,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 )
                                 .await?;
                             }
+                            Error::ResponseTooLong => {
+                                state = State::RequestTooLarge(DummyLineReceiver::default());
+                                continue 'outer;
+                            }
                         },
                     }
                 },
@@ -301,6 +305,14 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         break 'outer;
                     }
                 }
+                State::RequestTooLarge(receiver) => {
+                    if receiver.ingest(&mut iter) {
+                        self.write(b"554 5.3.4 Line is too long.\r\n").await?;
+                        state = State::default();
+                    } else {
+                        break 'outer;
+                    }
+                }
                 State::None => unreachable!(),
             }
         }
@@ -318,63 +330,55 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             self.eval_mail_params();
 
             let mut response = EhloResponse::new(self.instance.hostname.as_str());
-            response.capabilities.push(Capability::EnhancedStatusCodes);
-            response.capabilities.push(Capability::EightBitMime);
-            response.capabilities.push(Capability::BinaryMime);
-            response.capabilities.push(Capability::SmtpUtf8);
+            response.capabilities =
+                EXT_ENHANCED_STATUS_CODES | EXT_8BIT_MIME | EXT_BINARY_MIME | EXT_SMTP_UTF8;
             if self.params.starttls {
-                response.capabilities.push(Capability::StartTls);
+                response.capabilities |= EXT_START_TLS;
             }
             if self.params.pipelining {
-                response.capabilities.push(Capability::Pipelining);
+                response.capabilities |= EXT_PIPELINING;
             }
             if self.params.chunking {
-                response.capabilities.push(Capability::Chunking);
+                response.capabilities |= EXT_CHUNKING;
             }
             if self.params.expn {
-                response.capabilities.push(Capability::Expn);
+                response.capabilities |= EXT_EXPN;
             }
             if self.params.requiretls {
-                response.capabilities.push(Capability::RequireTls);
+                response.capabilities |= EXT_REQUIRE_TLS;
             }
             if self.params.auth_mechanisms != 0 {
-                response.capabilities.push(Capability::Auth {
-                    mechanisms: self.params.auth_mechanisms,
-                });
+                response.capabilities |= EXT_AUTH;
+                response.auth_mechanisms = self.params.auth_mechanisms;
             }
             if let Some(value) = &self.params.future_release {
-                response.capabilities.push(Capability::FutureRelease {
-                    max_interval: value.as_secs(),
-                    max_datetime: SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0)
-                        + value.as_secs(),
-                });
+                response.capabilities |= EXT_FUTURE_RELEASE;
+                response.future_release_interval = value.as_secs();
+                response.future_release_datetime = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+                    + value.as_secs();
             }
             if let Some(value) = &self.params.deliver_by {
-                response.capabilities.push(Capability::DeliverBy {
-                    min: value.as_secs(),
-                });
+                response.capabilities |= EXT_DELIVER_BY;
+                response.deliver_by = value.as_secs();
             }
             if let Some(value) = &self.params.mt_priority {
-                response
-                    .capabilities
-                    .push(Capability::MtPriority { priority: *value });
+                response.capabilities |= EXT_MT_PRIORITY;
+                response.mt_priority = *value;
             }
             if let Some(value) = &self.params.size {
-                response
-                    .capabilities
-                    .push(Capability::Size { size: *value });
+                response.capabilities |= EXT_SIZE;
+                response.size = *value;
             }
             if let Some(value) = &self.params.no_soliciting {
-                response.capabilities.push(Capability::NoSoliciting {
-                    keywords: if !value.is_empty() {
-                        value.to_string().into()
-                    } else {
-                        None
-                    },
-                });
+                response.capabilities |= EXT_NO_SOLICITING;
+                response.no_soliciting = if !value.is_empty() {
+                    value.to_string().into()
+                } else {
+                    None
+                };
             }
 
             // Generate response

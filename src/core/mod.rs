@@ -7,8 +7,10 @@ use std::{
 
 use dashmap::DashMap;
 use smtp_proto::{
-    request::receiver::{BdatReceiver, DataReceiver, DummyDataReceiver, Receiver},
-    MtPriority, Request,
+    request::receiver::{
+        BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, RequestReceiver,
+    },
+    MtPriority,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::Span;
@@ -30,10 +32,11 @@ pub struct Core {
 }
 
 pub enum State {
-    Request(Receiver<Request<String>>),
+    Request(RequestReceiver),
     Bdat(BdatReceiver),
     Data(DataReceiver),
     DataTooLarge(DummyDataReceiver),
+    RequestTooLarge(DummyLineReceiver),
     None,
 }
 
@@ -151,7 +154,7 @@ impl SessionData {
 
 impl Default for State {
     fn default() -> Self {
-        State::Request(Receiver::default())
+        State::Request(RequestReceiver::default())
     }
 }
 
