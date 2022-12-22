@@ -44,7 +44,20 @@ pub struct Listener {
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct Host {}
+pub struct Host {
+    pub address: String,
+    pub port: u16,
+    pub protocol: ServerProtocol,
+    pub concurrency: usize,
+    pub timeout: Duration,
+    pub tls_implicit: bool,
+    pub tls_allow_invalid_certs: bool,
+    pub username: Option<String>,
+    pub secret: Option<String>,
+    pub cache_entries: usize,
+    pub cache_ttl_positive: Duration,
+    pub cache_ttl_negative: Duration,
+}
 
 #[derive(Debug, Default)]
 pub struct Script {}
@@ -69,6 +82,7 @@ pub enum ServerProtocol {
     #[default]
     Smtp,
     Lmtp,
+    Imap,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

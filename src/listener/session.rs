@@ -88,10 +88,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                                 self.write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n").await?;
                                             }
                                         } else {
-                                            self.write(
-                                                b"503 5.7.1 Authentication is required.\r\n",
-                                            )
-                                            .await?;
+                                            self.write(b"530 5.7.0 Authentication required.\r\n")
+                                                .await?;
                                         }
                                     } else {
                                         self.write(

@@ -1,21 +1,89 @@
-use std::time::Duration;
+use std::{fmt::Display, sync::Arc, time::Duration};
 
 use mail_send::Credentials;
 use rustls::ServerName;
 use smtp_proto::{
     request::{parser::Rfc5321Parser, AUTH},
     response::generate::BitToString,
-    IntoString, AUTH_OAUTHBEARER, AUTH_PLAIN, AUTH_XOAUTH2,
+    IntoString, AUTH_CRAM_MD5, AUTH_LOGIN, AUTH_OAUTHBEARER, AUTH_PLAIN, AUTH_XOAUTH2,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpStream, ToSocketAddrs},
+    sync::mpsc,
 };
 use tokio_rustls::{client::TlsStream, TlsConnector};
+
+use crate::remote::lookup::LoggedUnwrap;
+
+use super::lookup::{Event, Item, Lookup, RemoteLookup};
 
 pub struct ImapAuthClient<T: AsyncRead + AsyncWrite> {
     stream: T,
     timeout: Duration,
+}
+
+pub struct ImapAuthClientBuilder {
+    pub addr: String,
+    timeout: Duration,
+    tls_connector: TlsConnector,
+    tls_hostname: String,
+    tls_implicit: bool,
+    mechanisms: u64,
+}
+
+impl ImapAuthClientBuilder {
+    pub fn new(
+        addr: String,
+        timeout: Duration,
+        tls_connector: TlsConnector,
+        tls_hostname: String,
+        tls_implicit: bool,
+    ) -> Self {
+        Self {
+            addr,
+            timeout,
+            tls_connector,
+            tls_hostname,
+            tls_implicit,
+            mechanisms: AUTH_PLAIN,
+        }
+    }
+
+    pub async fn init(mut self) -> Self {
+        let err = match self.connect().await {
+            Ok(mut client) => match client.authentication_mechanisms().await {
+                Ok(mechanisms) => {
+                    client.logout().await.ok();
+                    self.mechanisms = mechanisms;
+                    return self;
+                }
+                Err(err) => err,
+            },
+            Err(err) => err,
+        };
+        tracing::warn!(
+            event = "error",
+            class = "remote",
+            remote.addr = &self.addr,
+            remote.protocol = "imap",
+            "Could not obtain auth mechanisms: {}",
+            err
+        );
+
+        self
+    }
+
+    pub async fn connect(&self) -> Result<ImapAuthClient<TlsStream<TcpStream>>, Error> {
+        ImapAuthClient::connect(
+            &self.addr,
+            self.timeout,
+            &self.tls_connector,
+            &self.tls_hostname,
+            self.tls_implicit,
+        )
+        .await
+    }
 }
 
 #[derive(Debug)]
@@ -24,8 +92,95 @@ pub enum Error {
     Timeout,
     InvalidResponse(String),
     InvalidChallenge(String),
+    AuthenticationFailed,
     TLSInvalidName,
     Disconnected,
+}
+
+impl RemoteLookup for Arc<ImapAuthClientBuilder> {
+    fn spawn_lookup(&self, lookup: Lookup, tx: mpsc::Sender<Event>) {
+        let builder = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = builder.lookup(lookup, &tx).await {
+                tracing::warn!(
+                    event = "error",
+                    class = "remote",
+                    remote.addr = &builder.addr,
+                    remote.protocol = "imap",
+                    "Remote lookup failed: {}",
+                    err
+                );
+                tx.send(Event::WorkerFailed).await.logged_unwrap();
+            }
+        });
+    }
+}
+
+impl ImapAuthClientBuilder {
+    pub async fn lookup(&self, lookup: Lookup, tx: &mpsc::Sender<Event>) -> Result<(), Error> {
+        match &lookup.item {
+            Item::Credentials(credentials) => {
+                let mut client = self.connect().await?;
+                let mechanism = match credentials {
+                    Credentials::Plain { .. }
+                        if (self.mechanisms & (AUTH_PLAIN | AUTH_LOGIN | AUTH_CRAM_MD5)) != 0 =>
+                    {
+                        if self.mechanisms & AUTH_CRAM_MD5 != 0 {
+                            AUTH_CRAM_MD5
+                        } else if self.mechanisms & AUTH_PLAIN != 0 {
+                            AUTH_PLAIN
+                        } else {
+                            AUTH_LOGIN
+                        }
+                    }
+                    Credentials::OAuthBearer { .. } if self.mechanisms & AUTH_OAUTHBEARER != 0 => {
+                        AUTH_OAUTHBEARER
+                    }
+                    Credentials::XOauth2 { .. } if self.mechanisms & AUTH_XOAUTH2 != 0 => {
+                        AUTH_XOAUTH2
+                    }
+                    _ => {
+                        tracing::warn!(
+                            event = "error",
+                            class = "remote",
+                            remote.addr = &self.addr,
+                            remote.protocol = "imap",
+                            "IMAP does not offer any supported auth mechanisms.",
+                        );
+                        tx.send(Event::WorkerFailed).await.logged_unwrap();
+                        return Ok(());
+                    }
+                };
+
+                let result = match client.authenticate(mechanism, credentials).await {
+                    Ok(_) => true,
+                    Err(err) => match &err {
+                        Error::AuthenticationFailed => false,
+                        _ => return Err(err),
+                    },
+                };
+                lookup.result.send(result).logged_unwrap();
+                tx.send(Event::WorkerReady {
+                    item: lookup.item,
+                    result,
+                    next_lookup: None,
+                })
+                .await
+                .logged_unwrap();
+            }
+            Item::Entry(_) => {
+                tracing::warn!(
+                    event = "error",
+                    class = "remote",
+                    remote.addr = &self.addr,
+                    remote.protocol = "imap",
+                    "IMAP does not support validating recipients.",
+                );
+                tx.send(Event::WorkerFailed).await.logged_unwrap();
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ImapAuthClient<TcpStream> {
@@ -143,6 +298,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
                 line = self.read_line().await?;
             } else if matches!(line.get(..5), Some(b"C3 OK")) {
                 return Ok(());
+            } else if matches!(line.get(..5), Some(b"C3 BAD")) {
+                return Err(Error::AuthenticationFailed);
             } else {
                 return Err(Error::InvalidResponse(line.into_string()));
             }
@@ -253,6 +410,20 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
         Error::Io(error)
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Io(io) => write!(f, "I/O error: {}", io),
+            Error::Timeout => f.write_str("Connection time-out"),
+            Error::InvalidResponse(response) => write!(f, "Unexpected response: {:?}", response),
+            Error::InvalidChallenge(response) => write!(f, "Invalid auth challenge: {}", response),
+            Error::TLSInvalidName => f.write_str("Invalid TLS name"),
+            Error::Disconnected => f.write_str("Connection disconnected by peer"),
+            Error::AuthenticationFailed => f.write_str("Authentication failed"),
+        }
     }
 }
 

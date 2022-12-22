@@ -97,7 +97,13 @@ rate = "10/1m"
 
 [session.rcpt]
 #script = rcpt-to.sieve
-relay = false
+relay = [
+    {if = { any-of = [ 
+        all-of = { [{key = "rcpt-domain", in-list="local-domains"}, {key = "rcpt", in-list="local-users"}] },
+        all-of = { [{key = "rcpt-domain", not-in-list="local-domains"}, {key = "authenticated-as", ne = ""}] },
+        ] }, then = true},
+    {else = false}
+]
 errors = {total = 3, wait = "5s"}
 max-recipients = 100
 
@@ -168,7 +174,7 @@ protocol = "lmtp"
 
 [remote."lmtp".auth]
 username = "hello"
-password = "world"
+secret = "world"
 
 [remote."lmtp".cache]
 entries = 1000

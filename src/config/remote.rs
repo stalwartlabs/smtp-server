@@ -13,6 +13,19 @@ impl Config {
     }
 
     fn parse_host(&self, _id: &str, _ctx: &ConfigContext) -> super::Result<Host> {
-        Ok(Host {})
+        Ok(Host {
+            address: todo!(),
+            port: todo!(),
+            protocol: todo!(),
+            concurrency: todo!(),
+            tls_implicit: todo!(),
+            username: todo!(),
+            secret: todo!(),
+            cache_entries: todo!(),
+            cache_ttl_positive: todo!(),
+            cache_ttl_negative: todo!(),
+            tls_allow_invalid_certs: todo!(),
+            timeout: todo!(),
+        })
     }
 }

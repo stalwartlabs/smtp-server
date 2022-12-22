@@ -20,6 +20,7 @@ parking_lot = "0.12"
 regex = "1.7.0"
 dashmap = "5.4"
 blake3 = "1.3"
+lru-cache = "0.1.2"
 
 [dev-dependencies]
 criterion = "0.4.0"
