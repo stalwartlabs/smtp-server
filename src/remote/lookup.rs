@@ -31,6 +31,11 @@ pub struct Lookup {
     pub result: oneshot::Sender<bool>,
 }
 
+#[derive(Debug)]
+pub struct LookupChannel {
+    tx: mpsc::Sender<Event>,
+}
+
 #[derive(Clone)]
 struct RemoteHost<T: RemoteLookup> {
     tx: mpsc::Sender<Event>,
@@ -186,6 +191,28 @@ impl<T: RemoteLookup> RemoteHost<T> {
                 }
             }
         }
+    }
+}
+
+impl LookupChannel {
+    pub async fn lookup(&self, item: Item) -> Option<bool> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .tx
+            .send(Event::Lookup(Lookup { item, result: tx }))
+            .await
+            .is_ok()
+        {
+            rx.await.ok()
+        } else {
+            None
+        }
+    }
+}
+
+impl From<mpsc::Sender<Event>> for LookupChannel {
+    fn from(tx: mpsc::Sender<Event>) -> Self {
+        LookupChannel { tx }
     }
 }
 

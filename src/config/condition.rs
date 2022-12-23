@@ -4,7 +4,8 @@ use regex::Regex;
 
 use super::{
     utils::{AsKey, ParseKey, ParseValue},
-    Condition, ConditionOp, ConditionValue, Config, ConfigContext, EnvelopeKey, IpAddrMask,
+    Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
+    IpAddrMask,
 };
 
 impl Config {
@@ -13,8 +14,8 @@ impl Config {
         key_: impl AsKey,
         ctx: &ConfigContext,
         available_keys: &[EnvelopeKey],
-    ) -> super::Result<Vec<Condition>> {
-        let mut rules = Vec::new();
+    ) -> super::Result<Conditions> {
+        let mut conditions = Vec::new();
         let mut stack = Vec::new();
         let mut iter = None;
         let mut jmp_pos = Vec::new();
@@ -26,7 +27,7 @@ impl Config {
             let mut op_str = "";
 
             for key in self.sub_keys(prefix.as_str()) {
-                if key != "key" {
+                if !["if", "then"].contains(&key) {
                     if op_str.is_empty() {
                         op_str = key;
                     } else {
@@ -83,7 +84,7 @@ impl Config {
                     }
                 }
             } else {
-                let key = self.property_require::<EnvelopeKey>((&prefix, "key"))?;
+                let key = self.property_require::<EnvelopeKey>((&prefix, "if"))?;
                 if !available_keys.contains(&key) {
                     return Err(format!(
                         "Envelope key {:?} is not available in this context for property {:?}",
@@ -175,15 +176,15 @@ impl Config {
                         ));
                     }
                 };
-                rules.push(Condition::Match {
+                conditions.push(Condition::Match {
                     key,
                     op,
                     value,
                     not: is_not ^ op_is_not,
                 });
                 if iter.as_mut().map_or(false, |it| it.peek().is_some()) {
-                    jmp_pos.push(rules.len());
-                    rules.push(if is_all {
+                    jmp_pos.push(conditions.len());
+                    conditions.push(if is_all {
                         Condition::JumpIfFalse {
                             positions: usize::MAX,
                         }
@@ -202,10 +203,10 @@ impl Config {
                 } else if let Some((prev_iter, _, prev_jmp_pos, prev_is_all, prev_is_not)) =
                     stack.pop()
                 {
-                    let cur_pos = rules.len() - 1;
+                    let cur_pos = conditions.len() - 1;
                     for pos in jmp_pos {
                         if let Condition::JumpIfFalse { positions }
-                        | Condition::JumpIfTrue { positions } = &mut rules[pos]
+                        | Condition::JumpIfTrue { positions } = &mut conditions[pos]
                         {
                             *positions = cur_pos - pos;
                         }
@@ -221,16 +222,16 @@ impl Config {
             }
         }
 
-        Ok(rules)
+        Ok(Conditions { conditions })
     }
 
     #[cfg(test)]
-    pub fn parse_rules(
+    pub fn parse_conditions(
         &self,
         ctx: &ConfigContext,
-    ) -> super::Result<ahash::AHashMap<String, Vec<Condition>>> {
+    ) -> super::Result<ahash::AHashMap<String, Conditions>> {
         use ahash::AHashMap;
-        let mut rules = AHashMap::new();
+        let mut conditions = AHashMap::new();
         let available_keys = vec![
             EnvelopeKey::Recipient,
             EnvelopeKey::RecipientDomain,
@@ -245,13 +246,13 @@ impl Config {
         ];
 
         for rule_name in self.sub_keys("rule") {
-            rules.insert(
+            conditions.insert(
                 rule_name.to_string(),
                 self.parse_condition(("rule", rule_name), ctx, &available_keys)?,
             );
         }
 
-        Ok(rules)
+        Ok(conditions)
     }
 }
 
@@ -310,12 +311,12 @@ mod tests {
     use ahash::AHashMap;
 
     use crate::config::{
-        Condition, ConditionOp, ConditionValue, Config, ConfigContext, EnvelopeKey, IpAddrMask,
-        List, Server,
+        Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
+        IpAddrMask, List, Server,
     };
 
     #[test]
-    fn parse_rules() {
+    fn parse_conditions() {
         let mut file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         file.push("resources");
         file.push("tests");
@@ -331,97 +332,105 @@ mod tests {
             internal_id: 123,
             ..Default::default()
         });
-        let mut rules = config.parse_rules(&context).unwrap();
+        let mut conditions = config.parse_conditions(&context).unwrap();
         let expected_rules = AHashMap::from_iter([
             (
                 "simple".to_string(),
-                vec![Condition::Match {
-                    key: EnvelopeKey::Listener,
-                    op: ConditionOp::Equal,
-                    value: ConditionValue::UInt(123),
-                    not: false,
-                }],
+                Conditions {
+                    conditions: vec![Condition::Match {
+                        key: EnvelopeKey::Listener,
+                        op: ConditionOp::Equal,
+                        value: ConditionValue::UInt(123),
+                        not: false,
+                    }],
+                },
             ),
             (
                 "is-authenticated".to_string(),
-                vec![Condition::Match {
-                    key: EnvelopeKey::AuthenticatedAs,
-                    op: ConditionOp::Equal,
-                    value: ConditionValue::String("".to_string()),
-                    not: true,
-                }],
+                Conditions {
+                    conditions: vec![Condition::Match {
+                        key: EnvelopeKey::AuthenticatedAs,
+                        op: ConditionOp::Equal,
+                        value: ConditionValue::String("".to_string()),
+                        not: true,
+                    }],
+                },
             ),
             (
                 "expanded".to_string(),
-                vec![
-                    Condition::Match {
-                        key: EnvelopeKey::SenderDomain,
-                        op: ConditionOp::StartsWith,
-                        value: ConditionValue::String("example".to_string()),
-                        not: false,
-                    },
-                    Condition::JumpIfFalse { positions: 1 },
-                    Condition::Match {
-                        key: EnvelopeKey::Mx,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::List(list),
-                        not: false,
-                    },
-                ],
+                Conditions {
+                    conditions: vec![
+                        Condition::Match {
+                            key: EnvelopeKey::SenderDomain,
+                            op: ConditionOp::StartsWith,
+                            value: ConditionValue::String("example".to_string()),
+                            not: false,
+                        },
+                        Condition::JumpIfFalse { positions: 1 },
+                        Condition::Match {
+                            key: EnvelopeKey::Mx,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::List(list),
+                            not: false,
+                        },
+                    ],
+                },
             ),
             (
                 "my-nested-rule".to_string(),
-                vec![
-                    Condition::Match {
-                        key: EnvelopeKey::RecipientDomain,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::String("example.org".to_string()),
-                        not: false,
-                    },
-                    Condition::JumpIfTrue { positions: 9 },
-                    Condition::Match {
-                        key: EnvelopeKey::RemoteIp,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::IpAddrMask(IpAddrMask::V4 {
-                            addr: "192.168.0.0".parse().unwrap(),
-                            mask: u32::MAX << (32 - 24),
-                        }),
-                        not: false,
-                    },
-                    Condition::JumpIfTrue { positions: 7 },
-                    Condition::Match {
-                        key: EnvelopeKey::Recipient,
-                        op: ConditionOp::StartsWith,
-                        value: ConditionValue::String("no-reply@".to_string()),
-                        not: false,
-                    },
-                    Condition::JumpIfFalse { positions: 5 },
-                    Condition::Match {
-                        key: EnvelopeKey::Sender,
-                        op: ConditionOp::EndsWith,
-                        value: ConditionValue::String("@domain.org".to_string()),
-                        not: false,
-                    },
-                    Condition::JumpIfFalse { positions: 3 },
-                    Condition::Match {
-                        key: EnvelopeKey::Priority,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::Int(1),
-                        not: true,
-                    },
-                    Condition::JumpIfTrue { positions: 1 },
-                    Condition::Match {
-                        key: EnvelopeKey::Priority,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::Int(-2),
-                        not: false,
-                    },
-                ],
+                Conditions {
+                    conditions: vec![
+                        Condition::Match {
+                            key: EnvelopeKey::RecipientDomain,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::String("example.org".to_string()),
+                            not: false,
+                        },
+                        Condition::JumpIfTrue { positions: 9 },
+                        Condition::Match {
+                            key: EnvelopeKey::RemoteIp,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::IpAddrMask(IpAddrMask::V4 {
+                                addr: "192.168.0.0".parse().unwrap(),
+                                mask: u32::MAX << (32 - 24),
+                            }),
+                            not: false,
+                        },
+                        Condition::JumpIfTrue { positions: 7 },
+                        Condition::Match {
+                            key: EnvelopeKey::Recipient,
+                            op: ConditionOp::StartsWith,
+                            value: ConditionValue::String("no-reply@".to_string()),
+                            not: false,
+                        },
+                        Condition::JumpIfFalse { positions: 5 },
+                        Condition::Match {
+                            key: EnvelopeKey::Sender,
+                            op: ConditionOp::EndsWith,
+                            value: ConditionValue::String("@domain.org".to_string()),
+                            not: false,
+                        },
+                        Condition::JumpIfFalse { positions: 3 },
+                        Condition::Match {
+                            key: EnvelopeKey::Priority,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::Int(1),
+                            not: true,
+                        },
+                        Condition::JumpIfTrue { positions: 1 },
+                        Condition::Match {
+                            key: EnvelopeKey::Priority,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::Int(-2),
+                            not: false,
+                        },
+                    ],
+                },
             ),
         ]);
 
         for (key, rule) in expected_rules {
-            assert_eq!(Some(rule), rules.remove(&key), "failed for {}", key);
+            assert_eq!(Some(rule), conditions.remove(&key), "failed for {}", key);
         }
     }
 }

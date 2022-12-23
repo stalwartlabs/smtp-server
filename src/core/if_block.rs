@@ -1,15 +1,18 @@
 use std::net::{IpAddr, Ipv4Addr};
 
-use crate::config::{
-    Condition, ConditionOp, ConditionValue, EnvelopeKey, IfBlock, IpAddrMask, List,
+use crate::{
+    config::{
+        Condition, ConditionOp, ConditionValue, Conditions, EnvelopeKey, IfBlock, IpAddrMask, List,
+    },
+    remote::lookup::{self},
 };
 
 use super::Envelope;
 
 impl<T: Default> IfBlock<T> {
-    pub fn eval(&self, envelope: &impl Envelope) -> &T {
+    pub async fn eval(&self, envelope: &impl Envelope) -> &T {
         for if_then in &self.if_then {
-            if if_then.rules.eval(envelope) {
+            if if_then.conditions.eval(envelope).await {
                 return &if_then.then;
             }
         }
@@ -18,16 +21,12 @@ impl<T: Default> IfBlock<T> {
     }
 }
 
-pub trait ConditionEval {
-    fn eval(&self, envelope: &impl Envelope) -> bool;
-}
-
-impl ConditionEval for Vec<Condition> {
-    fn eval(&self, envelope: &impl Envelope) -> bool {
-        let mut rules = self.iter();
+impl Conditions {
+    pub async fn eval(&self, envelope: &impl Envelope) -> bool {
+        let mut conditions = self.conditions.iter();
         let mut matched = false;
 
-        while let Some(rule) = rules.next() {
+        while let Some(rule) = conditions.next() {
             match rule {
                 Condition::Match {
                     key,
@@ -82,16 +81,22 @@ impl ConditionEval for Vec<Condition> {
                         }
                         ConditionValue::List(value) => {
                             let ctx_value = envelope.key_to_string(key);
-                            match value.as_ref() {
-                                List::Local(list) => match op {
-                                    ConditionOp::Equal => list.contains(ctx_value.as_ref()),
-                                    ConditionOp::StartsWith | ConditionOp::EndsWith => false,
-                                },
-                                List::Remote(_) => {
-                                    let ococ = "fd";
-                                    //TODO
-                                    false
+                            if matches!(op, ConditionOp::Equal) {
+                                match value.as_ref() {
+                                    List::Local(list) => list.contains(ctx_value.as_ref()),
+                                    List::Remote(tx) => {
+                                        if let Some(result) = tx
+                                            .lookup(lookup::Item::Entry(ctx_value.into_owned()))
+                                            .await
+                                        {
+                                            result
+                                        } else {
+                                            return false;
+                                        }
+                                    }
                                 }
+                            } else {
+                                false
                             }
                         }
                         ConditionValue::Regex(value) => {
@@ -103,7 +108,7 @@ impl ConditionEval for Vec<Condition> {
                     if matched {
                         //TODO use advance_by when stabilized
                         for _ in 0..*positions {
-                            rules.next();
+                            conditions.next();
                         }
                     }
                 }
@@ -111,7 +116,7 @@ impl ConditionEval for Vec<Condition> {
                     if !matched {
                         //TODO use advance_by when stabilized
                         for _ in 0..*positions {
-                            rules.next();
+                            conditions.next();
                         }
                     }
                 }
@@ -238,8 +243,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn eval_if() {
+    #[tokio::test]
+    async fn eval_if() {
         let mut file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         file.push("resources");
         file.push("tests");
@@ -259,7 +264,7 @@ mod tests {
             ..Default::default()
         });
         config.parse_lists(&mut context).unwrap();
-        let rules = config.parse_rules(&context).unwrap();
+        let conditions = config.parse_conditions(&context).unwrap();
 
         let envelope = TestEnvelope {
             local_ip: config.property_require("envelope.local-ip").unwrap(),
@@ -277,15 +282,19 @@ mod tests {
             helo_domain: config.property_require("envelope.helo-domain").unwrap(),
         };
 
-        for (key, rules) in rules {
+        for (key, conditions) in conditions {
             //println!("============= Testing {:?} ==================", key);
             let (_, expected_result) = key.rsplit_once('-').unwrap();
             assert_eq!(
                 IfBlock {
-                    if_then: vec![IfThen { rules, then: true }],
+                    if_then: vec![IfThen {
+                        conditions,
+                        then: true
+                    }],
                     default: false,
                 }
-                .eval(&envelope),
+                .eval(&envelope)
+                .await,
                 &expected_result.parse::<bool>().unwrap(),
                 "failed for {:?}",
                 key

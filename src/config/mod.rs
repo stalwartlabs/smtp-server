@@ -21,7 +21,9 @@ use ahash::{AHashMap, AHashSet};
 use regex::Regex;
 use rustls::ServerConfig;
 use smtp_proto::MtPriority;
-use tokio::net::TcpSocket;
+use tokio::{net::TcpSocket, sync::mpsc};
+
+use crate::remote::lookup::{self, LookupChannel};
 
 #[derive(Debug, Default)]
 pub struct Server {
@@ -43,7 +45,7 @@ pub struct Listener {
     pub backlog: Option<u32>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Host {
     pub address: String,
     pub port: u16,
@@ -57,15 +59,18 @@ pub struct Host {
     pub cache_entries: usize,
     pub cache_ttl_positive: Duration,
     pub cache_ttl_negative: Duration,
+    pub channel_tx: mpsc::Sender<lookup::Event>,
+    pub channel_rx: mpsc::Receiver<lookup::Event>,
+    pub ref_count: usize,
 }
 
 #[derive(Debug, Default)]
 pub struct Script {}
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum List {
     Local(AHashSet<String>),
-    Remote(Arc<Host>),
+    Remote(LookupChannel),
 }
 
 impl Default for List {
@@ -85,7 +90,8 @@ pub enum ServerProtocol {
     Imap,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum Condition {
     Match {
         key: EnvelopeKey,
@@ -118,6 +124,7 @@ pub enum ConditionValue {
     Regex(Regex),
 }
 
+#[cfg(test)]
 impl PartialEq for ConditionValue {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -132,7 +139,19 @@ impl PartialEq for ConditionValue {
     }
 }
 
+#[cfg(test)]
 impl Eq for ConditionValue {}
+
+#[cfg(test)]
+impl PartialEq for List {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Local(l0), Self::Local(r0)) => l0 == r0,
+            (Self::Remote(_), Self::Remote(_)) => true,
+            _ => false,
+        }
+    }
+}
 
 impl Default for Condition {
     fn default() -> Self {
@@ -155,21 +174,30 @@ pub enum EnvelopeKey {
     Priority,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IfThen<T: Default> {
-    pub rules: Vec<Condition>,
+    pub conditions: Conditions,
     pub then: T,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub struct Conditions {
+    pub conditions: Vec<Condition>,
+}
+
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IfBlock<T: Default> {
     pub if_then: Vec<IfThen<T>>,
     pub default: T,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Throttle {
-    pub condition: Vec<Condition>,
+    pub conditions: Conditions,
     pub keys: u16,
     pub concurrency: Option<u64>,
     pub rate: Option<ThrottleRate>,
@@ -217,13 +245,12 @@ pub struct Ehlo {
     pub deliver_by: IfBlock<Option<Duration>>,
     pub mt_priority: IfBlock<Option<MtPriority>>,
     pub size: IfBlock<Option<usize>>,
-    pub expn: IfBlock<bool>,
 }
 
 pub struct Auth {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub require: IfBlock<bool>,
-    pub auth_host: IfBlock<Option<Arc<Host>>>,
+    pub lookup: IfBlock<Option<Arc<List>>>,
     pub mechanisms: IfBlock<u64>,
     pub errors_max: IfBlock<usize>,
     pub errors_wait: IfBlock<Duration>,
@@ -237,6 +264,8 @@ pub struct Mail {
 pub struct Rcpt {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub relay: IfBlock<bool>,
+    pub lookup_domains: IfBlock<Option<Arc<List>>>,
+    pub lookup_addresses: IfBlock<Option<Arc<List>>>,
 
     // Errors
     pub errors_max: IfBlock<usize>,
@@ -247,6 +276,11 @@ pub struct Rcpt {
 
     // Throttle
     pub throttle: Vec<Throttle>,
+}
+
+pub struct ExpnVrfy {
+    pub enable: IfBlock<bool>,
+    pub lookup: IfBlock<Option<Arc<List>>>,
 }
 
 pub struct Data {
@@ -279,6 +313,8 @@ pub struct SessionConfig {
     pub mail: Mail,
     pub rcpt: Rcpt,
     pub data: Data,
+    pub expn: ExpnVrfy,
+    pub vrfy: ExpnVrfy,
 }
 
 pub enum AuthLevel {
@@ -295,7 +331,7 @@ pub struct Config {
 #[derive(Debug, Default)]
 pub struct ConfigContext {
     pub servers: Vec<Server>,
-    pub hosts: AHashMap<String, Arc<Host>>,
+    pub hosts: AHashMap<String, Host>,
     pub scripts: AHashMap<String, Arc<Script>>,
     pub lists: AHashMap<String, Arc<List>>,
     pub queues: AHashMap<String, Arc<Queue>>,

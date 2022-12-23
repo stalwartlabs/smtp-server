@@ -101,7 +101,7 @@ impl Server {
                                     };
 
                                     // Enforce throttle
-                                    if !session.is_allowed(&core.config.connect.throttle) {
+                                    if !session.is_allowed(&core.config.connect.throttle).await {
                                         continue;
                                     }
 
@@ -213,8 +213,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> Option<(Session<T>, watch::Receiver<bool>)> {
         let mut buf = vec![0; 8192];
-        let timeout = *self.core.config.timeout.eval(&self);
-        let max_bytes = *self.core.config.transfer_limit.eval(&self);
+        let timeout = *self.core.config.timeout.eval(&self).await;
+        let max_bytes = *self.core.config.transfer_limit.eval(&self).await;
         let mut bytes_received = 0;
 
         loop {

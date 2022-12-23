@@ -1,5 +1,5 @@
 [[throttle]]
-if = {key = "remote-ip", eq = "127.0.0.1"}
+if = {if = "remote-ip", eq = "127.0.0.1"}
 key = ["remote-ip", "authenticated-as"]
 concurrency = 100
 rate = "50/30s"

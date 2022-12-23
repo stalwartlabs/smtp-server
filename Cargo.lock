@@ -1503,6 +1503,7 @@ dependencies = [
  "dashmap",
  "lru-cache",
  "mail-auth",
+ "mail-parser",
  "mail-send",
  "parking_lot",
  "regex",

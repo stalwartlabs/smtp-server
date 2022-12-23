@@ -8,14 +8,18 @@ use std::{
 use dashmap::DashMap;
 use smtp_proto::{
     request::receiver::{
-        BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, RequestReceiver,
+        BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, LineReceiver,
+        RequestReceiver,
     },
     MtPriority,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::Span;
 
-use crate::config::{EnvelopeKey, Host, Script, ServerProtocol, SessionConfig};
+use crate::{
+    config::{EnvelopeKey, List, Script, ServerProtocol, SessionConfig},
+    listener::sasl::SaslToken,
+};
 
 use self::throttle::{
     ConcurrencyLimiter, InFlightRequest, Limiter, ThrottleKey, ThrottleKeyHasherBuilder,
@@ -35,6 +39,7 @@ pub enum State {
     Request(RequestReceiver),
     Bdat(BdatReceiver),
     Data(DataReceiver),
+    Sasl(LineReceiver<SaslToken>),
     DataTooLarge(DummyDataReceiver),
     RequestTooLarge(DummyLineReceiver),
     None,
@@ -97,12 +102,11 @@ pub struct SessionParameters {
     pub deliver_by: Option<Duration>,
     pub mt_priority: Option<MtPriority>,
     pub size: Option<usize>,
-    pub expn: bool,
 
     // Auth parameters
     pub auth_script: Option<Arc<Script>>,
     pub auth_require: bool,
-    pub auth_host: Option<Arc<Host>>,
+    pub auth_lookup: Option<Arc<List>>,
     pub auth_mechanisms: u64,
     pub auth_errors_max: usize,
     pub auth_errors_wait: Duration,

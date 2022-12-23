@@ -1,5 +1,4 @@
 use std::{
-    collections::hash_map::Entry,
     fs::File,
     io::{BufRead, BufReader},
     sync::Arc,
@@ -11,87 +10,61 @@ use super::{Config, ConfigContext, List};
 
 impl Config {
     pub fn parse_lists(&self, ctx: &mut ConfigContext) -> super::Result<()> {
-        for id in self.sub_keys("list.inline") {
-            let list = self.parse_list_inline(id)?;
+        for id in self.sub_keys("list") {
+            let list = self.parse_list(id, ctx)?;
             ctx.lists.insert(id.to_string(), Arc::new(list));
-        }
-
-        for id in self.sub_keys("list.local") {
-            let list = self.parse_list_local(id)?;
-            match ctx.lists.entry(id.to_string()) {
-                Entry::Vacant(e) => {
-                    e.insert(list.into());
-                }
-                Entry::Occupied(_) => {
-                    return Err(format!("Duplicate list {:?} found.", id));
-                }
-            }
-        }
-
-        for id in self.sub_keys("list.remote") {
-            let list = self.parse_list_remote(id, ctx)?;
-            match ctx.lists.entry(id.to_string()) {
-                Entry::Vacant(e) => {
-                    e.insert(list.into());
-                }
-                Entry::Occupied(_) => {
-                    return Err(format!("Duplicate list {:?} found.", id));
-                }
-            }
         }
 
         Ok(())
     }
 
-    fn parse_list_local(&self, id: &str) -> super::Result<List> {
-        let mut entries = AHashSet::new();
+    fn parse_list(&self, id: &str, ctx: &mut ConfigContext) -> super::Result<List> {
+        match self.value(("list", id, "type")).unwrap_or_default() {
+            "inline" => {
+                let mut entries = AHashSet::new();
 
-        for (_, value) in self.values(("list.local", id)) {
-            for line in BufReader::new(File::open(value).map_err(|err| {
-                format!("Failed to read file {:?} for list {:?}: {}", value, id, err)
-            })?)
-            .lines()
-            {
-                entries.insert(line.map_err(|err| {
-                    format!("Failed to read file {:?} for list {:?}: {}", value, id, err)
-                })?);
+                for (_, value) in self.values(("list", id, "items")) {
+                    entries.insert(value.to_string());
+                }
+
+                Ok(List::Local(entries))
             }
-        }
+            "remote" => {
+                let remote = self.value_require(("list", id, "host"))?;
 
-        Ok(List::Local(entries))
-    }
-
-    fn parse_list_remote(&self, id: &str, ctx: &ConfigContext) -> super::Result<List> {
-        let mut iter = self.values(("list.remote", id));
-        if let Some((_, remote)) = iter.next() {
-            if let Some(host) = ctx.hosts.get(remote) {
-                if iter.next().is_none() {
-                    Ok(List::Remote(host.clone()))
+                if let Some(host) = ctx.hosts.get_mut(remote) {
+                    host.ref_count += 1;
+                    Ok(List::Remote(host.channel_tx.clone().into()))
                 } else {
                     Err(format!(
-                        "Multiple remote hosts specified for list {:?}.",
-                        id
+                        "Remote host {:?} not found for list {:?}.",
+                        remote, id
                     ))
                 }
-            } else {
-                Err(format!(
-                    "Remote host {:?} not found for list {:?}.",
-                    remote, id
-                ))
             }
-        } else {
-            Err(format!("Remote host not specified for list {:?}.", id))
+            "file" => {
+                let mut entries = AHashSet::new();
+
+                for (_, value) in self.values(("list", id, "path")) {
+                    for line in BufReader::new(File::open(value).map_err(|err| {
+                        format!("Failed to read file {:?} for list {:?}: {}", value, id, err)
+                    })?)
+                    .lines()
+                    {
+                        entries.insert(line.map_err(|err| {
+                            format!("Failed to read file {:?} for list {:?}: {}", value, id, err)
+                        })?);
+                    }
+                }
+
+                Ok(List::Local(entries))
+            }
+            "" => Err(format!("Missing 'type' property for list {:?}.", id)),
+            invalid => Err(format!(
+                "Invalid list type {:?} for list {:?}.",
+                invalid, id
+            )),
         }
-    }
-
-    fn parse_list_inline(&self, id: &str) -> super::Result<List> {
-        let mut entries = AHashSet::new();
-
-        for (_, value) in self.values(("list.inline", id)) {
-            entries.insert(value.to_string());
-        }
-
-        Ok(List::Local(entries))
     }
 }
 
@@ -101,7 +74,7 @@ mod tests {
 
     use ahash::{AHashMap, AHashSet};
 
-    use crate::config::{Config, ConfigContext, Host, List};
+    use crate::config::{Config, ConfigContext, List};
 
     #[test]
     fn parse_lists() {
@@ -127,10 +100,9 @@ mod tests {
 
         let config = Config::parse(&toml).unwrap();
         let mut context = ConfigContext::default();
-        let remote = Arc::new(Host::default());
-        context.hosts.insert("lmtp".to_string(), remote.clone());
-
+        config.parse_remote_hosts(&mut context).unwrap();
         config.parse_lists(&mut context).unwrap();
+
         let mut expected_lists = AHashMap::from_iter([
             (
                 "local-domains".to_string(),
@@ -164,7 +136,7 @@ mod tests {
             ),
             (
                 "local-addresses".to_string(),
-                Arc::new(List::Remote(remote)),
+                context.lists.get("local-addresses").unwrap().clone(),
             ),
         ]);
 

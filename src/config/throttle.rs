@@ -68,10 +68,12 @@ impl Config {
         }
 
         let throttle = Throttle {
-            condition: if self.values((&prefix, "if")).next().is_some() {
+            conditions: if self.values((&prefix, "if")).next().is_some() {
                 self.parse_condition((&prefix, "if"), ctx, available_envelope_keys)?
             } else {
-                Vec::with_capacity(0)
+                Conditions {
+                    conditions: Vec::with_capacity(0),
+                }
             },
             keys,
             concurrency: self
@@ -156,8 +158,9 @@ mod tests {
     use std::{fs, path::PathBuf, time::Duration};
 
     use crate::config::{
-        Condition, ConditionOp, ConditionValue, Config, ConfigContext, EnvelopeKey, IpAddrMask,
-        Throttle, ThrottleRate, THROTTLE_AUTH_AS, THROTTLE_REMOTE_IP, THROTTLE_SENDER_DOMAIN,
+        Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
+        IpAddrMask, Throttle, ThrottleRate, THROTTLE_AUTH_AS, THROTTLE_REMOTE_IP,
+        THROTTLE_SENDER_DOMAIN,
     };
 
     #[test]
@@ -191,15 +194,17 @@ mod tests {
             throttle,
             vec![
                 Throttle {
-                    condition: vec![Condition::Match {
-                        key: EnvelopeKey::RemoteIp,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::IpAddrMask(IpAddrMask::V4 {
-                            addr: "127.0.0.1".parse().unwrap(),
-                            mask: u32::MAX
-                        }),
-                        not: false
-                    }],
+                    conditions: Conditions {
+                        conditions: vec![Condition::Match {
+                            key: EnvelopeKey::RemoteIp,
+                            op: ConditionOp::Equal,
+                            value: ConditionValue::IpAddrMask(IpAddrMask::V4 {
+                                addr: "127.0.0.1".parse().unwrap(),
+                                mask: u32::MAX
+                            }),
+                            not: false
+                        }]
+                    },
                     keys: THROTTLE_REMOTE_IP | THROTTLE_AUTH_AS,
                     concurrency: 100.into(),
                     rate: ThrottleRate {
@@ -209,7 +214,7 @@ mod tests {
                     .into()
                 },
                 Throttle {
-                    condition: vec![],
+                    conditions: Conditions { conditions: vec![] },
                     keys: THROTTLE_SENDER_DOMAIN,
                     concurrency: 10000.into(),
                     rate: None

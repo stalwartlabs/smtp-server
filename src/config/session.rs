@@ -33,6 +33,8 @@ impl Config {
             mail: self.parse_session_mail(ctx)?,
             rcpt: self.parse_session_rcpt(ctx)?,
             data: self.parse_session_data(ctx)?,
+            expn: self.parse_session_expnvrfy("expn", ctx)?,
+            vrfy: self.parse_session_expnvrfy("vrfy", ctx)?,
         })
     }
 
@@ -109,9 +111,6 @@ impl Config {
             size: self
                 .parse_if_block("session.ehlo.capabilities.size", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(Some(25 * 1024 * 1024))),
-            expn: self
-                .parse_if_block("session.ehlo.capabilities.expn", ctx, &available_keys)?
-                .unwrap_or_default(),
         })
     }
 
@@ -133,16 +132,16 @@ impl Config {
             require: self
                 .parse_if_block("session.auth.require", ctx, &available_keys)?
                 .unwrap_or_default(),
-            auth_host: self
-                .parse_if_block::<Option<String>>("session.auth.auth-host", ctx, &available_keys)?
+            lookup: self
+                .parse_if_block::<Option<String>>("session.auth.lookup", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.hosts, "session.auth.auth-host", "auth host")?,
+                .map_if_block(&ctx.lists, "session.auth.lookup", "lookup list")?,
             mechanisms: IfBlock {
                 if_then: mechanisms
                     .if_then
                     .into_iter()
                     .map(|i| IfThen {
-                        rules: i.rules,
+                        conditions: i.conditions,
                         then: i.then.into_iter().fold(0, |acc, m| acc | m.mechanism),
                     })
                     .collect(),
@@ -206,6 +205,22 @@ impl Config {
             relay: self
                 .parse_if_block("session.rcpt.relay", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(false)),
+            lookup_domains: self
+                .parse_if_block::<Option<String>>(
+                    "session.rcpt.lookup.domains",
+                    ctx,
+                    &available_keys,
+                )?
+                .unwrap_or_default()
+                .map_if_block(&ctx.lists, "session.rcpt.lookup.domains", "lookup list")?,
+            lookup_addresses: self
+                .parse_if_block::<Option<String>>(
+                    "session.rcpt.lookup.addresses",
+                    ctx,
+                    &available_keys,
+                )?
+                .unwrap_or_default()
+                .map_if_block(&ctx.lists, "session.rcpt.lookup.addresses", "lookup list")?,
             errors_max: self
                 .parse_if_block("session.rcpt.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(10)),
@@ -229,6 +244,26 @@ impl Config {
                     | THROTTLE_SENDER
                     | THROTTLE_SENDER_DOMAIN,
             )?,
+        })
+    }
+
+    fn parse_session_expnvrfy(&self, key: &str, ctx: &ConfigContext) -> super::Result<ExpnVrfy> {
+        let available_keys = [
+            EnvelopeKey::Listener,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+            EnvelopeKey::HeloDomain,
+            EnvelopeKey::AuthenticatedAs,
+        ];
+
+        Ok(ExpnVrfy {
+            enable: self
+                .parse_if_block(("session", key, "require"), ctx, &available_keys)?
+                .unwrap_or_default(),
+            lookup: self
+                .parse_if_block::<Option<String>>(("session", key, "lookup"), ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.lists, ("session", key, "lookup"), "lookup list")?,
         })
     }
 
@@ -316,13 +351,15 @@ impl ParseValue for Mechanism {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
         Ok(Mechanism {
             mechanism: match value.to_ascii_uppercase().as_str() {
-                "SCRAM-SHA-256-PLUS" => AUTH_SCRAM_SHA_256_PLUS,
+                "LOGIN" => AUTH_LOGIN,
+                "PLAIN" => AUTH_PLAIN,
+                "XOAUTH2" => AUTH_XOAUTH2,
+                "OAUTHBEARER" => AUTH_OAUTHBEARER,
+                /*"SCRAM-SHA-256-PLUS" => AUTH_SCRAM_SHA_256_PLUS,
                 "SCRAM-SHA-256" => AUTH_SCRAM_SHA_256,
                 "SCRAM-SHA-1-PLUS" => AUTH_SCRAM_SHA_1_PLUS,
                 "SCRAM-SHA-1" => AUTH_SCRAM_SHA_1,
-                "OAUTHBEARER" => AUTH_OAUTHBEARER,
                 "XOAUTH" => AUTH_XOAUTH,
-                "XOAUTH2" => AUTH_XOAUTH2,
                 "9798-M-DSA-SHA1" => AUTH_9798_M_DSA_SHA1,
                 "9798-M-ECDSA-SHA1" => AUTH_9798_M_ECDSA_SHA1,
                 "9798-M-RSA-SHA1-ENC" => AUTH_9798_M_RSA_SHA1_ENC,
@@ -355,9 +392,7 @@ impl ParseValue for Mechanism {
                 "SXOVER-PLUS" => AUTH_SXOVER_PLUS,
                 "CRAM-MD5" => AUTH_CRAM_MD5,
                 "DIGEST-MD5" => AUTH_DIGEST_MD5,
-                "LOGIN" => AUTH_LOGIN,
-                "PLAIN" => AUTH_PLAIN,
-                "ANONYMOUS" => AUTH_ANONYMOUS,
+                "ANONYMOUS" => AUTH_ANONYMOUS,*/
                 _ => {
                     return Err(format!(
                         "Unsupported mechanism {:?} for property {:?}.",

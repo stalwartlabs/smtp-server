@@ -14,7 +14,7 @@ use std::{
 
 use crate::config::*;
 
-use super::{if_block::ConditionEval, Envelope, Session};
+use super::{Envelope, Session};
 
 #[derive(Debug)]
 pub struct Limiter {
@@ -203,9 +203,9 @@ impl ThrottleKey {
 }
 
 impl<T: AsyncRead + AsyncWrite> Session<T> {
-    pub fn is_allowed(&mut self, throttle: &[Throttle]) -> bool {
+    pub async fn is_allowed(&mut self, throttle: &[Throttle]) -> bool {
         for t in throttle {
-            if t.condition.is_empty() || t.condition.eval(self) {
+            if t.conditions.conditions.is_empty() || t.conditions.eval(self).await {
                 // Build throttle key
                 match self.core.throttle.entry(ThrottleKey::new(self, t)) {
                     Entry::Occupied(e) => {

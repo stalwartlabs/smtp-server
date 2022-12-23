@@ -1,7 +1,10 @@
 use std::{net::IpAddr, time::SystemTime};
 
 use smtp_proto::{
-    request::receiver::{BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver},
+    request::receiver::{
+        BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, LineReceiver,
+        MAX_LINE_LENGTH,
+    },
     *,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -10,6 +13,8 @@ use crate::{
     config::ServerProtocol,
     core::{Envelope, RcptTo, Session, State},
 };
+
+use super::sasl::SaslToken;
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     pub async fn ingest(&mut self, bytes: &[u8]) -> Result<bool, ()> {
@@ -31,6 +36,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                             });
                                             if self
                                                 .is_allowed(&self.core.clone().config.rcpt.throttle)
+                                                .await
                                             {
                                                 self.eval_data_params();
                                                 self.write(b"250 2.1.5 OK\r\n").await?;
@@ -79,6 +85,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                             }
                                             if self
                                                 .is_allowed(&self.core.clone().config.mail.throttle)
+                                                .await
                                             {
                                                 self.eval_rcpt_params();
                                                 self.write(b"250 2.1.0 OK\r\n").await?;
@@ -143,8 +150,23 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 mechanism,
                                 initial_response,
                             } => {
-                                if (mechanism & self.params.auth_mechanisms) != 0 {
-                                    //TODO
+                                if let Some(mut token) = SaslToken::from_mechanism(
+                                    mechanism & self.params.auth_mechanisms,
+                                ) {
+                                    if self.data.authenticated_as.is_empty() {
+                                        if self
+                                            .handle_sasl_response(
+                                                &mut token,
+                                                initial_response.as_bytes(),
+                                            )
+                                            .await?
+                                        {
+                                            state = State::Sasl(LineReceiver::new(token));
+                                            continue 'outer;
+                                        }
+                                    } else {
+                                        self.write(b"503 5.5.1 Already authenticated.\r\n").await?;
+                                    }
                                 } else if self.params.auth_mechanisms == 0 {
                                     self.write(b"503 5.5.1 AUTH not allowed.\r\n").await?;
                                 } else {
@@ -157,9 +179,15 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                             Request::Noop { .. } => {
                                 self.write(b"250 2.0.0 OK\r\n").await?;
                             }
-                            Request::Vrfy { value } => todo!(),
+                            Request::Vrfy { value } => {
+                                if self.can_vrfy().await {
+                                    //TODO
+                                } else {
+                                    self.write(b"500 5.5.1 VRFY not allowed.\r\n").await?;
+                                }
+                            }
                             Request::Expn { value } => {
-                                if self.params.expn {
+                                if self.can_expn().await {
                                     //TODO
                                 } else {
                                     self.write(b"500 5.5.1 EXPN not allowed.\r\n").await?;
@@ -293,6 +321,31 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         break 'outer;
                     }
                 }
+                State::Sasl(receiver) => {
+                    if receiver.ingest(&mut iter) {
+                        if receiver.buf.len() < MAX_LINE_LENGTH {
+                            if self
+                                .handle_sasl_response(&mut receiver.state, &receiver.buf)
+                                .await?
+                            {
+                                receiver.buf.clear();
+                                continue 'outer;
+                            }
+                        } else {
+                            tokio::time::sleep(self.params.auth_errors_wait).await;
+                            self.write(b"500 5.5.6 Authentication Exchange line is too long.\r\n")
+                                .await?;
+                            if self.data.auth_errors < self.params.auth_errors_max {
+                                self.data.auth_errors += 1;
+                            } else {
+                                return Err(());
+                            }
+                        }
+                        state = State::default();
+                    } else {
+                        break 'outer;
+                    }
+                }
                 State::DataTooLarge(receiver) => {
                     if receiver.ingest(&mut iter) {
                         self.data.message = Vec::with_capacity(0);
@@ -339,7 +392,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             if self.params.chunking {
                 response.capabilities |= EXT_CHUNKING;
             }
-            if self.params.expn {
+            if self.can_expn().await {
                 response.capabilities |= EXT_EXPN;
             }
             if self.params.requiretls {
@@ -401,15 +454,24 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             if self.data.messages_sent < self.params.data_max_messages {
                 Ok(true)
             } else {
-                self.write(b"501 5.1.3 Bad destination mailbox address syntax.\r\n")
+                self.write(b"451 4.4.5 Maximum number of messages per session exceeded.\r\n")
                     .await?;
                 Ok(false)
             }
         } else {
-            self.write(b"451 4.4.5 Maximum number of messages per session exceeded.\r\n")
-                .await?;
+            self.write(b"503 5.5.1 RCPT is required first.\r\n").await?;
             Ok(false)
         }
+    }
+
+    #[inline(always)]
+    async fn can_expn(&self) -> bool {
+        *self.core.config.expn.enable.eval(self).await
+    }
+
+    #[inline(always)]
+    async fn can_vrfy(&self) -> bool {
+        *self.core.config.vrfy.enable.eval(self).await
     }
 
     #[inline(always)]
