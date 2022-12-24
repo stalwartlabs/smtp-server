@@ -103,6 +103,8 @@ rate = "10/1m"
 relay = [ { if = "authenticated-as", ne = "", then = true}, 
           { else = false} ]
 max-recipients = 100
+vrfy = true
+expn = true
 
 [session.rcpt.lookup]
 domains = "local-domains"
@@ -116,16 +118,6 @@ wait = "5s"
 key = "rcpt" 
 #concurrency = 10
 rate = "10/1m"
-
-[session.vrfy]
-enable = [ { if = "authenticated-as", ne = "", then = true}, 
-           { else = false} ]
-lookup = "local-addresses"
-
-[session.expn]
-enable = [ { if = "authenticated-as", ne = "", then = true}, 
-           { else = false} ]
-lookup = "local-addresses"
 
 [session.data]
 #script = data.sieve

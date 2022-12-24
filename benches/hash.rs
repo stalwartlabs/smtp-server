@@ -98,7 +98,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         helo_domain: "ehlo-domain.org".to_string(),
     };
     let throttle = Throttle {
-        condition: vec![],
+        conditions: Conditions { conditions: vec![] },
         keys: THROTTLE_LISTENER, //u16::MAX,
         concurrency: 10.into(),
         rate: ThrottleRate {

@@ -18,7 +18,7 @@ use tracing::Span;
 
 use crate::{
     config::{EnvelopeKey, List, Script, ServerProtocol, SessionConfig},
-    listener::sasl::SaslToken,
+    listener::auth::SaslToken,
 };
 
 use self::throttle::{
@@ -68,9 +68,8 @@ pub struct SessionData {
     pub local_ip: IpAddr,
     pub remote_ip: IpAddr,
     pub helo_domain: String,
-    pub mail_from: String,
-    pub mail_from_lcase: String,
-    pub rcpt_to: Vec<RcptTo>,
+    pub mail_from: Option<SessionAddress>,
+    pub rcpt_to: Vec<SessionAddress>,
     pub rcpt_errors: usize,
     pub message: Vec<u8>,
     pub authenticated_as: String,
@@ -80,9 +79,10 @@ pub struct SessionData {
     pub messages_sent: usize,
 }
 
-pub struct RcptTo {
-    pub value: String,
-    pub value_lcase: String,
+pub struct SessionAddress {
+    pub address: String,
+    pub address_lcase: String,
+    pub domain: String,
 }
 
 #[derive(Debug, Default)]
@@ -120,6 +120,8 @@ pub struct SessionParameters {
     pub rcpt_errors_max: usize,
     pub rcpt_errors_wait: Duration,
     pub rcpt_max: usize,
+    pub rcpt_lookup_domain: Option<Arc<List>>,
+    pub rcpt_lookup_addresses: Option<Arc<List>>,
 
     // Data parameters
     pub data_script: Option<Arc<Script>>,
@@ -142,8 +144,7 @@ impl SessionData {
             local_ip,
             remote_ip,
             helo_domain: String::new(),
-            mail_from: String::new(),
-            mail_from_lcase: String::new(),
+            mail_from: None,
             rcpt_to: Vec::new(),
             authenticated_as: String::new(),
             priority: 0,

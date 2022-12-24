@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, fmt::Debug, sync::Arc, time::Duration};
 
-use crate::config::{Config, Host, ServerProtocol};
+use crate::config::{Config, Host, List, ServerProtocol};
 use mail_send::{smtp::tls::build_tls_connector, Credentials, SmtpClientBuilder};
 use tokio::sync::{mpsc, oneshot};
 
@@ -11,7 +11,7 @@ pub enum Event {
     Lookup(Lookup),
     WorkerReady {
         item: Item,
-        result: bool,
+        result: LookupResult,
         next_lookup: Option<oneshot::Sender<Option<Lookup>>>,
     },
     WorkerFailed,
@@ -21,14 +21,23 @@ pub enum Event {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Item {
-    Entry(String),
-    Credentials(Credentials<String>),
+    Exists(String),
+    Authenticate(Credentials<String>),
+    Verify(String),
+    Expand(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum LookupResult {
+    True,
+    False,
+    Values(Arc<Vec<String>>),
 }
 
 #[derive(Debug)]
 pub struct Lookup {
     pub item: Item,
-    pub result: oneshot::Sender<bool>,
+    pub result: oneshot::Sender<LookupResult>,
 }
 
 #[derive(Debug)]
@@ -122,18 +131,15 @@ impl<T: RemoteLookup> RemoteHost<T> {
         max_concurrent: usize,
     ) {
         // Create caches and queue
-        let mut cache_pos = LookupCache::<Item>::new(entries, ttl_pos);
-        let mut cache_neg = LookupCache::<Item>::new(entries, ttl_neg);
+        let mut cache = LookupCache::new(entries, ttl_pos, ttl_neg);
         let mut queue = VecDeque::new();
         let mut active_lookups = 0;
 
         while let Some(event) = rx.recv().await {
             match event {
                 Event::Lookup(lookup) => {
-                    if cache_pos.get(&lookup.item) {
-                        lookup.result.send(true).logged_unwrap();
-                    } else if cache_neg.get(&lookup.item) {
-                        lookup.result.send(false).logged_unwrap();
+                    if let Some(result) = cache.get(&lookup.item) {
+                        lookup.result.send(result).logged_unwrap();
                     } else if active_lookups < max_concurrent {
                         active_lookups += 1;
                         self.host.spawn_lookup(lookup, self.tx.clone());
@@ -146,18 +152,12 @@ impl<T: RemoteLookup> RemoteHost<T> {
                     result,
                     next_lookup,
                 } => {
-                    if result {
-                        cache_pos.insert(item);
-                    } else {
-                        cache_neg.insert(item);
-                    }
+                    cache.insert(item, result);
 
                     let mut lookup = None;
                     while let Some(queued_lookup) = queue.pop_front() {
-                        if cache_pos.get(&queued_lookup.item) {
-                            queued_lookup.result.send(true).logged_unwrap();
-                        } else if cache_neg.get(&queued_lookup.item) {
-                            queued_lookup.result.send(false).logged_unwrap();
+                        if let Some(result) = cache.get(&queued_lookup.item) {
+                            queued_lookup.result.send(result).logged_unwrap();
                         } else {
                             lookup = queued_lookup.into();
                             break;
@@ -186,8 +186,7 @@ impl<T: RemoteLookup> RemoteHost<T> {
                     break;
                 }
                 Event::Reload => {
-                    cache_pos.clear();
-                    cache_neg.clear();
+                    cache.clear();
                 }
             }
         }
@@ -195,7 +194,7 @@ impl<T: RemoteLookup> RemoteHost<T> {
 }
 
 impl LookupChannel {
-    pub async fn lookup(&self, item: Item) -> Option<bool> {
+    pub async fn lookup(&self, item: Item) -> Option<LookupResult> {
         let (tx, rx) = oneshot::channel();
         if self
             .tx
@@ -210,9 +209,70 @@ impl LookupChannel {
     }
 }
 
+impl List {
+    pub async fn exists(&self, entry: &str) -> Option<bool> {
+        match self {
+            List::Remote(tx) => tx
+                .lookup(Item::Exists(entry.to_string()))
+                .await
+                .map(|r| r.into()),
+            List::Local(entries) => Some(entries.contains(entry)),
+        }
+    }
+
+    pub async fn lookup(&self, item: Item) -> Option<LookupResult> {
+        match self {
+            List::Remote(tx) => tx.lookup(item).await,
+            List::Local(_) => Some(LookupResult::False),
+        }
+    }
+
+    pub async fn authenticate(&self, credentials: Credentials<String>) -> Option<bool> {
+        match self {
+            List::Remote(tx) => tx
+                .lookup(Item::Authenticate(credentials))
+                .await
+                .map(|r| r.into()),
+            List::Local(entries) => {
+                let entry = match credentials {
+                    Credentials::Plain { username, secret }
+                    | Credentials::XOauth2 { username, secret } => {
+                        format!("{}:{}", username, secret)
+                    }
+                    Credentials::OAuthBearer { token } => token,
+                };
+
+                Some(entries.contains(&entry))
+            }
+        }
+    }
+}
+
 impl From<mpsc::Sender<Event>> for LookupChannel {
     fn from(tx: mpsc::Sender<Event>) -> Self {
         LookupChannel { tx }
+    }
+}
+
+impl From<LookupResult> for bool {
+    fn from(value: LookupResult) -> Self {
+        matches!(value, LookupResult::True | LookupResult::Values(_))
+    }
+}
+
+impl From<bool> for LookupResult {
+    fn from(value: bool) -> Self {
+        if value {
+            LookupResult::True
+        } else {
+            LookupResult::False
+        }
+    }
+}
+
+impl From<Vec<String>> for LookupResult {
+    fn from(value: Vec<String>) -> Self {
+        LookupResult::Values(Arc::new(value))
     }
 }
 
@@ -235,8 +295,10 @@ impl<T, E: std::fmt::Debug> LoggedUnwrap for Result<T, E> {
 impl Debug for Item {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Entry(arg0) => f.debug_tuple("Entry").field(arg0).finish(),
-            Self::Credentials(_) => f.debug_tuple("Credentials").finish(),
+            Self::Exists(arg0) => f.debug_tuple("Rcpt").field(arg0).finish(),
+            Self::Authenticate(_) => f.debug_tuple("Auth").finish(),
+            Self::Expand(arg0) => f.debug_tuple("Expn").field(arg0).finish(),
+            Self::Verify(arg0) => f.debug_tuple("Vrfy").field(arg0).finish(),
         }
     }
 }

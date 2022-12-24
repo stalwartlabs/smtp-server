@@ -114,19 +114,19 @@ impl Server {
                                         if tls_implicit {
                                             if let Ok(mut session) = session.into_tls(tls_acceptor.unwrap()).await {
                                                 if session.write(&instance.greeting).await.is_ok() {
-                                                    session.eval_ehlo_params();
-                                                    session.eval_auth_params();
+                                                    session.eval_ehlo_params().await;
+                                                    session.eval_auth_params().await;
                                                     if !session.params.ehlo_require {
-                                                        session.eval_mail_params();
+                                                        session.eval_mail_params().await;
                                                     }
                                                     session.handle_conn(shutdown_rx).await;
                                                 }
                                             }
                                         } else if session.write(&instance.greeting).await.is_ok() {
-                                            session.eval_ehlo_params();
-                                            session.eval_auth_params();
+                                            session.eval_ehlo_params().await;
+                                            session.eval_auth_params().await;
                                             if !session.params.ehlo_require {
-                                                session.eval_mail_params();
+                                                session.eval_mail_params().await;
                                             }
                                             session.handle_conn(tls_acceptor, shutdown_rx).await;
                                         }

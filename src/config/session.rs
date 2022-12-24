@@ -33,8 +33,6 @@ impl Config {
             mail: self.parse_session_mail(ctx)?,
             rcpt: self.parse_session_rcpt(ctx)?,
             data: self.parse_session_data(ctx)?,
-            expn: self.parse_session_expnvrfy("expn", ctx)?,
-            vrfy: self.parse_session_expnvrfy("vrfy", ctx)?,
         })
     }
 
@@ -205,6 +203,12 @@ impl Config {
             relay: self
                 .parse_if_block("session.rcpt.relay", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(false)),
+            expn: self
+                .parse_if_block("session.rcpt.expn", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(false)),
+            vrfy: self
+                .parse_if_block("session.rcpt.vrfy", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(false)),
             lookup_domains: self
                 .parse_if_block::<Option<String>>(
                     "session.rcpt.lookup.domains",
@@ -244,26 +248,6 @@ impl Config {
                     | THROTTLE_SENDER
                     | THROTTLE_SENDER_DOMAIN,
             )?,
-        })
-    }
-
-    fn parse_session_expnvrfy(&self, key: &str, ctx: &ConfigContext) -> super::Result<ExpnVrfy> {
-        let available_keys = [
-            EnvelopeKey::Listener,
-            EnvelopeKey::RemoteIp,
-            EnvelopeKey::LocalIp,
-            EnvelopeKey::HeloDomain,
-            EnvelopeKey::AuthenticatedAs,
-        ];
-
-        Ok(ExpnVrfy {
-            enable: self
-                .parse_if_block(("session", key, "require"), ctx, &available_keys)?
-                .unwrap_or_default(),
-            lookup: self
-                .parse_if_block::<Option<String>>(("session", key, "lookup"), ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.lists, ("session", key, "lookup"), "lookup list")?,
         })
     }
 

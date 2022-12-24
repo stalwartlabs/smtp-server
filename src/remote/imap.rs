@@ -16,7 +16,7 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 
 use crate::remote::lookup::LoggedUnwrap;
 
-use super::lookup::{Event, Item, Lookup, RemoteLookup};
+use super::lookup::{Event, Item, Lookup, LookupResult, RemoteLookup};
 
 pub struct ImapAuthClient<T: AsyncRead + AsyncWrite> {
     stream: T,
@@ -119,7 +119,7 @@ impl RemoteLookup for Arc<ImapAuthClientBuilder> {
 impl ImapAuthClientBuilder {
     pub async fn lookup(&self, lookup: Lookup, tx: &mpsc::Sender<Event>) -> Result<(), Error> {
         match &lookup.item {
-            Item::Credentials(credentials) => {
+            Item::Authenticate(credentials) => {
                 let mut client = self.connect().await?;
                 let mechanism = match credentials {
                     Credentials::Plain { .. }
@@ -153,13 +153,13 @@ impl ImapAuthClientBuilder {
                 };
 
                 let result = match client.authenticate(mechanism, credentials).await {
-                    Ok(_) => true,
+                    Ok(_) => LookupResult::True,
                     Err(err) => match &err {
-                        Error::AuthenticationFailed => false,
+                        Error::AuthenticationFailed => LookupResult::False,
                         _ => return Err(err),
                     },
                 };
-                lookup.result.send(result).logged_unwrap();
+                lookup.result.send(result.clone()).logged_unwrap();
                 tx.send(Event::WorkerReady {
                     item: lookup.item,
                     result,
@@ -168,7 +168,7 @@ impl ImapAuthClientBuilder {
                 .await
                 .logged_unwrap();
             }
-            Item::Entry(_) => {
+            _ => {
                 tracing::warn!(
                     event = "error",
                     class = "remote",

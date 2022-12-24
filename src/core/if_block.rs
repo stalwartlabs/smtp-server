@@ -86,10 +86,10 @@ impl Conditions {
                                     List::Local(list) => list.contains(ctx_value.as_ref()),
                                     List::Remote(tx) => {
                                         if let Some(result) = tx
-                                            .lookup(lookup::Item::Entry(ctx_value.into_owned()))
+                                            .lookup(lookup::Item::Exists(ctx_value.into_owned()))
                                             .await
                                         {
-                                            result
+                                            result.into()
                                         } else {
                                             return false;
                                         }

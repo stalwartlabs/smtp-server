@@ -1,4 +1,4 @@
-use std::{net::IpAddr, time::SystemTime};
+use std::net::IpAddr;
 
 use smtp_proto::{
     request::receiver::{
@@ -11,10 +11,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     config::ServerProtocol,
-    core::{Envelope, RcptTo, Session, State},
+    core::{Envelope, Session, State},
 };
 
-use super::sasl::SaslToken;
+use super::auth::SaslToken;
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     pub async fn ingest(&mut self, bytes: &[u8]) -> Result<bool, ()> {
@@ -27,91 +27,14 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     match receiver.ingest(&mut iter, bytes) {
                         Ok(request) => match request {
                             Request::Rcpt { to, parameters } => {
-                                if !self.data.mail_from.is_empty() {
-                                    if self.data.rcpt_to.len() < self.params.rcpt_max {
-                                        if self.params.rcpt_relay || do_auth() {
-                                            self.data.rcpt_to.push(RcptTo {
-                                                value_lcase: to.to_lowercase(),
-                                                value: to,
-                                            });
-                                            if self
-                                                .is_allowed(&self.core.clone().config.rcpt.throttle)
-                                                .await
-                                            {
-                                                self.eval_data_params();
-                                                self.write(b"250 2.1.5 OK\r\n").await?;
-                                            } else {
-                                                self.data.rcpt_to.pop();
-                                                self.write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n").await?;
-                                            }
-                                        } else {
-                                            tokio::time::sleep(self.params.rcpt_errors_wait).await;
-                                            self.data.rcpt_errors += 1;
-                                            if self.data.rcpt_errors < self.params.rcpt_errors_max {
-                                                self.write(
-                                                    b"550 5.1.2 Mailbox does not exist.\r\n",
-                                                )
-                                                .await?;
-                                            } else {
-                                                self.write(b"550 5.1.2 Too many RCPT errors, disconnecting.\r\n")
-                                                    .await?;
-                                                tracing::debug!(
-                                                    parent: &self.span,
-                                                    event = "disconnect",
-                                                    reason = "rcpt-errors",
-                                                    "Too many invalid RCPT commands."
-                                                );
-                                                return Err(());
-                                            }
-                                        }
-                                    } else {
-                                        self.write(b"451 4.5.3 Too many recipients.\r\n").await?;
-                                    }
-                                } else {
-                                    self.write(b"503 5.5.1 MAIL is required first.\r\n").await?;
-                                }
+                                self.handle_rcpt_to(to, parameters).await?;
                             }
                             Request::Mail { from, parameters } => {
-                                if !self.data.helo_domain.is_empty() || !self.params.ehlo_require {
-                                    if self.data.mail_from.is_empty() {
-                                        if !self.params.auth_require
-                                            || !self.data.authenticated_as.is_empty()
-                                        {
-                                            if !from.is_empty() {
-                                                self.data.mail_from_lcase = from.to_lowercase();
-                                                self.data.mail_from = from;
-                                            } else {
-                                                self.data.mail_from = "<>".to_string();
-                                            }
-                                            if self
-                                                .is_allowed(&self.core.clone().config.mail.throttle)
-                                                .await
-                                            {
-                                                self.eval_rcpt_params();
-                                                self.write(b"250 2.1.0 OK\r\n").await?;
-                                            } else {
-                                                self.data.mail_from.clear();
-                                                self.data.mail_from_lcase.clear();
-                                                self.write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n").await?;
-                                            }
-                                        } else {
-                                            self.write(b"530 5.7.0 Authentication required.\r\n")
-                                                .await?;
-                                        }
-                                    } else {
-                                        self.write(
-                                            b"503 5.5.1 Multiple MAIL commands not allowed.\r\n",
-                                        )
-                                        .await?;
-                                    }
-                                } else {
-                                    self.write(b"503 5.5.1 Polite people say EHLO first.\r\n")
-                                        .await?;
-                                }
+                                self.handle_mail_from(from, parameters).await?;
                             }
                             Request::Ehlo { host } => {
                                 if self.instance.protocol == ServerProtocol::Smtp {
-                                    self.say_ehlo(host).await?;
+                                    self.handle_ehlo(host).await?;
                                 } else {
                                     self.write(b"500 5.5.1 Invalid command.\r\n").await?;
                                 }
@@ -129,7 +52,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 chunk_size,
                                 is_last,
                             } => {
-                                if chunk_size + self.data.message.len()
+                                state = if chunk_size + self.data.message.len()
                                     < self.params.data_max_message_size
                                 {
                                     if self.data.message.is_empty() {
@@ -137,13 +60,11 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                     } else {
                                         self.data.message.reserve(chunk_size);
                                     }
-                                    state = State::Bdat(BdatReceiver::new(chunk_size, is_last));
+                                    State::Bdat(BdatReceiver::new(chunk_size, is_last))
                                 } else {
                                     // Chunk is too large, ignore.
-                                    state = State::DataTooLarge(DummyDataReceiver::new_bdat(
-                                        chunk_size,
-                                    ));
-                                }
+                                    State::DataTooLarge(DummyDataReceiver::new_bdat(chunk_size))
+                                };
                                 continue 'outer;
                             }
                             Request::Auth {
@@ -180,18 +101,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 self.write(b"250 2.0.0 OK\r\n").await?;
                             }
                             Request::Vrfy { value } => {
-                                if self.can_vrfy().await {
-                                    //TODO
-                                } else {
-                                    self.write(b"500 5.5.1 VRFY not allowed.\r\n").await?;
-                                }
+                                self.handle_vrfy(value).await?;
                             }
                             Request::Expn { value } => {
-                                if self.can_expn().await {
-                                    //TODO
-                                } else {
-                                    self.write(b"500 5.5.1 EXPN not allowed.\r\n").await?;
-                                }
+                                self.handle_expn(value).await?;
                             }
                             Request::StartTls => {
                                 if self.params.starttls {
@@ -222,7 +135,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                     || self.params.ehlo_multiple
                                 {
                                     self.data.helo_domain = host;
-                                    self.eval_mail_params();
+                                    self.eval_mail_params().await;
                                     self.write(
                                         format!("250 {} says hello\r\n", self.instance.hostname)
                                             .as_bytes(),
@@ -234,7 +147,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                             }
                             Request::Lhlo { host } => {
                                 if self.instance.protocol == ServerProtocol::Lmtp {
-                                    self.say_ehlo(host).await?;
+                                    self.handle_ehlo(host).await?;
                                 } else {
                                     self.write(b"502 5.5.1 Invalid command.\r\n").await?;
                                 }
@@ -332,14 +245,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 continue 'outer;
                             }
                         } else {
-                            tokio::time::sleep(self.params.auth_errors_wait).await;
-                            self.write(b"500 5.5.6 Authentication Exchange line is too long.\r\n")
-                                .await?;
-                            if self.data.auth_errors < self.params.auth_errors_max {
-                                self.data.auth_errors += 1;
-                            } else {
-                                return Err(());
-                            }
+                            self.auth_error(
+                                b"500 5.5.6 Authentication Exchange line is too long.\r\n",
+                            )
+                            .await?;
                         }
                         state = State::default();
                     } else {
@@ -372,78 +281,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         Ok(true)
     }
 
-    async fn say_ehlo(&mut self, domain: String) -> Result<(), ()> {
-        if self.data.helo_domain.is_empty() || self.params.ehlo_multiple {
-            // Set EHLO domain
-            self.data.helo_domain = domain;
-
-            // Eval mail parameters
-            self.eval_mail_params();
-
-            let mut response = EhloResponse::new(self.instance.hostname.as_str());
-            response.capabilities =
-                EXT_ENHANCED_STATUS_CODES | EXT_8BIT_MIME | EXT_BINARY_MIME | EXT_SMTP_UTF8;
-            if self.params.starttls {
-                response.capabilities |= EXT_START_TLS;
-            }
-            if self.params.pipelining {
-                response.capabilities |= EXT_PIPELINING;
-            }
-            if self.params.chunking {
-                response.capabilities |= EXT_CHUNKING;
-            }
-            if self.can_expn().await {
-                response.capabilities |= EXT_EXPN;
-            }
-            if self.params.requiretls {
-                response.capabilities |= EXT_REQUIRE_TLS;
-            }
-            if self.params.auth_mechanisms != 0 {
-                response.capabilities |= EXT_AUTH;
-                response.auth_mechanisms = self.params.auth_mechanisms;
-            }
-            if let Some(value) = &self.params.future_release {
-                response.capabilities |= EXT_FUTURE_RELEASE;
-                response.future_release_interval = value.as_secs();
-                response.future_release_datetime = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0)
-                    + value.as_secs();
-            }
-            if let Some(value) = &self.params.deliver_by {
-                response.capabilities |= EXT_DELIVER_BY;
-                response.deliver_by = value.as_secs();
-            }
-            if let Some(value) = &self.params.mt_priority {
-                response.capabilities |= EXT_MT_PRIORITY;
-                response.mt_priority = *value;
-            }
-            if let Some(value) = &self.params.size {
-                response.capabilities |= EXT_SIZE;
-                response.size = *value;
-            }
-            if let Some(value) = &self.params.no_soliciting {
-                response.capabilities |= EXT_NO_SOLICITING;
-                response.no_soliciting = if !value.is_empty() {
-                    value.to_string().into()
-                } else {
-                    None
-                };
-            }
-
-            // Generate response
-            let mut buf = Vec::with_capacity(64);
-            response.write(&mut buf).ok();
-            self.write(&buf).await
-        } else {
-            self.write(b"503 5.5.1 Already said hello.\r\n").await
-        }
-    }
-
     fn reset(&mut self) {
-        self.data.mail_from.clear();
-        self.data.mail_from_lcase.clear();
+        self.data.mail_from = None;
         self.data.rcpt_to.clear();
         self.data.message = Vec::with_capacity(0);
         self.data.priority = 0;
@@ -462,16 +301,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             self.write(b"503 5.5.1 RCPT is required first.\r\n").await?;
             Ok(false)
         }
-    }
-
-    #[inline(always)]
-    async fn can_expn(&self) -> bool {
-        *self.core.config.expn.enable.eval(self).await
-    }
-
-    #[inline(always)]
-    async fn can_vrfy(&self) -> bool {
-        *self.core.config.vrfy.enable.eval(self).await
     }
 
     #[inline(always)]
@@ -520,11 +349,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     }
 }
 
-fn do_auth() -> bool {
-    let coco = "fdf";
-    false
-}
-
 impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
     #[inline(always)]
     fn local_ip(&self) -> &IpAddr {
@@ -539,15 +363,19 @@ impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
     #[inline(always)]
     fn sender_domain(&self) -> &str {
         self.data
-            .mail_from_lcase
-            .rsplit_once('@')
-            .map(|(_, d)| d)
+            .mail_from
+            .as_ref()
+            .map(|a| a.domain.as_str())
             .unwrap_or_default()
     }
 
     #[inline(always)]
     fn sender(&self) -> &str {
-        self.data.mail_from_lcase.as_str()
+        self.data
+            .mail_from
+            .as_ref()
+            .map(|a| a.address_lcase.as_str())
+            .unwrap_or_default()
     }
 
     #[inline(always)]
@@ -555,8 +383,7 @@ impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
         self.data
             .rcpt_to
             .last()
-            .and_then(|r| r.value_lcase.as_str().rsplit_once('@'))
-            .map(|(_, d)| d)
+            .map(|r| r.domain.as_str())
             .unwrap_or_default()
     }
 
@@ -565,7 +392,7 @@ impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
         self.data
             .rcpt_to
             .last()
-            .map(|r| r.value_lcase.as_str())
+            .map(|r| r.address_lcase.as_str())
             .unwrap_or_default()
     }
 

@@ -82,9 +82,9 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         (Ok(s_username), Ok(s_secret)) if !s_username.is_empty() => {
                             *username = s_username;
                             *secret = s_secret;
-                            self.authenticate(std::mem::take(&mut token.credentials))
-                                .await?;
-                            return Ok(false);
+                            return self
+                                .authenticate(std::mem::take(&mut token.credentials))
+                                .await;
                         }
                         _ => (),
                     }
@@ -97,17 +97,16 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     } else {
                         *secret = response.into_string();
                         self.authenticate(std::mem::take(&mut token.credentials))
-                            .await?;
-                        Ok(false)
+                            .await
                     };
                 }
                 (AUTH_OAUTHBEARER, Credentials::OAuthBearer { token: token_ }) => {
                     let response = response.into_string();
                     if response.contains("auth=") {
                         *token_ = response;
-                        self.authenticate(std::mem::take(&mut token.credentials))
-                            .await?;
-                        return Ok(false);
+                        return self
+                            .authenticate(std::mem::take(&mut token.credentials))
+                            .await;
                     }
                 }
                 (AUTH_XOAUTH2, Credentials::XOauth2 { username, secret }) => {
@@ -136,9 +135,9 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         (Ok(s_username), Ok(s_secret)) if !s_username.is_empty() => {
                             *username = s_username;
                             *secret = s_secret;
-                            self.authenticate(std::mem::take(&mut token.credentials))
-                                .await?;
-                            return Ok(false);
+                            return self
+                                .authenticate(std::mem::take(&mut token.credentials))
+                                .await;
                         }
                         _ => (),
                     }
@@ -147,17 +146,56 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 _ => (),
             }
         }
-        tokio::time::sleep(self.params.auth_errors_wait).await;
-        self.write(b"500 5.5.6 Invalid challenge.\r\n").await?;
-        if self.data.auth_errors < self.params.auth_errors_max {
-            self.data.auth_errors += 1;
-            Ok(false)
-        } else {
-            Err(())
-        }
+
+        self.auth_error(b"500 5.5.6 Invalid challenge.\r\n").await
     }
 
-    pub async fn authenticate(&mut self, credentials: Credentials<String>) -> Result<(), ()> {
-        Ok(())
+    pub async fn authenticate(&mut self, credentials: Credentials<String>) -> Result<bool, ()> {
+        if let Some(lookup) = &self.params.auth_lookup {
+            let authenticated_as = match &credentials {
+                Credentials::Plain { username, .. }
+                | Credentials::XOauth2 { username, .. }
+                | Credentials::OAuthBearer { token: username } => username.to_string(),
+            };
+            if let Some(is_authenticated) = lookup.authenticate(credentials).await {
+                return if is_authenticated {
+                    self.data.authenticated_as = authenticated_as;
+                    self.write(b"235 2.7.0 Authentication succeeded.\r\n")
+                        .await?;
+                    Ok(false)
+                } else {
+                    self.auth_error(b"535 5.7.8 Authentication credentials invalid.\r\n")
+                        .await
+                };
+            }
+        } else {
+            tracing::warn!(
+                parent: &self.span,
+                "No lookup list configured for authentication."
+            );
+        }
+        self.write(b"454 4.7.0 Temporary authentication failure\r\n")
+            .await?;
+
+        Ok(false)
+    }
+
+    pub async fn auth_error(&mut self, response: &[u8]) -> Result<bool, ()> {
+        tokio::time::sleep(self.params.auth_errors_wait).await;
+        self.data.auth_errors += 1;
+        if self.data.auth_errors < self.params.auth_errors_max {
+            self.write(response).await?;
+            Ok(false)
+        } else {
+            self.write(b"550 5.1.2 Too many authentication errors, disconnecting.\r\n")
+                .await?;
+            tracing::debug!(
+                parent: &self.span,
+                event = "disconnect",
+                reason = "auth-errors",
+                "Too many invalid authentication errors."
+            );
+            Err(())
+        }
     }
 }

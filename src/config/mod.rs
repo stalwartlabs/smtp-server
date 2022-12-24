@@ -264,6 +264,8 @@ pub struct Mail {
 pub struct Rcpt {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub relay: IfBlock<bool>,
+    pub expn: IfBlock<bool>,
+    pub vrfy: IfBlock<bool>,
     pub lookup_domains: IfBlock<Option<Arc<List>>>,
     pub lookup_addresses: IfBlock<Option<Arc<List>>>,
 
@@ -276,11 +278,6 @@ pub struct Rcpt {
 
     // Throttle
     pub throttle: Vec<Throttle>,
-}
-
-pub struct ExpnVrfy {
-    pub enable: IfBlock<bool>,
-    pub lookup: IfBlock<Option<Arc<List>>>,
 }
 
 pub struct Data {
@@ -313,8 +310,6 @@ pub struct SessionConfig {
     pub mail: Mail,
     pub rcpt: Rcpt,
     pub data: Data,
-    pub expn: ExpnVrfy,
-    pub vrfy: ExpnVrfy,
 }
 
 pub enum AuthLevel {

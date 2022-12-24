@@ -4,7 +4,7 @@ use mail_send::{smtp::AssertReply, SmtpClientBuilder};
 use smtp_proto::Severity;
 use tokio::sync::{mpsc, oneshot};
 
-use super::lookup::{Event, Item, LoggedUnwrap, Lookup, RemoteLookup};
+use super::lookup::{Event, Item, LoggedUnwrap, Lookup, LookupResult, RemoteLookup};
 
 const MAX_RCPTS_PER_SESSION: usize = 50;
 const MAX_AUTH_FAILURES_PER_SESSION: usize = 3;
@@ -21,8 +21,8 @@ pub async fn lookup_smtp(
     let mut num_auth_failures = 0;
 
     loop {
-        let (result, is_reusable) = match &lookup.item {
-            Item::Entry(rcpt_to) => {
+        let (result, is_reusable): (LookupResult, bool) = match &lookup.item {
+            Item::Exists(rcpt_to) => {
                 if !sent_mail_from {
                     client
                         .cmd(b"MAIL FROM:<>\r\n")
@@ -36,16 +36,16 @@ pub async fn lookup_smtp(
                 let result = match reply.severity() {
                     Severity::PositiveCompletion => {
                         num_rcpts += 1;
-                        true
+                        LookupResult::True
                     }
-                    Severity::PermanentNegativeCompletion => false,
+                    Severity::PermanentNegativeCompletion => LookupResult::False,
                     _ => return Err(mail_send::Error::UnexpectedReply(reply)),
                 };
 
                 // Try to reuse the connection with any queued requests
                 (result, num_rcpts < MAX_RCPTS_PER_SESSION)
             }
-            Item::Credentials(credentials) => {
+            Item::Authenticate(credentials) => {
                 let result = match client.authenticate(credentials).await {
                     Ok(_) => true,
                     Err(err) => match &err {
@@ -59,14 +59,41 @@ pub async fn lookup_smtp(
                     },
                 };
                 (
-                    result,
+                    result.into(),
                     !result && num_auth_failures < MAX_AUTH_FAILURES_PER_SESSION,
                 )
+            }
+            Item::Verify(address) | Item::Expand(address) => {
+                let reply = client
+                    .cmd(
+                        if matches!(&lookup.item, Item::Verify(_)) {
+                            format!("VRFY {}\r\n", address)
+                        } else {
+                            format!("EXPN {}\r\n", address)
+                        }
+                        .as_bytes(),
+                    )
+                    .await?;
+                match reply.code() {
+                    250 | 251 => (
+                        reply
+                            .message()
+                            .split('\n')
+                            .map(|p| p.to_string())
+                            .collect::<Vec<String>>()
+                            .into(),
+                        true,
+                    ),
+                    550 | 551 | 500 | 502 => (LookupResult::False, true),
+                    _ => {
+                        return Err(mail_send::Error::UnexpectedReply(reply));
+                    }
+                }
             }
         };
 
         // Try to reuse the connection with any queued requests
-        lookup.result.send(result).logged_unwrap();
+        lookup.result.send(result.clone()).logged_unwrap();
         if is_reusable {
             let (next_lookup_tx, next_lookup_rx) = oneshot::channel::<Option<Lookup>>();
             if tx
