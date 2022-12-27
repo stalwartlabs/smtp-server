@@ -1,14 +1,10 @@
-use smtp_proto::Parameter;
+use smtp_proto::MailFrom;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::core::{Session, SessionAddress};
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
-    pub async fn handle_mail_from(
-        &mut self,
-        from: String,
-        parameters: Vec<Parameter<String>>,
-    ) -> Result<(), ()> {
+    pub async fn handle_mail_from(&mut self, from: MailFrom<String>) -> Result<(), ()> {
         if self.data.helo_domain.is_empty() && self.params.ehlo_require {
             return self
                 .write(b"503 5.5.1 Polite people say EHLO first.\r\n")
@@ -17,14 +13,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             return self
                 .write(b"503 5.5.1 Multiple MAIL commands not allowed.\r\n")
                 .await;
-        } else if self.params.auth_require && self.data.authenticated_as.is_empty() {
-            return self.write(b"530 5.7.0 Authentication required.\r\n").await;
         }
 
-        self.data.mail_from = if !from.is_empty() {
-            let address_lcase = from.to_lowercase();
+        self.data.mail_from = if !from.address.is_empty() {
+            let address_lcase = from.address.to_lowercase();
             SessionAddress {
-                address: from,
+                address: from.address,
                 domain: address_lcase
                     .rsplit_once('@')
                     .map(|(_, d)| d)

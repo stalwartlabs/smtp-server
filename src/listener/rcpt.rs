@@ -1,14 +1,10 @@
-use smtp_proto::Parameter;
+use smtp_proto::RcptTo;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::core::{Session, SessionAddress};
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
-    pub async fn handle_rcpt_to(
-        &mut self,
-        to: String,
-        parameters: Vec<Parameter<String>>,
-    ) -> Result<(), ()> {
+    pub async fn handle_rcpt_to(&mut self, to: RcptTo<String>) -> Result<(), ()> {
         if self.data.mail_from.is_none() {
             return self.write(b"503 5.5.1 MAIL is required first.\r\n").await;
         } else if self.data.rcpt_to.len() >= self.params.rcpt_max {
@@ -16,7 +12,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         }
 
         // Build RCPT
-        let address_lcase = to.to_lowercase();
+        let address_lcase = to.address.to_lowercase();
         let rcpt = SessionAddress {
             domain: address_lcase
                 .rsplit_once('@')
@@ -24,7 +20,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 .unwrap_or_default()
                 .to_string(),
             address_lcase,
-            address: to,
+            address: to.address,
         };
 
         // Verify address
@@ -63,7 +59,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             .is_allowed(&self.core.clone().config.rcpt.throttle)
             .await
         {
-            self.eval_data_params().await;
             self.write(b"250 2.1.5 OK\r\n").await
         } else {
             self.data.rcpt_to.pop();

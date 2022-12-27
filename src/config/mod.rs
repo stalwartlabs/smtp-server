@@ -3,6 +3,7 @@ pub mod condition;
 pub mod if_block;
 pub mod list;
 pub mod parser;
+pub mod queue;
 pub mod remote;
 pub mod resolver;
 pub mod server;
@@ -12,12 +13,14 @@ pub mod utils;
 
 use std::{
     collections::BTreeMap,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 
 use ahash::{AHashMap, AHashSet};
+use mail_send::Credentials;
 use regex::Regex;
 use rustls::ServerConfig;
 use smtp_proto::MtPriority;
@@ -78,9 +81,6 @@ impl Default for List {
         List::Local(AHashSet::default())
     }
 }
-
-#[derive(Debug, Default)]
-pub struct Queue {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum ServerProtocol {
@@ -168,7 +168,6 @@ pub enum EnvelopeKey {
     HeloDomain,
     AuthenticatedAs,
     Listener,
-    Mx,
     RemoteIp,
     LocalIp,
     Priority,
@@ -234,9 +233,9 @@ pub struct Connect {
 pub struct Ehlo {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub require: IfBlock<bool>,
-    pub multiple: IfBlock<bool>,
 
     // Capabilities
+    pub auth: IfBlock<u64>,
     pub pipelining: IfBlock<bool>,
     pub chunking: IfBlock<bool>,
     pub requiretls: IfBlock<bool>,
@@ -245,13 +244,13 @@ pub struct Ehlo {
     pub deliver_by: IfBlock<Option<Duration>>,
     pub mt_priority: IfBlock<Option<MtPriority>>,
     pub size: IfBlock<Option<usize>>,
+    pub expn: IfBlock<bool>,
+    pub vrfy: IfBlock<bool>,
 }
 
 pub struct Auth {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub require: IfBlock<bool>,
     pub lookup: IfBlock<Option<Arc<List>>>,
-    pub mechanisms: IfBlock<u64>,
     pub errors_max: IfBlock<usize>,
     pub errors_wait: IfBlock<Duration>,
 }
@@ -264,10 +263,10 @@ pub struct Mail {
 pub struct Rcpt {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub relay: IfBlock<bool>,
-    pub expn: IfBlock<bool>,
-    pub vrfy: IfBlock<bool>,
     pub lookup_domains: IfBlock<Option<Arc<List>>>,
     pub lookup_addresses: IfBlock<Option<Arc<List>>>,
+    pub lookup_expn: IfBlock<Option<Arc<List>>>,
+    pub lookup_vrfy: IfBlock<Option<Arc<List>>>,
 
     // Errors
     pub errors_max: IfBlock<usize>,
@@ -312,6 +311,35 @@ pub struct SessionConfig {
     pub data: Data,
 }
 
+pub struct RelayHost {
+    pub address: String,
+    pub port: u16,
+    pub protocol: ServerProtocol,
+    pub auth: Option<Credentials<String>>,
+    pub tls_implicit: bool,
+    pub tls_allow_invalid_certs: bool,
+}
+
+pub struct Queue {
+    pub path: PathBuf,
+    pub hash: usize,
+
+    pub retry: IfBlock<Vec<Duration>>,
+    pub notify: IfBlock<Vec<Duration>>,
+    pub source_ips: IfBlock<Vec<IpAddr>>,
+    pub relay_host: IfBlock<Option<RelayHost>>,
+    pub tls: IfBlock<bool>,
+
+    // Limits
+    pub attempts_max: IfBlock<usize>,
+    pub lifetime_max: IfBlock<Duration>,
+    pub messages_max: IfBlock<usize>,
+    pub size_max: IfBlock<usize>,
+
+    // Throttle
+    pub throttle: Vec<Throttle>,
+}
+
 pub enum AuthLevel {
     Enable,
     Disable,
@@ -329,7 +357,6 @@ pub struct ConfigContext {
     pub hosts: AHashMap<String, Host>,
     pub scripts: AHashMap<String, Arc<Script>>,
     pub lists: AHashMap<String, Arc<List>>,
-    pub queues: AHashMap<String, Arc<Queue>>,
 }
 
 pub type Result<T> = std::result::Result<T, String>;

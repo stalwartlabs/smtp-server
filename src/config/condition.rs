@@ -141,7 +141,6 @@ impl Config {
                         | EnvelopeKey::Sender
                         | EnvelopeKey::SenderDomain
                         | EnvelopeKey::AuthenticatedAs
-                        | EnvelopeKey::Mx
                         | EnvelopeKey::LocalIp
                         | EnvelopeKey::RemoteIp,
                         _,
@@ -239,7 +238,6 @@ impl Config {
             EnvelopeKey::SenderDomain,
             EnvelopeKey::AuthenticatedAs,
             EnvelopeKey::Listener,
-            EnvelopeKey::Mx,
             EnvelopeKey::RemoteIp,
             EnvelopeKey::LocalIp,
             EnvelopeKey::Priority,
@@ -368,7 +366,7 @@ mod tests {
                         },
                         Condition::JumpIfFalse { positions: 1 },
                         Condition::Match {
-                            key: EnvelopeKey::Mx,
+                            key: EnvelopeKey::Sender,
                             op: ConditionOp::Equal,
                             value: ConditionValue::List(list),
                             not: false,

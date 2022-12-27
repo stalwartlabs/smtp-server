@@ -13,12 +13,16 @@ use smtp_proto::{
     },
     MtPriority,
 };
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::mpsc,
+};
 use tracing::Span;
 
 use crate::{
     config::{EnvelopeKey, List, Script, ServerProtocol, SessionConfig},
     listener::auth::SaslToken,
+    queue,
 };
 
 use self::throttle::{
@@ -33,6 +37,7 @@ pub struct Core {
     pub config: SessionConfig,
     pub concurrency: ConcurrencyLimiter,
     pub throttle: DashMap<ThrottleKey, Limiter, ThrottleKeyHasherBuilder>,
+    pub queue_tx: mpsc::Sender<queue::Event>,
 }
 
 pub enum State {
@@ -75,7 +80,9 @@ pub struct SessionData {
     pub authenticated_as: String,
     pub auth_errors: usize,
     pub priority: i16,
+
     pub valid_until: Instant,
+    pub bytes_left: usize,
     pub messages_sent: usize,
 }
 
@@ -87,27 +94,30 @@ pub struct SessionAddress {
 
 #[derive(Debug, Default)]
 pub struct SessionParameters {
+    // Global parameters
+    pub timeout: Duration,
+
     // Ehlo parameters
     pub ehlo_script: Option<Arc<Script>>,
     pub ehlo_require: bool,
-    pub ehlo_multiple: bool,
 
     // Supported capabilities
     pub pipelining: bool,
     pub chunking: bool,
     pub requiretls: bool,
     pub starttls: bool,
+    pub expn: bool,
+    pub vrfy: bool,
     pub no_soliciting: Option<String>,
     pub future_release: Option<Duration>,
     pub deliver_by: Option<Duration>,
     pub mt_priority: Option<MtPriority>,
     pub size: Option<usize>,
+    pub auth: u64,
 
     // Auth parameters
     pub auth_script: Option<Arc<Script>>,
-    pub auth_require: bool,
     pub auth_lookup: Option<Arc<List>>,
-    pub auth_mechanisms: u64,
     pub auth_errors_max: usize,
     pub auth_errors_wait: Duration,
 
@@ -122,6 +132,8 @@ pub struct SessionParameters {
     pub rcpt_max: usize,
     pub rcpt_lookup_domain: Option<Arc<List>>,
     pub rcpt_lookup_addresses: Option<Arc<List>>,
+    pub rcpt_lookup_expn: Option<Arc<List>>,
+    pub rcpt_lookup_vrfy: Option<Arc<List>>,
 
     // Data parameters
     pub data_script: Option<Arc<Script>>,
@@ -153,6 +165,7 @@ impl SessionData {
             message: Vec::with_capacity(0),
             auth_errors: 0,
             messages_sent: 0,
+            bytes_left: 0,
         }
     }
 }
@@ -184,7 +197,6 @@ pub trait Envelope {
             EnvelopeKey::Sender => self.sender().into(),
             EnvelopeKey::SenderDomain => self.sender_domain().into(),
             EnvelopeKey::AuthenticatedAs => self.authenticated_as().into(),
-            EnvelopeKey::Mx => self.mx().into(),
             EnvelopeKey::HeloDomain => self.helo_domain().into(),
             EnvelopeKey::Listener => self.listener_id().to_string().into(),
             EnvelopeKey::RemoteIp => self.remote_ip().to_string().into(),

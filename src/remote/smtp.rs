@@ -84,7 +84,7 @@ pub async fn lookup_smtp(
                             .into(),
                         true,
                     ),
-                    550 | 551 | 500 | 502 => (LookupResult::False, true),
+                    550 | 551 | 553 | 500 | 502 => (LookupResult::False, true),
                     _ => {
                         return Err(mail_send::Error::UnexpectedReply(reply));
                     }

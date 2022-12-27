@@ -62,6 +62,14 @@ impl Config {
             EnvelopeKey::RemoteIp,
             EnvelopeKey::LocalIp,
         ];
+        let mechanisms = self
+            .parse_if_block::<Vec<Mechanism>>(
+                "session.ehlo.capabilities.auth",
+                ctx,
+                &available_keys,
+            )?
+            .unwrap_or_default();
+
         Ok(Ehlo {
             script: self
                 .parse_if_block::<Option<String>>("session.ehlo.script", ctx, &available_keys)?
@@ -69,9 +77,6 @@ impl Config {
                 .map_if_block(&ctx.scripts, "session.ehlo.script", "script")?,
             require: self
                 .parse_if_block("session.ehlo.require", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(true)),
-            multiple: self
-                .parse_if_block("session.ehlo.multiple", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             pipelining: self
                 .parse_if_block("session.ehlo.capabilities.pipelining", ctx, &available_keys)?
@@ -109,32 +114,13 @@ impl Config {
             size: self
                 .parse_if_block("session.ehlo.capabilities.size", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(Some(25 * 1024 * 1024))),
-        })
-    }
-
-    fn parse_session_auth(&self, ctx: &ConfigContext) -> super::Result<Auth> {
-        let available_keys = [
-            EnvelopeKey::Listener,
-            EnvelopeKey::RemoteIp,
-            EnvelopeKey::LocalIp,
-            EnvelopeKey::HeloDomain,
-        ];
-        let mechanisms = self
-            .parse_if_block::<Vec<Mechanism>>("session.auth.enable", ctx, &available_keys)?
-            .unwrap_or_default();
-        Ok(Auth {
-            script: self
-                .parse_if_block::<Option<String>>("session.auth.script", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "session.auth.script", "script")?,
-            require: self
-                .parse_if_block("session.auth.require", ctx, &available_keys)?
-                .unwrap_or_default(),
-            lookup: self
-                .parse_if_block::<Option<String>>("session.auth.lookup", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.lists, "session.auth.lookup", "lookup list")?,
-            mechanisms: IfBlock {
+            expn: self
+                .parse_if_block("session.ehlo.capabilities.expn", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(false)),
+            vrfy: self
+                .parse_if_block("session.ehlo.capabilities.vrfy", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(false)),
+            auth: IfBlock {
                 if_then: mechanisms
                     .if_then
                     .into_iter()
@@ -148,6 +134,26 @@ impl Config {
                     .into_iter()
                     .fold(0, |acc, m| acc | m.mechanism),
             },
+        })
+    }
+
+    fn parse_session_auth(&self, ctx: &ConfigContext) -> super::Result<Auth> {
+        let available_keys = [
+            EnvelopeKey::Listener,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+            EnvelopeKey::HeloDomain,
+        ];
+
+        Ok(Auth {
+            script: self
+                .parse_if_block::<Option<String>>("session.auth.script", ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.scripts, "session.auth.script", "script")?,
+            lookup: self
+                .parse_if_block::<Option<String>>("session.auth.lookup", ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.lists, "session.auth.lookup", "lookup list")?,
             errors_max: self
                 .parse_if_block("session.auth.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(3)),
@@ -203,12 +209,7 @@ impl Config {
             relay: self
                 .parse_if_block("session.rcpt.relay", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(false)),
-            expn: self
-                .parse_if_block("session.rcpt.expn", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(false)),
-            vrfy: self
-                .parse_if_block("session.rcpt.vrfy", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(false)),
+
             lookup_domains: self
                 .parse_if_block::<Option<String>>(
                     "session.rcpt.lookup.domains",
@@ -225,6 +226,14 @@ impl Config {
                 )?
                 .unwrap_or_default()
                 .map_if_block(&ctx.lists, "session.rcpt.lookup.addresses", "lookup list")?,
+            lookup_expn: self
+                .parse_if_block::<Option<String>>("session.rcpt.lookup.expn", ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.lists, "session.rcpt.lookup.expn", "lookup list")?,
+            lookup_vrfy: self
+                .parse_if_block::<Option<String>>("session.rcpt.lookup.vrfy", ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.lists, "session.rcpt.lookup.vrfy", "lookup list")?,
             errors_max: self
                 .parse_if_block("session.rcpt.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(10)),

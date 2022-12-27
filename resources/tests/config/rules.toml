@@ -25,5 +25,5 @@ if = "sender-domain"
 starts-with = "example"
 
 [[rule."expanded".all-of]]
-if = "mx"
+if = "sender"
 in-list = "test-list"

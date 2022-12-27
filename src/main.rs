@@ -7,8 +7,9 @@ use smtp_server::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
         Core,
     },
+    queue,
 };
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -27,6 +28,12 @@ async fn main() -> std::io::Result<()> {
     let session_config = config
         .parse_session_config(&config_context)
         .failed("Configuration error");
+    let queue = config
+        .parse_queue(&config_context)
+        .failed("Configuration error");
+
+    // Build core
+    let (queue_tx, queue_rx) = mpsc::channel(1024);
     let core = Arc::new(Core {
         config: session_config,
         concurrency: ConcurrencyLimiter::new(
@@ -46,6 +53,7 @@ async fn main() -> std::io::Result<()> {
                 .failed("Failed to parse throttle map shard amount")
                 .unwrap_or(32),
         ),
+        queue_tx,
     });
 
     // Enable logging
@@ -60,12 +68,17 @@ async fn main() -> std::io::Result<()> {
             .finish(),
     )
     .failed("Failed to set subscriber");
-
-    // Spawn listeners
     tracing::info!(
         "Starting Stalwart SMTP server v{}...",
         env!("CARGO_PKG_VERSION")
     );
+
+    // Spawn queue manager
+    queue
+        .spawn(queue_rx)
+        .failed("Failed to spawn queue manager");
+
+    // Spawn listeners
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     for server in config_context.servers {
         server
@@ -105,6 +118,7 @@ async fn main() -> std::io::Result<()> {
 
     // Stop services
     shutdown_tx.send(true).ok();
+    core.queue_tx.send(queue::Event::Stop).await.ok();
 
     // Wait for services to finish
     tokio::time::sleep(Duration::from_secs(1)).await;

@@ -41,6 +41,10 @@ log-level = "trace"
 concurrency = 1024
 throttle-map = {shard = 32, capacity = 10}
 
+[global.spool]
+path = "/var/spool/queue"
+hash = 123
+
 [session]
 timeout = "5m"
 transfer-limit = 5000000
@@ -57,9 +61,12 @@ rate = "3/1m"
 [session.ehlo]
 require = true
 #script = ehlo.sieve
-multiple = true
 
 [session.ehlo.capabilities]
+auth = [
+    { if = "listener", eq = "submission", then = ["plain", "login"]},
+    { else = false }
+]
 pipelining = true
 chunking = true
 requiretls = true
@@ -71,19 +78,12 @@ future-release = [
 ]
 deliver-by = false
 mt-priority = false
-size = 500000
-expn = false
+vrfy = true
+expn = true
 
 [session.auth]
-enable = [
-    { if = "listener", eq = "submission", then = ["plain", "login"]},
-    { else = [] }
-]
-require = [
-    { if = "listener", eq = "submission", then = true},
-    { else = false }
-]
-lookup = "lmtp"
+lookup = [ { if = "listener", eq = "submission", then = "local-addresses" }, 
+           { else = false } ]
 
 [session.auth.errors]
 total = 3
@@ -100,15 +100,17 @@ rate = "10/1m"
 
 [session.rcpt]
 #script = rcpt-to.sieve
-relay = [ { if = "authenticated-as", ne = "", then = true}, 
-          { else = false} ]
+relay = [ { if = "authenticated-as", ne = "", then = true }, 
+         { else = false } ]
 max-recipients = 100
-vrfy = true
-expn = true
 
 [session.rcpt.lookup]
 domains = "local-domains"
 addresses = "local-addresses"
+vrfy = [ { if = "authenticated-as", ne = "", then = "local-addresses" }, 
+         { else = false } ]
+expn = [ { if = "authenticated-as", ne = "", then = "local-addresses" }, 
+         { else = false } ]
 
 [session.rcpt.errors]
 total = 3
@@ -129,7 +131,7 @@ received-headers = 50
 mime-parts = 50
 nested-messages = 3
 
-[state.data.add-headers]
+[session.data.add-headers]
 received = true
 received-spf = true
 return-path = true
@@ -177,7 +179,6 @@ set-body-length = false
 address = 192.168.0.1
 port = 25
 protocol = "lmtp"
-#tls = "optional, require, dane, dane-fallback-require, dane-require
 
 [remote."lmtp".auth]
 username = "hello"
@@ -192,18 +193,21 @@ implicit = true
 allow-invalid-certs = true
 
 [queue]
-retry = [0, 1, 15, 60, 90]
-notify = [9, 10]
-prefer = ipv6
+retry = ["0m", "2m", "5m", "10m", "15m", "30m", "1h", "2h"]
+notify = ["1d", "3d"]
 source-ips = ["192.168.0.2", "162.168.0.1"]
 #tls = optional, require, dane, dane-fallback-require, dane-require
-relay-host = "lmtp"
+next-hop = "lmtp"
 
 [queue.limits]
 attempts = 100
-time = 3600
-queued-messages = 10000
-queue-size = 1000000
+lifetime = "5d"
+
+[[queue.size]]
+match = {if = "remote-ip", eq = "127.0.0.1"}
+key = [""]
+messages = 10000
+bytes = 1000000
 
 [[queue.throttle]]
 rate = "1/60s"
@@ -224,9 +228,7 @@ a = 1000
 mx = 9393
 txt = 3233
 
-[general.spool]
-path = "/var/spool/queue"
-hash = 123
+
 
 [scripts]
 

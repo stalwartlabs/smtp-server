@@ -270,7 +270,6 @@ mod tests {
             EnvelopeKey::SenderDomain,
             EnvelopeKey::AuthenticatedAs,
             EnvelopeKey::Listener,
-            EnvelopeKey::Mx,
             EnvelopeKey::RemoteIp,
             EnvelopeKey::LocalIp,
             EnvelopeKey::Priority,

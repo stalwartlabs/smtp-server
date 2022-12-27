@@ -1,5 +1,4 @@
 use dashmap::mapref::entry::Entry;
-use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use std::{
@@ -26,7 +25,7 @@ pub struct Limiter {
 pub struct RateLimiter {
     max_requests: f64,
     max_interval: f64,
-    limiter: Arc<Mutex<(Instant, f64)>>,
+    limiter: (Instant, f64),
 }
 
 #[derive(Debug)]
@@ -50,29 +49,28 @@ impl RateLimiter {
         RateLimiter {
             max_requests: max_requests as f64,
             max_interval: max_interval as f64,
-            limiter: Arc::new(Mutex::new((Instant::now(), max_requests as f64))),
+            limiter: (Instant::now(), max_requests as f64),
         }
     }
 
-    pub fn is_allowed(&self) -> bool {
+    pub fn is_allowed(&mut self) -> bool {
         // Check rate limit
-        let mut limiter = self.limiter.lock();
-        let elapsed = limiter.0.elapsed().as_secs_f64();
-        limiter.0 = Instant::now();
-        limiter.1 += elapsed * (self.max_requests / self.max_interval);
-        if limiter.1 > self.max_requests {
-            limiter.1 = self.max_requests;
+        let elapsed = self.limiter.0.elapsed().as_secs_f64();
+        self.limiter.1 += elapsed * (self.max_requests / self.max_interval);
+        if self.limiter.1 > self.max_requests {
+            self.limiter.1 = self.max_requests;
         }
-        if limiter.1 >= 1.0 {
-            limiter.1 -= 1.0;
+        if self.limiter.1 >= 1.0 {
+            self.limiter.0 = Instant::now();
+            self.limiter.1 -= 1.0;
             true
         } else {
             false
         }
     }
 
-    pub fn reset(&self) {
-        *self.limiter.lock() = (Instant::now(), self.max_requests);
+    pub fn reset(&mut self) {
+        self.limiter = (Instant::now(), self.max_requests);
     }
 }
 
@@ -208,8 +206,8 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
             if t.conditions.conditions.is_empty() || t.conditions.eval(self).await {
                 // Build throttle key
                 match self.core.throttle.entry(ThrottleKey::new(self, t)) {
-                    Entry::Occupied(e) => {
-                        let limiter = e.get();
+                    Entry::Occupied(mut e) => {
+                        let limiter = e.get_mut();
                         if let Some(limiter) = &limiter.concurrency {
                             if let Some(inflight) = limiter.is_allowed() {
                                 self.in_flight.push(inflight);
@@ -224,7 +222,7 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
                                 return false;
                             }
                         }
-                        if let Some(limiter) = &limiter.rate {
+                        if let Some(limiter) = &mut limiter.rate {
                             if !limiter.is_allowed() {
                                 tracing::info!(
                                     parent: &self.span,

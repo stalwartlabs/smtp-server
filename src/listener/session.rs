@@ -26,11 +26,11 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 State::Request(receiver) => loop {
                     match receiver.ingest(&mut iter, bytes) {
                         Ok(request) => match request {
-                            Request::Rcpt { to, parameters } => {
-                                self.handle_rcpt_to(to, parameters).await?;
+                            Request::Rcpt { to } => {
+                                self.handle_rcpt_to(to).await?;
                             }
-                            Request::Mail { from, parameters } => {
-                                self.handle_mail_from(from, parameters).await?;
+                            Request::Mail { from } => {
+                                self.handle_mail_from(from).await?;
                             }
                             Request::Ehlo { host } => {
                                 if self.instance.protocol == ServerProtocol::Smtp {
@@ -40,6 +40,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 }
                             }
                             Request::Data => {
+                                self.eval_data_params().await;
                                 if self.can_send_data().await? {
                                     self.write(b"354 Start mail input; end with <CRLF>.<CRLF>\r\n")
                                         .await?;
@@ -52,6 +53,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 chunk_size,
                                 is_last,
                             } => {
+                                self.eval_data_params().await;
                                 state = if chunk_size + self.data.message.len()
                                     < self.params.data_max_message_size
                                 {
@@ -71,25 +73,24 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 mechanism,
                                 initial_response,
                             } => {
-                                if let Some(mut token) = SaslToken::from_mechanism(
-                                    mechanism & self.params.auth_mechanisms,
-                                ) {
-                                    if self.data.authenticated_as.is_empty() {
-                                        if self
-                                            .handle_sasl_response(
-                                                &mut token,
-                                                initial_response.as_bytes(),
-                                            )
-                                            .await?
-                                        {
-                                            state = State::Sasl(LineReceiver::new(token));
-                                            continue 'outer;
-                                        }
-                                    } else {
-                                        self.write(b"503 5.5.1 Already authenticated.\r\n").await?;
-                                    }
-                                } else if self.params.auth_mechanisms == 0 {
+                                // TODO no plain auth over plaintext
+                                if self.params.auth == 0 || self.params.auth_lookup.is_none() {
                                     self.write(b"503 5.5.1 AUTH not allowed.\r\n").await?;
+                                } else if !self.data.authenticated_as.is_empty() {
+                                    self.write(b"503 5.5.1 Already authenticated.\r\n").await?;
+                                } else if let Some(mut token) =
+                                    SaslToken::from_mechanism(mechanism & self.params.auth)
+                                {
+                                    if self
+                                        .handle_sasl_response(
+                                            &mut token,
+                                            initial_response.as_bytes(),
+                                        )
+                                        .await?
+                                    {
+                                        state = State::Sasl(LineReceiver::new(token));
+                                        continue 'outer;
+                                    }
                                 } else {
                                     self.write(
                                         b"554 5.7.8 Authentication mechanism not supported.\r\n",
@@ -132,7 +133,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                             Request::Helo { host } => {
                                 if self.instance.protocol == ServerProtocol::Smtp
                                     && self.data.helo_domain.is_empty()
-                                    || self.params.ehlo_multiple
                                 {
                                     self.data.helo_domain = host;
                                     self.eval_mail_params().await;

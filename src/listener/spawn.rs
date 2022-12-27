@@ -114,6 +114,7 @@ impl Server {
                                         if tls_implicit {
                                             if let Ok(mut session) = session.into_tls(tls_acceptor.unwrap()).await {
                                                 if session.write(&instance.greeting).await.is_ok() {
+                                                    session.eval_session_params().await;
                                                     session.eval_ehlo_params().await;
                                                     session.eval_auth_params().await;
                                                     if !session.params.ehlo_require {
@@ -123,6 +124,7 @@ impl Server {
                                                 }
                                             }
                                         } else if session.write(&instance.greeting).await.is_ok() {
+                                            session.eval_session_params().await;
                                             session.eval_ehlo_params().await;
                                             session.eval_auth_params().await;
                                             if !session.params.ehlo_require {
@@ -213,20 +215,17 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> Option<(Session<T>, watch::Receiver<bool>)> {
         let mut buf = vec![0; 8192];
-        let timeout = *self.core.config.timeout.eval(&self).await;
-        let max_bytes = *self.core.config.transfer_limit.eval(&self).await;
-        let mut bytes_received = 0;
 
         loop {
             tokio::select! {
                 result = tokio::time::timeout(
-                    timeout,
+                    self.params.timeout,
                     self.read(&mut buf)) => {
                         match result {
                             Ok(Ok(bytes_read)) => {
                                 if bytes_read > 0 {
-                                    bytes_received += bytes_read;
-                                    if Instant::now() < self.data.valid_until && bytes_received < max_bytes {
+                                    if Instant::now() < self.data.valid_until && bytes_read <= self.data.bytes_left  {
+                                        self.data.bytes_left -= bytes_read;
                                         match self.ingest(&buf[..bytes_read]).await {
                                             Ok(true) => (),
                                             Ok(false) => {
@@ -236,7 +235,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
                                                 break;
                                             }
                                         }
-                                    } else if bytes_received >= max_bytes {
+                                    } else if bytes_read > self.data.bytes_left {
                                         self
                                             .write(format!("451 4.7.28 {} Session exceeded transfer quota.\r\n", self.instance.hostname).as_bytes())
                                             .await
