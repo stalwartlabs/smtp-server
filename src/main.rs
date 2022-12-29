@@ -5,9 +5,9 @@ use smtp_server::{
     config::{Config, ConfigContext},
     core::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
-        Core,
+        Core, QueueCore, SessionCore,
     },
-    queue,
+    queue::{self, manager::SpawnQueue},
 };
 use tokio::sync::{mpsc, watch};
 
@@ -28,32 +28,60 @@ async fn main() -> std::io::Result<()> {
     let session_config = config
         .parse_session_config(&config_context)
         .failed("Configuration error");
-    let queue = config
+    let queue_config = config
         .parse_queue(&config_context)
         .failed("Configuration error");
 
     // Build core
     let (queue_tx, queue_rx) = mpsc::channel(1024);
     let core = Arc::new(Core {
-        config: session_config,
-        concurrency: ConcurrencyLimiter::new(
-            config
-                .property("global.concurrency")
-                .failed("Failed to parse global concurrency")
-                .unwrap_or(8192),
-        ),
-        throttle: DashMap::with_capacity_and_hasher_and_shard_amount(
-            config
-                .property("global.throttle-map.capacity")
-                .failed("Failed to parse throttle map capacity")
-                .unwrap_or(2),
-            ThrottleKeyHasherBuilder::default(),
-            config
-                .property("global.throttle-map.shard")
-                .failed("Failed to parse throttle map shard amount")
-                .unwrap_or(32),
-        ),
-        queue_tx,
+        session: SessionCore {
+            config: session_config,
+            concurrency: ConcurrencyLimiter::new(
+                config
+                    .property("global.concurrency")
+                    .failed("Failed to parse global concurrency")
+                    .unwrap_or(8192),
+            ),
+            throttle: DashMap::with_capacity_and_hasher_and_shard_amount(
+                config
+                    .property("global.throttle-map.capacity")
+                    .failed("Failed to parse throttle map capacity")
+                    .unwrap_or(2),
+                ThrottleKeyHasherBuilder::default(),
+                config
+                    .property("global.throttle-map.shard")
+                    .failed("Failed to parse throttle map shard amount")
+                    .unwrap_or(32),
+            ),
+        },
+        queue: QueueCore {
+            config: queue_config,
+            throttle: DashMap::with_capacity_and_hasher_and_shard_amount(
+                config
+                    .property("global.throttle-map.capacity")
+                    .failed("Failed to parse throttle map capacity")
+                    .unwrap_or(2),
+                ThrottleKeyHasherBuilder::default(),
+                config
+                    .property("global.throttle-map.shard")
+                    .failed("Failed to parse throttle map shard amount")
+                    .unwrap_or(32),
+            ),
+            id_seq: 0.into(),
+            capacity: DashMap::with_capacity_and_hasher_and_shard_amount(
+                config
+                    .property("global.throttle-map.capacity")
+                    .failed("Failed to parse throttle map capacity")
+                    .unwrap_or(2),
+                ThrottleKeyHasherBuilder::default(),
+                config
+                    .property("global.throttle-map.shard")
+                    .failed("Failed to parse throttle map shard amount")
+                    .unwrap_or(32),
+            ),
+            tx: queue_tx,
+        },
     });
 
     // Enable logging
@@ -74,8 +102,8 @@ async fn main() -> std::io::Result<()> {
     );
 
     // Spawn queue manager
-    queue
-        .spawn(queue_rx)
+    queue_rx
+        .spawn(core.clone())
         .failed("Failed to spawn queue manager");
 
     // Spawn listeners
@@ -118,7 +146,7 @@ async fn main() -> std::io::Result<()> {
 
     // Stop services
     shutdown_tx.send(true).ok();
-    core.queue_tx.send(queue::Event::Stop).await.ok();
+    core.queue.tx.send(queue::Event::Stop).await.ok();
 
     // Wait for services to finish
     tokio::time::sleep(Duration::from_secs(1)).await;

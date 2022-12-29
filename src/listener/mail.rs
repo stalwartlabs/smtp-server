@@ -35,10 +35,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         }
         .into();
 
-        if self
-            .is_allowed(&self.core.clone().config.mail.throttle)
-            .await
-        {
+        if self.is_allowed().await {
             self.eval_rcpt_params().await;
             self.write(b"250 2.1.0 OK\r\n").await
         } else {

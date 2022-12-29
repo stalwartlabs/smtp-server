@@ -35,24 +35,7 @@ impl Config {
         let prefix = prefix.as_key();
         let mut keys = 0;
         for (key_, value) in self.values((&prefix, "key")) {
-            let key = match value {
-                "rcpt" => THROTTLE_RCPT,
-                "rcpt-domain" => THROTTLE_RCPT_DOMAIN,
-                "sender" => THROTTLE_SENDER,
-                "sender-domain" => THROTTLE_SENDER_DOMAIN,
-                "authenticated-as" => THROTTLE_AUTH_AS,
-                "listener" => THROTTLE_LISTENER,
-                "mx" => THROTTLE_MX,
-                "remote-ip" => THROTTLE_REMOTE_IP,
-                "local-ip" => THROTTLE_LOCAL_IP,
-                "helo-domain" => THROTTLE_HELO_DOMAIN,
-                _ => {
-                    return Err(format!(
-                        "Invalid throttle key {:?} found in {:?}",
-                        value, key_
-                    ))
-                }
-            };
+            let key = value.parse_throttle_key(key_)?;
             if (key & available_throttle_keys) != 0 {
                 keys |= key;
             } else {
@@ -63,13 +46,9 @@ impl Config {
             }
         }
 
-        if keys == 0 {
-            return Err(format!("No throttle keys found in {:?}", prefix));
-        }
-
         let throttle = Throttle {
-            conditions: if self.values((&prefix, "if")).next().is_some() {
-                self.parse_condition((&prefix, "if"), ctx, available_envelope_keys)?
+            conditions: if self.values((&prefix, "match")).next().is_some() {
+                self.parse_condition((&prefix, "match"), ctx, available_envelope_keys)?
             } else {
                 Conditions {
                     conditions: Vec::with_capacity(0),
@@ -89,7 +68,7 @@ impl Config {
             Err(format!(
                 concat!(
                     "Throttle {:?} needs to define a ",
-                    "valid 'rate' or 'concurrency' property."
+                    "valid 'rate' and/or 'concurrency' property."
                 ),
                 prefix
             ))
@@ -141,6 +120,7 @@ impl ParseValue for EnvelopeKey {
             "local-ip" => EnvelopeKey::LocalIp,
             "priority" => EnvelopeKey::Priority,
             "authenticated-as" => EnvelopeKey::AuthenticatedAs,
+            "mx" => EnvelopeKey::Mx,
             _ => {
                 return Err(format!(
                     "Invalid context key {:?} for property {:?}.",
@@ -149,6 +129,31 @@ impl ParseValue for EnvelopeKey {
                 ))
             }
         })
+    }
+}
+
+pub trait ParseTrottleKey {
+    fn parse_throttle_key(&self, key: &str) -> super::Result<u16>;
+}
+
+impl ParseTrottleKey for &str {
+    fn parse_throttle_key(&self, key: &str) -> super::Result<u16> {
+        match *self {
+            "rcpt" => Ok(THROTTLE_RCPT),
+            "rcpt-domain" => Ok(THROTTLE_RCPT_DOMAIN),
+            "sender" => Ok(THROTTLE_SENDER),
+            "sender-domain" => Ok(THROTTLE_SENDER_DOMAIN),
+            "authenticated-as" => Ok(THROTTLE_AUTH_AS),
+            "listener" => Ok(THROTTLE_LISTENER),
+            "mx" => Ok(THROTTLE_MX),
+            "remote-ip" => Ok(THROTTLE_REMOTE_IP),
+            "local-ip" => Ok(THROTTLE_LOCAL_IP),
+            "helo-domain" => Ok(THROTTLE_HELO_DOMAIN),
+            _ => Err(format!(
+                "Invalid throttle key {:?} found in {:?}",
+                self, key
+            )),
+        }
     }
 }
 

@@ -1,7 +1,8 @@
 use std::{
     borrow::Cow,
+    hash::Hash,
     net::IpAddr,
-    sync::Arc,
+    sync::{atomic::AtomicU32, Arc},
     time::{Duration, Instant},
 };
 
@@ -20,13 +21,13 @@ use tokio::{
 use tracing::Span;
 
 use crate::{
-    config::{EnvelopeKey, List, Script, ServerProtocol, SessionConfig},
+    config::{EnvelopeKey, List, QueueConfig, Script, ServerProtocol, SessionConfig},
     listener::auth::SaslToken,
-    queue,
+    queue::{self, QueueLimiter},
 };
 
 use self::throttle::{
-    ConcurrencyLimiter, InFlightRequest, Limiter, ThrottleKey, ThrottleKeyHasherBuilder,
+    ConcurrencyLimiter, InFlight, Limiter, ThrottleKey, ThrottleKeyHasherBuilder,
 };
 
 pub mod if_block;
@@ -34,10 +35,22 @@ pub mod params;
 pub mod throttle;
 
 pub struct Core {
+    pub session: SessionCore,
+    pub queue: QueueCore,
+}
+
+pub struct SessionCore {
     pub config: SessionConfig,
     pub concurrency: ConcurrencyLimiter,
     pub throttle: DashMap<ThrottleKey, Limiter, ThrottleKeyHasherBuilder>,
-    pub queue_tx: mpsc::Sender<queue::Event>,
+}
+
+pub struct QueueCore {
+    pub config: QueueConfig,
+    pub throttle: DashMap<ThrottleKey, Limiter, ThrottleKeyHasherBuilder>,
+    pub capacity: DashMap<ThrottleKey, Arc<QueueLimiter>, ThrottleKeyHasherBuilder>,
+    pub tx: mpsc::Sender<queue::Event>,
+    pub id_seq: AtomicU32,
 }
 
 pub enum State {
@@ -66,7 +79,7 @@ pub struct Session<T: AsyncWrite + AsyncRead> {
     pub stream: T,
     pub data: SessionData,
     pub params: SessionParameters,
-    pub in_flight: Vec<InFlightRequest>,
+    pub in_flight: Vec<InFlight>,
 }
 
 pub struct SessionData {
@@ -196,12 +209,45 @@ pub trait Envelope {
             EnvelopeKey::RecipientDomain => self.rcpt_domain().into(),
             EnvelopeKey::Sender => self.sender().into(),
             EnvelopeKey::SenderDomain => self.sender_domain().into(),
+            EnvelopeKey::Mx => self.mx().into(),
             EnvelopeKey::AuthenticatedAs => self.authenticated_as().into(),
             EnvelopeKey::HeloDomain => self.helo_domain().into(),
             EnvelopeKey::Listener => self.listener_id().to_string().into(),
             EnvelopeKey::RemoteIp => self.remote_ip().to_string().into(),
             EnvelopeKey::LocalIp => self.local_ip().to_string().into(),
             EnvelopeKey::Priority => self.priority().to_string().into(),
+        }
+    }
+}
+
+impl PartialEq for SessionAddress {
+    fn eq(&self, other: &Self) -> bool {
+        self.address_lcase == other.address_lcase
+    }
+}
+
+impl Eq for SessionAddress {}
+
+impl Hash for SessionAddress {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.address_lcase.hash(state);
+    }
+}
+
+impl Ord for SessionAddress {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.domain.cmp(&other.domain) {
+            std::cmp::Ordering::Equal => self.address_lcase.cmp(&other.address_lcase),
+            order => order,
+        }
+    }
+}
+
+impl PartialOrd for SessionAddress {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.domain.partial_cmp(&other.domain) {
+            Some(std::cmp::Ordering::Equal) => self.address_lcase.partial_cmp(&other.address_lcase),
+            order => order,
         }
     }
 }

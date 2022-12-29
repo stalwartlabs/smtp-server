@@ -9,6 +9,75 @@ use super::{
 
 impl Config {
     pub fn parse_session_config(&self, ctx: &ConfigContext) -> super::Result<SessionConfig> {
+        // Parse throttle
+        let mut throttle = SessionThrottle {
+            connect: Vec::new(),
+            mail_from: Vec::new(),
+            rcpt_to: Vec::new(),
+        };
+        let all_throttles = self.parse_throttle(
+            "session.throttle",
+            ctx,
+            &[
+                EnvelopeKey::Sender,
+                EnvelopeKey::SenderDomain,
+                EnvelopeKey::Recipient,
+                EnvelopeKey::RecipientDomain,
+                EnvelopeKey::AuthenticatedAs,
+                EnvelopeKey::Listener,
+                EnvelopeKey::RemoteIp,
+                EnvelopeKey::LocalIp,
+                EnvelopeKey::Priority,
+                EnvelopeKey::HeloDomain,
+            ],
+            THROTTLE_LISTENER
+                | THROTTLE_REMOTE_IP
+                | THROTTLE_LOCAL_IP
+                | THROTTLE_AUTH_AS
+                | THROTTLE_HELO_DOMAIN
+                | THROTTLE_RCPT
+                | THROTTLE_RCPT_DOMAIN
+                | THROTTLE_SENDER
+                | THROTTLE_SENDER_DOMAIN,
+        )?;
+        for t in all_throttles {
+            if (t.keys & (THROTTLE_RCPT | THROTTLE_RCPT_DOMAIN)) != 0
+                || t.conditions.conditions.iter().any(|c| {
+                    matches!(
+                        c,
+                        Condition::Match {
+                            key: EnvelopeKey::Recipient | EnvelopeKey::RecipientDomain,
+                            ..
+                        }
+                    )
+                })
+            {
+                throttle.rcpt_to.push(t);
+            } else if (t.keys
+                & (THROTTLE_SENDER
+                    | THROTTLE_SENDER_DOMAIN
+                    | THROTTLE_HELO_DOMAIN
+                    | THROTTLE_AUTH_AS))
+                != 0
+                || t.conditions.conditions.iter().any(|c| {
+                    matches!(
+                        c,
+                        Condition::Match {
+                            key: EnvelopeKey::Sender
+                                | EnvelopeKey::SenderDomain
+                                | EnvelopeKey::HeloDomain
+                                | EnvelopeKey::AuthenticatedAs,
+                            ..
+                        }
+                    )
+                })
+            {
+                throttle.mail_from.push(t);
+            } else {
+                throttle.connect.push(t);
+            }
+        }
+
         let available_keys = [
             EnvelopeKey::Listener,
             EnvelopeKey::RemoteIp,
@@ -27,6 +96,7 @@ impl Config {
                 .unwrap_or_else(|| IfBlock::new(Some(Duration::from_secs(5 * 60))))
                 .try_unwrap("session.timeout")
                 .unwrap_or_else(|_| IfBlock::new(Duration::from_secs(5 * 60))),
+            throttle,
             connect: self.parse_session_connect(ctx)?,
             ehlo: self.parse_session_ehlo(ctx)?,
             auth: self.parse_session_auth(ctx)?,
@@ -47,12 +117,6 @@ impl Config {
                 .parse_if_block::<Option<String>>("session.connect.script", ctx, &available_keys)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "session.connect.script", "script")?,
-            throttle: self.parse_throttle(
-                "session.connect.throttle",
-                ctx,
-                &available_keys,
-                THROTTLE_LISTENER | THROTTLE_REMOTE_IP | THROTTLE_LOCAL_IP,
-            )?,
         })
     }
 
@@ -176,18 +240,6 @@ impl Config {
                 .parse_if_block::<Option<String>>("session.mail.script", ctx, &available_keys)?
                 .unwrap_or_default()
                 .map_if_block(&ctx.scripts, "session.mail.script", "script")?,
-            throttle: self.parse_throttle(
-                "session.mail.throttle",
-                ctx,
-                &available_keys,
-                THROTTLE_LISTENER
-                    | THROTTLE_REMOTE_IP
-                    | THROTTLE_LOCAL_IP
-                    | THROTTLE_AUTH_AS
-                    | THROTTLE_HELO_DOMAIN
-                    | THROTTLE_SENDER
-                    | THROTTLE_SENDER_DOMAIN,
-            )?,
         })
     }
 
@@ -243,20 +295,6 @@ impl Config {
             max_recipients: self
                 .parse_if_block("session.rcpt.max-recipients", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(100)),
-            throttle: self.parse_throttle(
-                "session.rcpt.throttle",
-                ctx,
-                &available_keys,
-                THROTTLE_LISTENER
-                    | THROTTLE_REMOTE_IP
-                    | THROTTLE_LOCAL_IP
-                    | THROTTLE_AUTH_AS
-                    | THROTTLE_HELO_DOMAIN
-                    | THROTTLE_RCPT
-                    | THROTTLE_RCPT_DOMAIN
-                    | THROTTLE_SENDER
-                    | THROTTLE_SENDER_DOMAIN,
-            )?,
         })
     }
 
@@ -264,6 +302,8 @@ impl Config {
         let available_keys = [
             EnvelopeKey::Sender,
             EnvelopeKey::SenderDomain,
+            EnvelopeKey::Recipient,
+            EnvelopeKey::RecipientDomain,
             EnvelopeKey::AuthenticatedAs,
             EnvelopeKey::Listener,
             EnvelopeKey::RemoteIp,

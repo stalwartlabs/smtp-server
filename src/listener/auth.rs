@@ -183,17 +183,17 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     pub async fn auth_error(&mut self, response: &[u8]) -> Result<bool, ()> {
         tokio::time::sleep(self.params.auth_errors_wait).await;
         self.data.auth_errors += 1;
+        self.write(response).await?;
         if self.data.auth_errors < self.params.auth_errors_max {
-            self.write(response).await?;
             Ok(false)
         } else {
-            self.write(b"550 5.1.2 Too many authentication errors, disconnecting.\r\n")
+            self.write(b"421 4.3.0 Too many authentication errors, disconnecting.\r\n")
                 .await?;
             tracing::debug!(
                 parent: &self.span,
                 event = "disconnect",
                 reason = "auth-errors",
-                "Too many invalid authentication errors."
+                "Too many authentication errors."
             );
             Err(())
         }

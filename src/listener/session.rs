@@ -203,10 +203,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 State::Data(receiver) => {
                     if self.data.message.len() + bytes.len() < self.params.data_max_message_size {
                         if receiver.ingest(&mut iter, &mut self.data.message) {
-                            // TODO finish
-                            self.data.messages_sent += 1;
-                            self.reset();
-                            self.write(b"250 2.6.0 Message accepted.\r\n").await?;
+                            self.queue_message().await?;
                             state = State::default();
                         } else {
                             break 'outer;
@@ -219,10 +216,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     if receiver.ingest(&mut iter, &mut self.data.message) {
                         if self.can_send_data().await? {
                             if receiver.is_last {
-                                // TODO
-                                self.data.messages_sent += 1;
-                                self.reset();
-                                self.write(b"250 2.6.0 Message accepted.\r\n").await?;
+                                self.queue_message().await?;
                             } else {
                                 self.write(b"250 2.6.0 Chunk accepted.\r\n").await?;
                             }
@@ -281,26 +275,11 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         Ok(true)
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.data.mail_from = None;
         self.data.rcpt_to.clear();
         self.data.message = Vec::with_capacity(0);
         self.data.priority = 0;
-    }
-
-    async fn can_send_data(&mut self) -> Result<bool, ()> {
-        if !self.data.rcpt_to.is_empty() {
-            if self.data.messages_sent < self.params.data_max_messages {
-                Ok(true)
-            } else {
-                self.write(b"451 4.4.5 Maximum number of messages per session exceeded.\r\n")
-                    .await?;
-                Ok(false)
-            }
-        } else {
-            self.write(b"503 5.5.1 RCPT is required first.\r\n").await?;
-            Ok(false)
-        }
     }
 
     #[inline(always)]

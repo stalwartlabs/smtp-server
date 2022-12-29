@@ -133,7 +133,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 remote_ip[3],
             ));
 
-            blake3_map.insert(ThrottleKey::new(&envelope1, &throttle), 0)
+            blake3_map.insert(throttle.new_key(&envelope1), 0)
         })
     });
 

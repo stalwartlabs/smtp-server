@@ -165,6 +165,7 @@ pub enum EnvelopeKey {
     RecipientDomain,
     Sender,
     SenderDomain,
+    Mx,
     HeloDomain,
     AuthenticatedAs,
     Listener,
@@ -227,7 +228,6 @@ pub enum IpAddrMask {
 
 pub struct Connect {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub throttle: Vec<Throttle>,
 }
 
 pub struct Ehlo {
@@ -257,7 +257,6 @@ pub struct Auth {
 
 pub struct Mail {
     pub script: IfBlock<Option<Arc<Script>>>,
-    pub throttle: Vec<Throttle>,
 }
 
 pub struct Rcpt {
@@ -274,9 +273,6 @@ pub struct Rcpt {
 
     // Limits
     pub max_recipients: IfBlock<usize>,
-
-    // Throttle
-    pub throttle: Vec<Throttle>,
 }
 
 pub struct Data {
@@ -302,6 +298,7 @@ pub struct SessionConfig {
     pub timeout: IfBlock<Duration>,
     pub duration: IfBlock<Duration>,
     pub transfer_limit: IfBlock<usize>,
+    pub throttle: SessionThrottle,
 
     pub connect: Connect,
     pub ehlo: Ehlo,
@@ -309,6 +306,12 @@ pub struct SessionConfig {
     pub mail: Mail,
     pub rcpt: Rcpt,
     pub data: Data,
+}
+
+pub struct SessionThrottle {
+    pub connect: Vec<Throttle>,
+    pub mail_from: Vec<Throttle>,
+    pub rcpt_to: Vec<Throttle>,
 }
 
 pub struct RelayHost {
@@ -320,24 +323,39 @@ pub struct RelayHost {
     pub tls_allow_invalid_certs: bool,
 }
 
-pub struct Queue {
+pub struct QueueConfig {
     pub path: PathBuf,
-    pub hash: usize,
+    pub hash: u64,
 
     pub retry: IfBlock<Vec<Duration>>,
     pub notify: IfBlock<Vec<Duration>>,
     pub source_ips: IfBlock<Vec<IpAddr>>,
-    pub relay_host: IfBlock<Option<RelayHost>>,
+    pub next_hop: IfBlock<Option<RelayHost>>,
     pub tls: IfBlock<bool>,
 
-    // Limits
+    // Limits, Throttle and Capacity
     pub attempts_max: IfBlock<usize>,
     pub lifetime_max: IfBlock<Duration>,
-    pub messages_max: IfBlock<usize>,
-    pub size_max: IfBlock<usize>,
+    pub throttle: QueueThrottle,
+    pub capacity: QueueCapacities,
+}
 
-    // Throttle
-    pub throttle: Vec<Throttle>,
+pub struct QueueThrottle {
+    pub sender: Vec<Throttle>,
+    pub recipient: Vec<Throttle>,
+}
+
+pub struct QueueCapacities {
+    pub sender: Vec<QueueCapacity>,
+    pub rcpt: Vec<QueueCapacity>,
+    pub rcpt_domain: Vec<QueueCapacity>,
+}
+
+pub struct QueueCapacity {
+    pub conditions: Conditions,
+    pub keys: u16,
+    pub size: Option<usize>,
+    pub messages: Option<usize>,
 }
 
 pub enum AuthLevel {

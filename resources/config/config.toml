@@ -53,11 +53,6 @@ duration = "10m"
 [session.connect]
 #script = "connect.sieve"
 
-[[session.connect.throttle]]
-key = "remote-ip"
-concurrency = 5
-rate = "3/1m"
-
 [session.ehlo]
 require = true
 #script = ehlo.sieve
@@ -93,11 +88,6 @@ wait = "5s"
 #script = mail-from.sieve
 timeout = 10
 
-[[session.mail.throttle]]
-key = "sender" 
-#concurrency = 10
-rate = "10/1m"
-
 [session.rcpt]
 #script = rcpt-to.sieve
 relay = [ { if = "authenticated-as", ne = "", then = true }, 
@@ -116,11 +106,6 @@ expn = [ { if = "authenticated-as", ne = "", then = "local-addresses" },
 total = 3
 wait = "5s"
 
-[[session.rcpt.throttle]]
-key = "rcpt" 
-#concurrency = 10
-rate = "10/1m"
-
 [session.data]
 #script = data.sieve
 
@@ -138,6 +123,16 @@ return-path = true
 auth-results = true
 message-id = true
 date = true
+
+[[session.throttle]]
+match = {if = "remote-ip", eq = "127.0.0.1"}
+key = ["remote-ip", "authenticated-as"]
+concurrency = 100
+rate = "50/30s"
+
+[[session.throttle]]
+key = "sender-domain"
+concurrency = 10000
 
 [dkim]
 verify = "strict"
@@ -203,11 +198,15 @@ next-hop = "lmtp"
 attempts = 100
 lifetime = "5d"
 
-[[queue.size]]
+[queue.timeouts]
+connect = "10ms"
+ehlo = "1m"
+
+[[queue.capacity]]
 match = {if = "remote-ip", eq = "127.0.0.1"}
 key = [""]
 messages = 10000
-bytes = 1000000
+size = 1000000
 
 [[queue.throttle]]
 rate = "1/60s"

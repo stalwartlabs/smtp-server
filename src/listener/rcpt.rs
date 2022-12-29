@@ -54,26 +54,27 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             return self.rcpt_error(b"550 5.1.2 Relay not allowed.\r\n").await;
         }
 
-        self.data.rcpt_to.push(rcpt);
-        if self
-            .is_allowed(&self.core.clone().config.rcpt.throttle)
-            .await
-        {
-            self.write(b"250 2.1.5 OK\r\n").await
-        } else {
-            self.data.rcpt_to.pop();
-            self.write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n")
-                .await
+        if !self.data.rcpt_to.contains(&rcpt) {
+            self.data.rcpt_to.push(rcpt);
+            if !self.is_allowed().await {
+                self.data.rcpt_to.pop();
+                return self
+                    .write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n")
+                    .await;
+            }
         }
+
+        self.write(b"250 2.1.5 OK\r\n").await
     }
 
     async fn rcpt_error(&mut self, response: &[u8]) -> Result<(), ()> {
         tokio::time::sleep(self.params.rcpt_errors_wait).await;
         self.data.rcpt_errors += 1;
+        self.write(response).await?;
         if self.data.rcpt_errors < self.params.rcpt_errors_max {
-            self.write(response).await
+            Ok(())
         } else {
-            self.write(b"550 5.1.2 Too many RCPT errors, disconnecting.\r\n")
+            self.write(b"421 4.3.0 Too many errors, disconnecting.\r\n")
                 .await?;
             tracing::debug!(
                 parent: &self.span,

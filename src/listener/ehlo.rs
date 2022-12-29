@@ -15,6 +15,11 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             self.eval_mail_params().await;
         }
 
+        // Reset
+        if self.data.mail_from.is_some() {
+            self.reset();
+        }
+
         let mut response = EhloResponse::new(self.instance.hostname.as_str());
         response.capabilities =
             EXT_ENHANCED_STATUS_CODES | EXT_8BIT_MIME | EXT_BINARY_MIME | EXT_SMTP_UTF8;

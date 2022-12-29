@@ -74,14 +74,14 @@ impl Server {
 
                                     // Enforce concurrency
                                     let mut in_flight = Vec::new();
-                                    if let Some(req) = core.concurrency.is_allowed() {
+                                    if let Some(req) = core.session.concurrency.is_allowed() {
                                         in_flight.push(req);
                                     } else {
                                         tracing::info!(
                                             parent: &span,
                                             event = "throttle",
                                             class = "concurrency",
-                                            max_concurrent = core.concurrency.max_concurrent,
+                                            max_concurrent = core.session.concurrency.max_concurrent,
                                             "Too many concurrent connections."
                                         );
                                         continue;
@@ -101,7 +101,7 @@ impl Server {
                                     };
 
                                     // Enforce throttle
-                                    if !session.is_allowed(&core.config.connect.throttle).await {
+                                    if !session.is_allowed().await {
                                         continue;
                                     }
 

@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crate::config::*;
@@ -17,30 +17,30 @@ use super::{Envelope, Session};
 
 #[derive(Debug)]
 pub struct Limiter {
-    rate: Option<RateLimiter>,
-    concurrency: Option<ConcurrencyLimiter>,
+    pub rate: Option<RateLimiter>,
+    pub concurrency: Option<ConcurrencyLimiter>,
 }
 
 #[derive(Debug)]
 pub struct RateLimiter {
-    max_requests: f64,
-    max_interval: f64,
+    pub max_requests: f64,
+    pub max_interval: f64,
     limiter: (Instant, f64),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConcurrencyLimiter {
     pub max_concurrent: u64,
+    pub concurrent: Arc<AtomicU64>,
+}
+
+pub struct InFlight {
     concurrent: Arc<AtomicU64>,
 }
 
-pub struct InFlightRequest {
-    concurrent_requests: Arc<AtomicU64>,
-}
-
-impl Drop for InFlightRequest {
+impl Drop for InFlight {
     fn drop(&mut self) {
-        self.concurrent_requests.fetch_sub(1, Ordering::Relaxed);
+        self.concurrent.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -69,6 +69,13 @@ impl RateLimiter {
         }
     }
 
+    pub fn retry_at(&self) -> Instant {
+        Instant::now()
+            + Duration::from_secs(
+                (self.max_interval as u64).saturating_sub(self.limiter.0.elapsed().as_secs()),
+            )
+    }
+
     pub fn reset(&mut self) {
         self.limiter = (Instant::now(), self.max_requests);
     }
@@ -82,16 +89,20 @@ impl ConcurrencyLimiter {
         }
     }
 
-    pub fn is_allowed(&self) -> Option<InFlightRequest> {
+    pub fn is_allowed(&self) -> Option<InFlight> {
         if self.concurrent.load(Ordering::Relaxed) < self.max_concurrent {
             // Return in-flight request
             self.concurrent.fetch_add(1, Ordering::Relaxed);
-            Some(InFlightRequest {
-                concurrent_requests: self.concurrent.clone(),
+            Some(InFlight {
+                concurrent: self.concurrent.clone(),
             })
         } else {
             None
         }
+    }
+
+    pub fn check_is_allowed(&self) -> bool {
+        self.concurrent.load(Ordering::Relaxed) < self.max_concurrent
     }
 }
 
@@ -138,35 +149,84 @@ impl BuildHasher for ThrottleKeyHasherBuilder {
     }
 }
 
-impl ThrottleKey {
-    pub fn new(e: &impl Envelope, t: &Throttle) -> Self {
+impl QueueCapacity {
+    pub fn new_key(&self, e: &impl Envelope) -> ThrottleKey {
         let mut hasher = blake3::Hasher::new();
 
-        if (t.keys & THROTTLE_RCPT) != 0 {
+        if (self.keys & THROTTLE_RCPT) != 0 {
             hasher.update(e.rcpt().as_bytes());
         }
-        if (t.keys & THROTTLE_RCPT_DOMAIN) != 0 {
+        if (self.keys & THROTTLE_RCPT_DOMAIN) != 0 {
             hasher.update(e.rcpt_domain().as_bytes());
         }
-        if (t.keys & THROTTLE_SENDER) != 0 {
-            hasher.update(e.sender().as_bytes());
+        if (self.keys & THROTTLE_SENDER) != 0 {
+            let sender = e.sender();
+            hasher.update(if !sender.is_empty() { sender } else { "<>" }.as_bytes());
         }
-        if (t.keys & THROTTLE_SENDER_DOMAIN) != 0 {
-            hasher.update(e.sender_domain().as_bytes());
+        if (self.keys & THROTTLE_SENDER_DOMAIN) != 0 {
+            let sender_domain = e.sender_domain();
+            hasher.update(
+                if !sender_domain.is_empty() {
+                    sender_domain
+                } else {
+                    "<>"
+                }
+                .as_bytes(),
+            );
         }
-        if (t.keys & THROTTLE_HELO_DOMAIN) != 0 {
+
+        if let Some(messages) = &self.messages {
+            hasher.update(&messages.to_ne_bytes()[..]);
+        }
+
+        if let Some(size) = &self.size {
+            hasher.update(&size.to_ne_bytes()[..]);
+        }
+
+        ThrottleKey {
+            hash: hasher.finalize().into(),
+        }
+    }
+}
+
+impl Throttle {
+    pub fn new_key(&self, e: &impl Envelope) -> ThrottleKey {
+        let mut hasher = blake3::Hasher::new();
+
+        if (self.keys & THROTTLE_RCPT) != 0 {
+            hasher.update(e.rcpt().as_bytes());
+        }
+        if (self.keys & THROTTLE_RCPT_DOMAIN) != 0 {
+            hasher.update(e.rcpt_domain().as_bytes());
+        }
+        if (self.keys & THROTTLE_SENDER) != 0 {
+            let sender = e.sender();
+            hasher.update(if !sender.is_empty() { sender } else { "<>" }.as_bytes());
+        }
+        if (self.keys & THROTTLE_SENDER_DOMAIN) != 0 {
+            let sender_domain = e.sender_domain();
+            hasher.update(
+                if !sender_domain.is_empty() {
+                    sender_domain
+                } else {
+                    "<>"
+                }
+                .as_bytes(),
+            );
+        }
+        if (self.keys & THROTTLE_HELO_DOMAIN) != 0 {
             hasher.update(e.helo_domain().as_bytes());
         }
-        if (t.keys & THROTTLE_AUTH_AS) != 0 {
+        if (self.keys & THROTTLE_AUTH_AS) != 0 {
             hasher.update(e.authenticated_as().as_bytes());
         }
-        if (t.keys & THROTTLE_LISTENER) != 0 {
+        if (self.keys & THROTTLE_LISTENER) != 0 {
             hasher.update(&e.listener_id().to_ne_bytes()[..]);
         }
-        if (t.keys & THROTTLE_MX) != 0 {
+        if (self.keys & THROTTLE_MX) != 0 {
             hasher.update(e.mx().as_bytes());
         }
-        if (t.keys & THROTTLE_REMOTE_IP) != 0 {
+        if (self.keys & THROTTLE_REMOTE_IP) != 0 {
             match &e.local_ip() {
                 IpAddr::V4(ip) => {
                     hasher.update(&ip.octets()[..]);
@@ -176,7 +236,7 @@ impl ThrottleKey {
                 }
             }
         }
-        if (t.keys & THROTTLE_LOCAL_IP) != 0 {
+        if (self.keys & THROTTLE_LOCAL_IP) != 0 {
             match &e.remote_ip() {
                 IpAddr::V4(ip) => {
                     hasher.update(&ip.octets()[..]);
@@ -186,11 +246,11 @@ impl ThrottleKey {
                 }
             }
         }
-        if let Some(rate_limit) = &t.rate {
+        if let Some(rate_limit) = &self.rate {
             hasher.update(&rate_limit.period.as_secs().to_ne_bytes()[..]);
             hasher.update(&rate_limit.requests.to_ne_bytes()[..]);
         }
-        if let Some(concurrency) = &t.concurrency {
+        if let Some(concurrency) = &self.concurrency {
             hasher.update(&concurrency.to_ne_bytes()[..]);
         }
 
@@ -201,11 +261,32 @@ impl ThrottleKey {
 }
 
 impl<T: AsyncRead + AsyncWrite> Session<T> {
-    pub async fn is_allowed(&mut self, throttle: &[Throttle]) -> bool {
-        for t in throttle {
+    pub async fn is_allowed(&mut self) -> bool {
+        let throttles = if !self.data.rcpt_to.is_empty() {
+            &self.core.session.config.throttle.rcpt_to
+        } else if self.data.mail_from.is_some() {
+            &self.core.session.config.throttle.mail_from
+        } else {
+            &self.core.session.config.throttle.connect
+        };
+
+        for t in throttles {
             if t.conditions.conditions.is_empty() || t.conditions.eval(self).await {
+                if (t.keys & THROTTLE_RCPT_DOMAIN) != 0 {
+                    let d = self
+                        .data
+                        .rcpt_to
+                        .last()
+                        .map(|r| r.domain.as_str())
+                        .unwrap_or_default();
+
+                    if self.data.rcpt_to.iter().filter(|p| p.domain == d).count() > 1 {
+                        continue;
+                    }
+                }
+
                 // Build throttle key
-                match self.core.throttle.entry(ThrottleKey::new(self, t)) {
+                match self.core.session.throttle.entry(t.new_key(self)) {
                     Entry::Occupied(mut e) => {
                         let limiter = e.get_mut();
                         if let Some(limiter) = &limiter.concurrency {
