@@ -35,6 +35,7 @@ async fn main() -> std::io::Result<()> {
     // Build core
     let (queue_tx, queue_rx) = mpsc::channel(1024);
     let core = Arc::new(Core {
+        resolver: config.build_resolver().failed("Failed to build resolver"),
         session: SessionCore {
             config: session_config,
             concurrency: ConcurrencyLimiter::new(
@@ -69,7 +70,7 @@ async fn main() -> std::io::Result<()> {
                     .unwrap_or(32),
             ),
             id_seq: 0.into(),
-            capacity: DashMap::with_capacity_and_hasher_and_shard_amount(
+            quota: DashMap::with_capacity_and_hasher_and_shard_amount(
                 config
                     .property("global.throttle-map.capacity")
                     .failed("Failed to parse throttle map capacity")

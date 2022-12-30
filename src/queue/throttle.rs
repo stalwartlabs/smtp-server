@@ -1,4 +1,4 @@
-use std::{net::IpAddr, time::Instant};
+use std::time::Instant;
 
 use dashmap::mapref::entry::Entry;
 
@@ -10,61 +10,13 @@ use crate::{
     },
 };
 
-use super::{DeliveryAttempt, QueueEnvelope, SimpleEnvelope};
-
 pub enum Error {
     Concurrency { limiter: ConcurrencyLimiter },
     Rate { retry_at: Instant },
 }
 
 impl QueueCore {
-    pub async fn throttle_sender(&self, attempt: &mut DeliveryAttempt) -> Result<(), Error> {
-        if !self.config.throttle.sender.is_empty() {
-            let envelope = SimpleEnvelope::new(
-                &attempt.message.return_path_lcase,
-                &attempt.message.return_path_domain,
-                "",
-                "",
-                attempt.message.priority,
-            );
-
-            for throttle in &self.config.throttle.sender {
-                self.is_allowed(throttle, &envelope, &mut attempt.in_flight, &attempt.span)
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn throttle_recipient(
-        &self,
-        attempt: &DeliveryAttempt,
-        rcpt_domain: &str,
-        mx: &str,
-        local_ip: IpAddr,
-        remote_ip: IpAddr,
-    ) -> Result<Vec<InFlight>, Error> {
-        let mut in_flight = Vec::new();
-        let envelope = QueueEnvelope {
-            sender: &attempt.message.return_path_lcase,
-            sender_domain: &attempt.message.return_path_domain,
-            rcpt_domain,
-            mx,
-            remote_ip,
-            local_ip,
-            priority: attempt.message.priority,
-        };
-
-        for throttle in &self.config.throttle.recipient {
-            self.is_allowed(throttle, &envelope, &mut in_flight, &attempt.span)
-                .await?;
-        }
-
-        Ok(in_flight)
-    }
-
-    async fn is_allowed(
+    pub async fn is_allowed(
         &self,
         throttle: &Throttle,
         envelope: &impl Envelope,

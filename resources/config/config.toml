@@ -41,10 +41,6 @@ log-level = "trace"
 concurrency = 1024
 throttle-map = {shard = 32, capacity = 10}
 
-[global.spool]
-path = "/var/spool/queue"
-hash = 123
-
 [session]
 timeout = "5m"
 transfer-limit = 5000000
@@ -188,21 +184,24 @@ implicit = true
 allow-invalid-certs = true
 
 [queue]
+path = "/var/spool/queue"
+hash = 123
+
+[queue.schedule]
 retry = ["0m", "2m", "5m", "10m", "15m", "30m", "1h", "2h"]
 notify = ["1d", "3d"]
+expire = "5d"
+
+[queue.outbound]
 source-ips = ["192.168.0.2", "162.168.0.1"]
 #tls = optional, require, dane, dane-fallback-require, dane-require
 next-hop = "lmtp"
 
-[queue.limits]
-attempts = 100
-lifetime = "5d"
-
-[queue.timeouts]
+[queue.outbound.timeout]
 connect = "10ms"
 ehlo = "1m"
 
-[[queue.capacity]]
+[[queue.quota]]
 match = {if = "remote-ip", eq = "127.0.0.1"}
 key = [""]
 messages = 10000

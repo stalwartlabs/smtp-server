@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::atomic::Ordering, time::Instant};
+use std::sync::atomic::Ordering;
 
 use tokio::{fs, io::AsyncWriteExt};
 
@@ -9,30 +9,40 @@ use super::{Event, Message, Schedule};
 impl QueueCore {
     pub async fn queue_message(&self, mut message: Box<Message>, message_bytes: Vec<u8>) -> bool {
         // Generate id
-        message.id = message.created.saturating_sub(946684800) << 32
-            | self.id_seq.fetch_add(1, Ordering::Relaxed) as u64;
+        message.id = (message.created.saturating_sub(946684800) & 0xFFFFFFFF)
+            | (self.id_seq.fetch_add(1, Ordering::Relaxed) as u64) << 32;
 
         // Build path
-        let mut path = self.build_base_path(message.id);
-        let _ = fs::create_dir(&path).await;
+        message.path = self.config.path.eval(message.as_ref()).await.clone();
+        let hash = *self.config.hash.eval(message.as_ref()).await;
+        if hash > 0 {
+            message.path.push((message.id % hash).to_string());
+        }
+        let _ = fs::create_dir(&message.path).await;
+        message
+            .path
+            .push(format!("{}_{}.msg", message.id, message.size));
 
         // Save message
-        path.push(format!("{}_{}.msg", message.id, message.size));
-        let mut file = match fs::File::create(&path).await {
+        let mut file = match fs::File::create(&message.path).await {
             Ok(file) => file,
             Err(err) => {
-                tracing::error!("Failed to create file {}: {}", path.display(), err);
+                tracing::error!("Failed to create file {}: {}", message.path.display(), err);
                 return false;
             }
         };
         for bytes in [&message_bytes] {
             if let Err(err) = file.write_all(bytes).await {
-                tracing::error!("Failed to write to file {}: {}", path.display(), err);
+                tracing::error!(
+                    "Failed to write to file {}: {}",
+                    message.path.display(),
+                    err
+                );
                 return false;
             }
         }
         if let Err(err) = file.flush().await {
-            tracing::error!("Failed to flush file {}: {}", path.display(), err);
+            tracing::error!("Failed to flush file {}: {}", message.path.display(), err);
             return false;
         }
 
@@ -40,7 +50,7 @@ impl QueueCore {
         if self
             .tx
             .send(Event::Queue(Schedule {
-                due: Instant::now(),
+                due: message.next_event().unwrap(),
                 inner: message,
             }))
             .await
@@ -52,11 +62,5 @@ impl QueueCore {
         }
 
         true
-    }
-
-    pub fn build_base_path(&self, id: u64) -> PathBuf {
-        let mut path = self.config.path.clone();
-        path.push((id & self.config.hash).to_string());
-        path
     }
 }

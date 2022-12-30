@@ -280,6 +280,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         self.data.rcpt_to.clear();
         self.data.message = Vec::with_capacity(0);
         self.data.priority = 0;
+        self.data.delivery_by = 0;
+        self.data.future_release = 0;
     }
 
     #[inline(always)]

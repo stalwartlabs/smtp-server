@@ -7,6 +7,7 @@ use std::{
 };
 
 use dashmap::DashMap;
+use mail_auth::Resolver;
 use smtp_proto::{
     request::receiver::{
         BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, LineReceiver,
@@ -23,7 +24,7 @@ use tracing::Span;
 use crate::{
     config::{EnvelopeKey, List, QueueConfig, Script, ServerProtocol, SessionConfig},
     listener::auth::SaslToken,
-    queue::{self, QueueLimiter},
+    queue::{self, QuotaLimiter},
 };
 
 use self::throttle::{
@@ -37,6 +38,7 @@ pub mod throttle;
 pub struct Core {
     pub session: SessionCore,
     pub queue: QueueCore,
+    pub resolver: Resolver,
 }
 
 pub struct SessionCore {
@@ -48,7 +50,7 @@ pub struct SessionCore {
 pub struct QueueCore {
     pub config: QueueConfig,
     pub throttle: DashMap<ThrottleKey, Limiter, ThrottleKeyHasherBuilder>,
-    pub capacity: DashMap<ThrottleKey, Arc<QueueLimiter>, ThrottleKeyHasherBuilder>,
+    pub quota: DashMap<ThrottleKey, Arc<QuotaLimiter>, ThrottleKeyHasherBuilder>,
     pub tx: mpsc::Sender<queue::Event>,
     pub id_seq: AtomicU32,
 }
@@ -86,13 +88,18 @@ pub struct SessionData {
     pub local_ip: IpAddr,
     pub remote_ip: IpAddr,
     pub helo_domain: String,
+
     pub mail_from: Option<SessionAddress>,
     pub rcpt_to: Vec<SessionAddress>,
     pub rcpt_errors: usize,
     pub message: Vec<u8>,
+
     pub authenticated_as: String,
     pub auth_errors: usize,
+
     pub priority: i16,
+    pub delivery_by: u64,
+    pub future_release: u64,
 
     pub valid_until: Instant,
     pub bytes_left: usize,
@@ -103,6 +110,7 @@ pub struct SessionAddress {
     pub address: String,
     pub address_lcase: String,
     pub domain: String,
+    pub flags: u64,
 }
 
 #[derive(Debug, Default)]
@@ -179,6 +187,8 @@ impl SessionData {
             auth_errors: 0,
             messages_sent: 0,
             bytes_left: 0,
+            delivery_by: 0,
+            future_release: 0,
         }
     }
 }

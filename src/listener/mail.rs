@@ -25,12 +25,14 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     .unwrap_or_default()
                     .to_string(),
                 address_lcase,
+                flags: from.flags,
             }
         } else {
             SessionAddress {
                 address: String::new(),
                 address_lcase: String::new(),
                 domain: String::new(),
+                flags: from.flags,
             }
         }
         .into();

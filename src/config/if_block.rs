@@ -242,6 +242,12 @@ impl IfBlock<Vec<String>> {
     }
 }
 
+impl<T> IfBlock<Vec<T>> {
+    pub fn has_empty_list(&self) -> bool {
+        self.default.is_empty() || self.if_then.iter().any(|v| v.then.is_empty())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::PathBuf, time::Duration};

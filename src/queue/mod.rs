@@ -1,10 +1,11 @@
 use std::{
     net::IpAddr,
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, AtomicUsize},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use smtp_proto::Response;
@@ -12,8 +13,9 @@ use smtp_proto::Response;
 use crate::core::{throttle::InFlight, Envelope};
 
 pub mod delivery;
-pub mod limiter;
+pub mod dsn;
 pub mod manager;
+pub mod quota;
 pub mod spool;
 pub mod throttle;
 
@@ -24,12 +26,13 @@ pub enum Event {
 }
 
 pub enum WorkerResult {
-    Success,
-    RateLimited(Schedule<Box<Message>>),
-    ConcurrencyExceeded(OnHold),
+    Delivered,
+    Retry(Schedule<Box<Message>>),
+    OnHold(OnHold),
 }
 
 pub struct OnHold {
+    next_due: Option<Instant>,
     max_concurrent: u64,
     concurrent: Arc<AtomicU64>,
     message: Box<Message>,
@@ -43,26 +46,27 @@ pub struct Schedule<T> {
 pub struct Message {
     pub id: u64,
     pub created: u64,
+    pub path: PathBuf,
 
     pub return_path: String,
     pub return_path_lcase: String,
     pub return_path_domain: String,
     pub recipients: Vec<Recipient>,
     pub domains: Vec<Domain>,
-    pub notify: Schedule<u32>,
 
     pub flags: u64,
     pub priority: i16,
     pub size: usize,
 
-    pub queue_refs: Vec<QueueLimiterRef>,
+    pub queue_refs: Vec<UsedQuota>,
 }
 
 pub struct Domain {
     pub domain: String,
     pub retry: Schedule<u32>,
+    pub notify: Schedule<u32>,
+    pub expires: Instant,
     pub status: Status,
-    pub queue_refs: Vec<QueueLimiterRef>,
 }
 pub struct Recipient {
     pub domain_idx: usize,
@@ -70,7 +74,6 @@ pub struct Recipient {
     pub address_lcase: String,
     pub status: Status,
     pub flags: u64,
-    pub queue_refs: Vec<QueueLimiterRef>,
 }
 
 pub enum Status {
@@ -81,6 +84,7 @@ pub enum Status {
 }
 
 pub enum Error {
+    DNSError(String),
     UnexpectedResponse(Response<String>),
     Timeout,
 }
@@ -91,16 +95,17 @@ pub struct DeliveryAttempt {
     pub message: Box<Message>,
 }
 
-pub struct QueueLimiter {
+pub struct QuotaLimiter {
     pub max_size: usize,
     pub max_messages: usize,
     pub size: AtomicUsize,
     pub messages: AtomicUsize,
 }
 
-pub struct QueueLimiterRef {
+pub struct UsedQuota {
+    id: u64,
     size: usize,
-    limiter: Arc<QueueLimiter>,
+    limiter: Arc<QuotaLimiter>,
 }
 
 impl<T> Ord for Schedule<T> {
@@ -130,30 +135,35 @@ impl<T: Default> Schedule<T> {
             inner: T::default(),
         }
     }
+
+    pub fn later(duration: Duration) -> Self {
+        Schedule {
+            due: Instant::now() + duration,
+            inner: T::default(),
+        }
+    }
 }
 
 pub struct SimpleEnvelope<'x> {
-    pub sender: &'x str,
-    pub sender_domain: &'x str,
-    pub rcpt: &'x str,
-    pub rcpt_domain: &'x str,
-    pub priority: i16,
+    pub message: &'x Message,
+    pub domain: &'x str,
+    pub recipient: &'x str,
 }
 
 impl<'x> SimpleEnvelope<'x> {
-    pub fn new(
-        sender: &'x str,
-        sender_domain: &'x str,
-        rcpt: &'x str,
-        rcpt_domain: &'x str,
-        priority: i16,
-    ) -> Self {
+    pub fn new(message: &'x Message, domain: &'x str) -> Self {
         Self {
-            sender,
-            sender_domain,
-            rcpt,
-            rcpt_domain,
-            priority,
+            message,
+            domain,
+            recipient: "",
+        }
+    }
+
+    pub fn new_rcpt(message: &'x Message, domain: &'x str, recipient: &'x str) -> Self {
+        Self {
+            message,
+            domain,
+            recipient,
         }
     }
 }
@@ -168,19 +178,19 @@ impl<'x> Envelope for SimpleEnvelope<'x> {
     }
 
     fn sender_domain(&self) -> &str {
-        self.sender_domain
+        &self.message.return_path_domain
     }
 
     fn sender(&self) -> &str {
-        self.sender
+        &self.message.return_path_lcase
     }
 
     fn rcpt_domain(&self) -> &str {
-        self.rcpt_domain
+        self.domain
     }
 
     fn rcpt(&self) -> &str {
-        self.rcpt
+        self.recipient
     }
 
     fn helo_domain(&self) -> &str {
@@ -200,18 +210,16 @@ impl<'x> Envelope for SimpleEnvelope<'x> {
     }
 
     fn priority(&self) -> i16 {
-        self.priority
+        self.message.priority
     }
 }
 
 pub struct QueueEnvelope<'x> {
-    pub sender: &'x str,
-    pub sender_domain: &'x str,
-    pub rcpt_domain: &'x str,
+    pub message: &'x Message,
+    pub domain: &'x str,
     pub mx: &'x str,
     pub remote_ip: IpAddr,
     pub local_ip: IpAddr,
-    pub priority: i16,
 }
 
 impl<'x> Envelope for QueueEnvelope<'x> {
@@ -224,15 +232,15 @@ impl<'x> Envelope for QueueEnvelope<'x> {
     }
 
     fn sender_domain(&self) -> &str {
-        self.sender_domain
+        &self.message.return_path_domain
     }
 
     fn sender(&self) -> &str {
-        self.sender
+        &self.message.return_path_lcase
     }
 
     fn rcpt_domain(&self) -> &str {
-        self.rcpt_domain
+        self.domain
     }
 
     fn rcpt(&self) -> &str {
@@ -249,6 +257,52 @@ impl<'x> Envelope for QueueEnvelope<'x> {
 
     fn mx(&self) -> &str {
         self.mx
+    }
+
+    fn listener_id(&self) -> u16 {
+        0
+    }
+
+    fn priority(&self) -> i16 {
+        self.message.priority
+    }
+}
+
+impl Envelope for Message {
+    fn local_ip(&self) -> &IpAddr {
+        unreachable!()
+    }
+
+    fn remote_ip(&self) -> &IpAddr {
+        unreachable!()
+    }
+
+    fn sender_domain(&self) -> &str {
+        &self.return_path_domain
+    }
+
+    fn sender(&self) -> &str {
+        &self.return_path_lcase
+    }
+
+    fn rcpt_domain(&self) -> &str {
+        ""
+    }
+
+    fn rcpt(&self) -> &str {
+        ""
+    }
+
+    fn helo_domain(&self) -> &str {
+        ""
+    }
+
+    fn authenticated_as(&self) -> &str {
+        ""
+    }
+
+    fn mx(&self) -> &str {
+        ""
     }
 
     fn listener_id(&self) -> u16 {

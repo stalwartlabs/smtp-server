@@ -149,7 +149,7 @@ impl BuildHasher for ThrottleKeyHasherBuilder {
     }
 }
 
-impl QueueCapacity {
+impl QueueQuota {
     pub fn new_key(&self, e: &impl Envelope) -> ThrottleKey {
         let mut hasher = blake3::Hasher::new();
 

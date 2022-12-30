@@ -21,6 +21,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 .to_string(),
             address_lcase,
             address: to.address,
+            flags: to.flags,
         };
 
         // Verify address

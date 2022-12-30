@@ -10,74 +10,90 @@ use super::{
 
 impl Config {
     pub fn parse_queue(&self, ctx: &ConfigContext) -> super::Result<QueueConfig> {
-        let available_envelope_keys = [
+        let rcpt_envelope_keys = [
             EnvelopeKey::RecipientDomain,
             EnvelopeKey::Sender,
             EnvelopeKey::SenderDomain,
             EnvelopeKey::Priority,
         ];
-        let available_throttle_keys = THROTTLE_RCPT_DOMAIN
-            | THROTTLE_SENDER
-            | THROTTLE_SENDER_DOMAIN
-            | THROTTLE_MX
-            | THROTTLE_REMOTE_IP
-            | THROTTLE_LOCAL_IP;
+        let sender_envelope_keys = [
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::Priority,
+        ];
+        let host_envelope_keys = [
+            EnvelopeKey::RecipientDomain,
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::Priority,
+            EnvelopeKey::LocalIp,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::Mx,
+        ];
 
         let next_hop = self
-            .parse_if_block::<Option<String>>("queue.next-hop", ctx, &available_envelope_keys)?
+            .parse_if_block::<Option<String>>("queue.outbound.next-hop", ctx, &rcpt_envelope_keys)?
             .unwrap_or_else(|| IfBlock::new(None));
-
-        let path = self.property_require::<PathBuf>("global.spool.path")?;
-        if !path.exists() {
-            fs::create_dir(&path)
-                .map_err(|err| format!("Failed to create spool directory {:?}: {}", path, err))?;
-        }
 
         // Parse throttle
         let mut throttle = QueueThrottle {
             sender: Vec::new(),
-            recipient: Vec::new(),
+            rcpt: Vec::new(),
+            host: Vec::new(),
         };
         let all_throttles = self.parse_throttle(
             "queue.throttle",
             ctx,
-            &available_envelope_keys,
-            available_throttle_keys,
+            &rcpt_envelope_keys,
+            THROTTLE_RCPT_DOMAIN
+                | THROTTLE_SENDER
+                | THROTTLE_SENDER_DOMAIN
+                | THROTTLE_MX
+                | THROTTLE_REMOTE_IP
+                | THROTTLE_LOCAL_IP,
         )?;
         for t in all_throttles {
-            if (t.keys
-                & (THROTTLE_RCPT_DOMAIN | THROTTLE_MX | THROTTLE_REMOTE_IP | THROTTLE_LOCAL_IP))
-                != 0
+            if (t.keys & (THROTTLE_MX | THROTTLE_REMOTE_IP | THROTTLE_LOCAL_IP)) != 0
                 || t.conditions.conditions.iter().any(|c| {
                     matches!(
                         c,
                         Condition::Match {
-                            key: EnvelopeKey::RecipientDomain
-                                | EnvelopeKey::Mx
-                                | EnvelopeKey::RemoteIp
-                                | EnvelopeKey::LocalIp,
+                            key: EnvelopeKey::Mx | EnvelopeKey::RemoteIp | EnvelopeKey::LocalIp,
                             ..
                         }
                     )
                 })
             {
-                throttle.recipient.push(t);
+                throttle.host.push(t);
+            } else if (t.keys & (THROTTLE_RCPT_DOMAIN)) != 0
+                || t.conditions.conditions.iter().any(|c| {
+                    matches!(
+                        c,
+                        Condition::Match {
+                            key: EnvelopeKey::RecipientDomain,
+                            ..
+                        }
+                    )
+                })
+            {
+                throttle.rcpt.push(t);
             } else {
                 throttle.sender.push(t);
             }
         }
 
-        Ok(QueueConfig {
-            path,
+        let config = QueueConfig {
+            path: self
+                .parse_if_block("queue.path", ctx, &sender_envelope_keys)?
+                .ok_or("Missing \"queue.path\" property.")?,
             hash: self
-                .property::<u64>("global.spool.hash")?
-                .unwrap_or(32)
-                .next_power_of_two(),
+                .parse_if_block("queue.hash", ctx, &sender_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(32)),
             retry: self
-                .parse_if_block("queue.retry", ctx, &available_envelope_keys)?
+                .parse_if_block("queue.schedule.retry", ctx, &host_envelope_keys)?
                 .unwrap_or_else(|| {
                     IfBlock::new(vec![
-                        Duration::from_secs(0),
+                        Duration::from_secs(60),
                         Duration::from_secs(2 * 60),
                         Duration::from_secs(5 * 60),
                         Duration::from_secs(10 * 60),
@@ -88,15 +104,18 @@ impl Config {
                     ])
                 }),
             notify: self
-                .parse_if_block("queue.notify", ctx, &available_envelope_keys)?
+                .parse_if_block("queue.schedule.notify", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| {
                     IfBlock::new(vec![
                         Duration::from_secs(86400),
-                        Duration::from_secs(2 * 86400),
+                        Duration::from_secs(3 * 86400),
                     ])
                 }),
+            expire: self
+                .parse_if_block("queue.schedule.expire", ctx, &rcpt_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 86400))),
             source_ips: self
-                .parse_if_block("queue.source-ips", ctx, &available_envelope_keys)?
+                .parse_if_block("queue.outbound.source-ips", ctx, &host_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(Vec::new())),
             next_hop: IfBlock {
                 if_then: {
@@ -111,7 +130,7 @@ impl Config {
                                         .get(&then)
                                         .ok_or_else(|| {
                                             format!(
-                                "Relay host {:?} not found for property \"queue.next-hop\".",
+                                "Host {:?} not found for property \"queue.next-hop\".",
                                 then
                             )
                                         })?
@@ -142,31 +161,33 @@ impl Config {
                 },
             },
             tls: self
-                .parse_if_block("queue.tls", ctx, &available_envelope_keys)?
+                .parse_if_block("queue.outbound.tls", ctx, &host_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
-            attempts_max: self
-                .parse_if_block("queue.limits.attempts", ctx, &available_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(100)),
-            lifetime_max: self
-                .parse_if_block("queue.limits.lifetime", ctx, &available_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 86400))),
             throttle,
-            capacity: self.parse_queue_capacity(ctx)?,
-        })
+            quota: self.parse_queue_quota(ctx)?,
+        };
+
+        if config.retry.has_empty_list() {
+            Err("Property \"queue.schedule.retry\" cannot contain empty lists.".to_string())
+        } else if config.notify.has_empty_list() {
+            Err("Property \"queue.schedule.notify\" cannot contain empty lists.".to_string())
+        } else {
+            Ok(config)
+        }
     }
 
-    fn parse_queue_capacity(&self, ctx: &ConfigContext) -> super::Result<QueueCapacities> {
-        let mut capacities = QueueCapacities {
+    fn parse_queue_quota(&self, ctx: &ConfigContext) -> super::Result<QueueQuotas> {
+        let mut capacities = QueueQuotas {
             sender: Vec::new(),
             rcpt: Vec::new(),
             rcpt_domain: Vec::new(),
         };
 
-        for array_pos in self.sub_keys("queue.capacity") {
-            let capacity = self.parse_queue_capacity_item(("queue.capacity", array_pos), ctx)?;
+        for array_pos in self.sub_keys("queue.quota") {
+            let quota = self.parse_queue_quota_item(("queue.quota", array_pos), ctx)?;
 
-            if (capacity.keys & THROTTLE_RCPT) != 0
-                || capacity.conditions.conditions.iter().any(|c| {
+            if (quota.keys & THROTTLE_RCPT) != 0
+                || quota.conditions.conditions.iter().any(|c| {
                     matches!(
                         c,
                         Condition::Match {
@@ -176,9 +197,9 @@ impl Config {
                     )
                 })
             {
-                capacities.rcpt.push(capacity);
-            } else if (capacity.keys & THROTTLE_RCPT_DOMAIN) != 0
-                || capacity.conditions.conditions.iter().any(|c| {
+                capacities.rcpt.push(quota);
+            } else if (quota.keys & THROTTLE_RCPT_DOMAIN) != 0
+                || quota.conditions.conditions.iter().any(|c| {
                     matches!(
                         c,
                         Condition::Match {
@@ -188,20 +209,20 @@ impl Config {
                     )
                 })
             {
-                capacities.rcpt_domain.push(capacity);
+                capacities.rcpt_domain.push(quota);
             } else {
-                capacities.sender.push(capacity);
+                capacities.sender.push(quota);
             }
         }
 
         Ok(capacities)
     }
 
-    fn parse_queue_capacity_item(
+    fn parse_queue_quota_item(
         &self,
         prefix: impl AsKey,
         ctx: &ConfigContext,
-    ) -> super::Result<QueueCapacity> {
+    ) -> super::Result<QueueQuota> {
         let prefix = prefix.as_key();
         let mut keys = 0;
         for (key_, value) in self.values((&prefix, "key")) {
@@ -219,7 +240,7 @@ impl Config {
             }
         }
 
-        let capacity = QueueCapacity {
+        let quota = QueueQuota {
             conditions: if self.values((&prefix, "match")).next().is_some() {
                 self.parse_condition(
                     (&prefix, "match"),
@@ -247,16 +268,16 @@ impl Config {
         };
 
         // Validate
-        if capacity.size.is_none() && capacity.messages.is_none() {
+        if quota.size.is_none() && quota.messages.is_none() {
             Err(format!(
                 concat!(
-                    "Queue capacity {:?} needs to define a ",
+                    "Queue quota {:?} needs to define a ",
                     "valid 'size' and/or 'messages' property."
                 ),
                 prefix
             ))
         } else {
-            Ok(capacity)
+            Ok(quota)
         }
     }
 }
@@ -280,6 +301,13 @@ impl From<&Host> for RelayHost {
 
 impl ParseValue for PathBuf {
     fn parse_value(_key: impl utils::AsKey, value: &str) -> super::Result<Self> {
-        Ok(PathBuf::from(value))
+        let path = PathBuf::from(value);
+
+        if !path.exists() {
+            fs::create_dir(&path)
+                .map_err(|err| format!("Failed to create spool directory {:?}: {}", path, err))?;
+        }
+
+        Ok(path)
     }
 }

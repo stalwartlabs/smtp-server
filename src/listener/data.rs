@@ -1,10 +1,13 @@
-use std::time::SystemTime;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant, SystemTime},
+};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     core::Session,
-    queue::{self, Message},
+    queue::{self, Message, SimpleEnvelope},
 };
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
@@ -13,6 +16,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         let mail_from = self.data.mail_from.take().unwrap();
         let mut message = Box::new(Message {
             id: 0,
+            path: PathBuf::new(),
             created: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -22,12 +26,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             return_path_domain: mail_from.domain,
             recipients: Vec::with_capacity(self.data.rcpt_to.len()),
             domains: Vec::with_capacity(3),
-            notify: queue::Schedule::now(),
             flags: 0,
             priority: self.data.priority,
             size: self.data.message.len(),
             queue_refs: Vec::with_capacity(0),
         });
+
+        let future_release = Duration::from_secs(self.data.future_release);
 
         // Add recipients
         self.data.rcpt_to.sort_unstable();
@@ -37,11 +42,34 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 .last()
                 .map_or(true, |d| d.domain != rcpt.domain)
             {
+                let envelope = SimpleEnvelope::new(message.as_ref(), &rcpt.domain);
+
                 message.domains.push(queue::Domain {
-                    domain: rcpt.domain,
-                    retry: queue::Schedule::now(),
+                    retry: if self.data.future_release == 0 {
+                        queue::Schedule::now()
+                    } else {
+                        queue::Schedule::later(future_release)
+                    },
+                    notify: queue::Schedule::later(
+                        future_release
+                            + *self
+                                .core
+                                .queue
+                                .config
+                                .notify
+                                .eval(&envelope)
+                                .await
+                                .first()
+                                .unwrap(),
+                    ),
+                    expires: Instant::now()
+                        + if self.data.delivery_by == 0 {
+                            *self.core.queue.config.expire.eval(&envelope).await
+                        } else {
+                            Duration::from_secs(self.data.delivery_by)
+                        },
                     status: queue::Status::Scheduled,
-                    queue_refs: Vec::new(),
+                    domain: rcpt.domain,
                 });
             }
             message.recipients.push(queue::Recipient {
@@ -49,13 +77,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 address_lcase: rcpt.address_lcase,
                 status: queue::Status::Scheduled,
                 flags: 0,
-                queue_refs: Vec::new(),
                 domain_idx: message.domains.len() - 1,
             });
         }
 
-        // Verify queue capacity
-        if self.core.queue.queue_has_capacity(&mut message).await {
+        // Verify queue quota
+        if self.core.queue.has_quota(&mut message).await {
             if self
                 .core
                 .queue
@@ -73,8 +100,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             tracing::warn!(
                 parent: &self.span,
                 event = "queue",
-                class = "capacity-exceeded",
-                "Queue capacity exceeded, rejecting message."
+                class = "quota-exceeded",
+                "Queue quota exceeded, rejecting message."
             );
             self.write(b"452 4.3.1 Mail system full, try again later.\r\n")
                 .await?;

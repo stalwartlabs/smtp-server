@@ -324,34 +324,37 @@ pub struct RelayHost {
 }
 
 pub struct QueueConfig {
-    pub path: PathBuf,
-    pub hash: u64,
+    pub path: IfBlock<PathBuf>,
+    pub hash: IfBlock<u64>,
 
+    // Schedule
     pub retry: IfBlock<Vec<Duration>>,
     pub notify: IfBlock<Vec<Duration>>,
+    pub expire: IfBlock<Duration>,
+
+    // Outbound
     pub source_ips: IfBlock<Vec<IpAddr>>,
     pub next_hop: IfBlock<Option<RelayHost>>,
     pub tls: IfBlock<bool>,
 
-    // Limits, Throttle and Capacity
-    pub attempts_max: IfBlock<usize>,
-    pub lifetime_max: IfBlock<Duration>,
+    // Throttle and Quotas
     pub throttle: QueueThrottle,
-    pub capacity: QueueCapacities,
+    pub quota: QueueQuotas,
 }
 
 pub struct QueueThrottle {
     pub sender: Vec<Throttle>,
-    pub recipient: Vec<Throttle>,
+    pub rcpt: Vec<Throttle>,
+    pub host: Vec<Throttle>,
 }
 
-pub struct QueueCapacities {
-    pub sender: Vec<QueueCapacity>,
-    pub rcpt: Vec<QueueCapacity>,
-    pub rcpt_domain: Vec<QueueCapacity>,
+pub struct QueueQuotas {
+    pub sender: Vec<QueueQuota>,
+    pub rcpt: Vec<QueueQuota>,
+    pub rcpt_domain: Vec<QueueQuota>,
 }
 
-pub struct QueueCapacity {
+pub struct QueueQuota {
     pub conditions: Conditions,
     pub keys: u16,
     pub size: Option<usize>,
