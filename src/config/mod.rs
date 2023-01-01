@@ -13,7 +13,7 @@ pub mod utils;
 
 use std::{
     collections::BTreeMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -333,9 +333,21 @@ pub struct QueueConfig {
     pub expire: IfBlock<Duration>,
 
     // Outbound
-    pub source_ips: IfBlock<Vec<IpAddr>>,
+    pub source_ipv4: IfBlock<Vec<Ipv4Addr>>,
+    pub source_ipv6: IfBlock<Vec<Ipv6Addr>>,
     pub next_hop: IfBlock<Option<RelayHost>>,
-    pub tls: IfBlock<bool>,
+    pub encryption: IfBlock<TlsStrategy>,
+    pub max_mx: IfBlock<usize>,
+    pub max_multihomed: IfBlock<usize>,
+
+    // Timeouts
+    pub timeout_connect: IfBlock<Duration>,
+    pub timeout_greeting: IfBlock<Duration>,
+    pub timeout_tls: IfBlock<Duration>,
+    pub timeout_ehlo: IfBlock<Duration>,
+    pub timeout_mail: IfBlock<Duration>,
+    pub timeout_rcpt: IfBlock<Duration>,
+    pub timeout_data: IfBlock<Duration>,
 
     // Throttle and Quotas
     pub throttle: QueueThrottle,
@@ -361,10 +373,14 @@ pub struct QueueQuota {
     pub messages: Option<usize>,
 }
 
-pub enum AuthLevel {
-    Enable,
-    Disable,
-    Strict,
+#[derive(Debug, Clone, Copy, Default)]
+pub enum TlsStrategy {
+    #[default]
+    Optional,
+    Tls,
+    DaneOrOptional,
+    DaneOrTls,
+    Dane,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

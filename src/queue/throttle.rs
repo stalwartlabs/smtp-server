@@ -10,6 +10,8 @@ use crate::{
     },
 };
 
+use super::{Domain, Status};
+
 pub enum Error {
     Concurrency { limiter: ConcurrencyLimiter },
     Rate { retry_at: Instant },
@@ -78,5 +80,20 @@ impl QueueCore {
         }
 
         Ok(())
+    }
+}
+
+impl Domain {
+    pub fn set_throttle_error(&mut self, err: Error, on_hold: &mut Vec<ConcurrencyLimiter>) {
+        match err {
+            Error::Concurrency { limiter } => {
+                on_hold.push(limiter);
+                self.status = Status::TemporaryFailure(super::Error::ConcurrencyLimited);
+            }
+            Error::Rate { retry_at } => {
+                self.retry.due = retry_at;
+                self.status = Status::TemporaryFailure(super::Error::RateLimited);
+            }
+        }
     }
 }

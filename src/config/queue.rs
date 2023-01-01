@@ -21,6 +21,13 @@ impl Config {
             EnvelopeKey::SenderDomain,
             EnvelopeKey::Priority,
         ];
+        let mx_envelope_keys = [
+            EnvelopeKey::RecipientDomain,
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::Priority,
+            EnvelopeKey::Mx,
+        ];
         let host_envelope_keys = [
             EnvelopeKey::RecipientDomain,
             EnvelopeKey::Sender,
@@ -114,8 +121,17 @@ impl Config {
             expire: self
                 .parse_if_block("queue.schedule.expire", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 86400))),
-            source_ips: self
-                .parse_if_block("queue.outbound.source-ips", ctx, &host_envelope_keys)?
+            max_mx: self
+                .parse_if_block("queue.outbound.limits.mx", ctx, &rcpt_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(5)),
+            max_multihomed: self
+                .parse_if_block("queue.outbound.limits.multihomed", ctx, &rcpt_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(2)),
+            source_ipv4: self
+                .parse_if_block("queue.outbound.source-ip.v4", ctx, &mx_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Vec::new())),
+            source_ipv6: self
+                .parse_if_block("queue.outbound.source-ip.v6", ctx, &mx_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(Vec::new())),
             next_hop: IfBlock {
                 if_then: {
@@ -160,11 +176,36 @@ impl Config {
                     None
                 },
             },
-            tls: self
-                .parse_if_block("queue.outbound.tls", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(true)),
+            encryption: self
+                .parse_if_block("queue.outbound.encryption", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(TlsStrategy::Optional)),
             throttle,
             quota: self.parse_queue_quota(ctx)?,
+            timeout_connect: self
+                .parse_if_block("queue.outbound.timeouts.connect", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+            timeout_greeting: self
+                .parse_if_block("queue.outbound.timeouts.greeting", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+            timeout_tls: self
+                .parse_if_block("queue.outbound.timeouts.tls", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(3 * 60))),
+            timeout_ehlo: self
+                .parse_if_block("queue.outbound.timeouts.ehlo", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+            timeout_mail: self
+                .parse_if_block(
+                    "queue.outbound.timeouts.mail-from",
+                    ctx,
+                    &host_envelope_keys,
+                )?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+            timeout_rcpt: self
+                .parse_if_block("queue.outbound.timeouts.rcpt-to", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+            timeout_data: self
+                .parse_if_block("queue.outbound.timeouts.data", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
         };
 
         if config.retry.has_empty_list() {
@@ -296,6 +337,39 @@ impl From<&Host> for RelayHost {
             tls_implicit: host.tls_implicit,
             tls_allow_invalid_certs: host.tls_allow_invalid_certs,
         }
+    }
+}
+
+impl ParseValue for TlsStrategy {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        match value {
+            "optional" => Ok(TlsStrategy::Optional),
+            "tls" => Ok(TlsStrategy::Tls),
+            "dane-or-optional" => Ok(TlsStrategy::DaneOrOptional),
+            "dane-or-tls" => Ok(TlsStrategy::DaneOrTls),
+            "dane" => Ok(TlsStrategy::Dane),
+            _ => Err(format!(
+                "Invalid encryption value {:?} for key {:?}.",
+                value,
+                key.as_key()
+            )),
+        }
+    }
+}
+
+impl ParseValue for Ipv4Addr {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        value
+            .parse()
+            .map_err(|_| format!("Invalid IPv4 value {:?} for key {:?}.", value, key.as_key()))
+    }
+}
+
+impl ParseValue for Ipv6Addr {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        value
+            .parse()
+            .map_err(|_| format!("Invalid IPv6 value {:?} for key {:?}.", value, key.as_key()))
     }
 }
 

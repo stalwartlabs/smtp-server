@@ -1,11 +1,12 @@
 use std::{fs, sync::Arc, time::Duration};
 
 use dashmap::DashMap;
+use mail_send::smtp::tls::build_tls_connector;
 use smtp_server::{
     config::{Config, ConfigContext},
     core::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
-        Core, QueueCore, SessionCore,
+        Core, QueueCore, SessionCore, TlsConnectors,
     },
     queue::{self, manager::SpawnQueue},
 };
@@ -82,6 +83,10 @@ async fn main() -> std::io::Result<()> {
                     .unwrap_or(32),
             ),
             tx: queue_tx,
+            connectors: TlsConnectors {
+                pki_verify: build_tls_connector(false),
+                dummy_verify: build_tls_connector(true),
+            },
         },
     });
 

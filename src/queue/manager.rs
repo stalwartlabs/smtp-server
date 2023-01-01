@@ -63,7 +63,7 @@ impl SpawnQueue for mpsc::Receiver<Event> {
                                     .await;
                             }
                             match result {
-                                WorkerResult::Delivered => (),
+                                WorkerResult::Done => (),
                                 WorkerResult::Retry(schedule) => {
                                     queue.main.push(schedule);
                                 }
@@ -99,7 +99,9 @@ impl Queue {
         self.on_hold
             .iter()
             .position(|o| {
-                o.concurrent.load(Ordering::Relaxed) < o.max_concurrent
+                o.limiters
+                    .iter()
+                    .any(|l| l.concurrent.load(Ordering::Relaxed) < l.max_concurrent)
                     || o.next_due.map_or(false, |due| due <= now)
             })
             .map(|pos| self.on_hold.remove(pos).message)

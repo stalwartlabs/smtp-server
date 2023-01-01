@@ -1,21 +1,22 @@
 use std::{
     net::IpAddr,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicU64, AtomicUsize},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
     time::{Duration, Instant},
 };
 
 use smtp_proto::Response;
 
-use crate::core::{throttle::InFlight, Envelope};
+use crate::core::{
+    throttle::{ConcurrencyLimiter, InFlight},
+    Envelope,
+};
 
 pub mod delivery;
 pub mod dsn;
 pub mod manager;
 pub mod quota;
+pub mod session;
 pub mod spool;
 pub mod throttle;
 
@@ -26,15 +27,14 @@ pub enum Event {
 }
 
 pub enum WorkerResult {
-    Delivered,
+    Done,
     Retry(Schedule<Box<Message>>),
     OnHold(OnHold),
 }
 
 pub struct OnHold {
     next_due: Option<Instant>,
-    max_concurrent: u64,
-    concurrent: Arc<AtomicU64>,
+    limiters: Vec<ConcurrencyLimiter>,
     message: Box<Message>,
 }
 
@@ -85,8 +85,13 @@ pub enum Status {
 
 pub enum Error {
     DNSError(String),
-    UnexpectedResponse(Response<String>),
-    Timeout,
+    UnexpectedResponse {
+        message: String,
+        response: Response<String>,
+    },
+    ConnectionError(String),
+    RateLimited,
+    ConcurrencyLimited,
 }
 
 pub struct DeliveryAttempt {

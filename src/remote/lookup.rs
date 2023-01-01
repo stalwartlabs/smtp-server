@@ -78,6 +78,7 @@ impl Host {
                             tls_hostname: self.address,
                             tls_implicit: self.tls_implicit,
                             is_lmtp: matches!(self.protocol, ServerProtocol::Lmtp),
+                            credentials: None,
                             local_host,
                         }),
                     }

@@ -19,6 +19,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc,
 };
+use tokio_rustls::TlsConnector;
 use tracing::Span;
 
 use crate::{
@@ -53,6 +54,12 @@ pub struct QueueCore {
     pub quota: DashMap<ThrottleKey, Arc<QuotaLimiter>, ThrottleKeyHasherBuilder>,
     pub tx: mpsc::Sender<queue::Event>,
     pub id_seq: AtomicU32,
+    pub connectors: TlsConnectors,
+}
+
+pub struct TlsConnectors {
+    pub pki_verify: TlsConnector,
+    pub dummy_verify: TlsConnector,
 }
 
 pub enum State {

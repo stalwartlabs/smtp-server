@@ -46,7 +46,10 @@ pub async fn lookup_smtp(
                 (result, num_rcpts < MAX_RCPTS_PER_SESSION)
             }
             Item::Authenticate(credentials) => {
-                let result = match client.authenticate(credentials).await {
+                let capabilities = client
+                    .capabilities(&builder.local_host, builder.is_lmtp)
+                    .await?;
+                let result = match client.authenticate(credentials, &capabilities).await {
                     Ok(_) => true,
                     Err(err) => match &err {
                         mail_send::Error::AuthenticationFailed(err) if err.code() == 535 => {
