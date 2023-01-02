@@ -9,11 +9,15 @@ use mail_send::SmtpClient;
 use rand::{seq::SliceRandom, Rng};
 use smtp_proto::{Severity, MAIL_REQUIRETLS};
 
-use crate::{config::RelayHost, core::Core};
+use crate::{
+    config::{RelayHost, ServerProtocol},
+    core::Core,
+};
 
 use super::{
+    dane::verify_dane,
     manager::Queue,
-    session::{into_tls, read_greeting, try_start_tls, StartTlsResult},
+    session::{into_tls, read_greeting, say_helo, try_start_tls, StartTlsResult},
     throttle, DeliveryAttempt, Domain, Error, Event, Message, OnHold, QueueEnvelope, Schedule,
     Status, WorkerResult,
 };
@@ -102,7 +106,7 @@ impl DeliveryAttempt {
                         vec![RemoteHost::Relay(next_hop)]
                     } else {
                         // Lookup MX
-                        mx_list = match core.resolver.mx_lookup(&domain.domain).await {
+                        mx_list = match core.resolvers.dns.mx_lookup(&domain.domain).await {
                             Ok(mx) => mx,
                             Err(err) => {
                                 domain.set_status(err, queue_config.retry.eval(&envelope).await);
@@ -199,13 +203,15 @@ impl DeliveryAttempt {
 
                         // Obtain TLS strategy
                         let tls_strategy = *queue_config.encryption.eval(&envelope).await;
-                        let tls_connector = if tls_strategy.is_dane() {
-                            todo!()
-                        } else if !remote_host.allow_invalid_certs() {
+                        let tls_connector = if !remote_host.allow_invalid_certs() {
                             &core.queue.connectors.pki_verify
                         } else {
                             &core.queue.connectors.dummy_verify
                         };
+
+                        // Obtail EHLO parameters
+                        let ehlo_timeout = *queue_config.timeout_ehlo.eval(&envelope).await;
+                        let ehlo_hostname = queue_config.ehlo_name.eval(&envelope).await;
 
                         let delivery_result = if !remote_host.implicit_tls() {
                             // Read greeting
@@ -217,10 +223,65 @@ impl DeliveryAttempt {
                                 continue 'next_host;
                             }
 
+                            // Say EHLO
+                            let capabilties = match say_helo(
+                                &mut smtp_client,
+                                envelope.mx,
+                                remote_host.is_smtp(),
+                                ehlo_hostname,
+                                ehlo_timeout,
+                            )
+                            .await
+                            {
+                                Ok(capabilities) => capabilities,
+                                Err(status) => {
+                                    last_status = status;
+                                    continue 'next_host;
+                                }
+                            };
+
                             // Try starting TLS
                             smtp_client.timeout = *queue_config.timeout_tls.eval(&envelope).await;
-                            match try_start_tls(smtp_client, tls_connector, envelope.mx).await {
+                            match try_start_tls(
+                                smtp_client,
+                                tls_connector,
+                                envelope.mx,
+                                &capabilties,
+                            )
+                            .await
+                            {
                                 Ok(StartTlsResult::Success { smtp_client }) => {
+                                    // Verify DANE
+                                    if tls_strategy.is_dane() {
+                                        match core
+                                            .resolvers
+                                            .dnssec
+                                            .tlsa_lookup(format!("_25._tcp.{}.", envelope.mx))
+                                            .await
+                                        {
+                                            Ok(tlsa_records) => {
+                                                if let Err(status) = verify_dane(
+                                                    &span,
+                                                    envelope.mx,
+                                                    tls_strategy.is_dane_required(),
+                                                    smtp_client
+                                                        .tls_connection()
+                                                        .peer_certificates(),
+                                                    tlsa_records,
+                                                ) {
+                                                    last_status = status;
+                                                    continue 'next_host;
+                                                }
+                                            }
+                                            Err(err) => {
+                                                if tls_strategy.is_dane_required() {
+                                                    last_status = err.into();
+                                                    continue 'next_host;
+                                                }
+                                            }
+                                        };
+                                    }
+
                                     // Deliver message over TLS
                                     self.message
                                         .deliver(
@@ -239,11 +300,20 @@ impl DeliveryAttempt {
                                     if tls_strategy.is_tls_required()
                                         || (self.message.flags & MAIL_REQUIRETLS) != 0
                                     {
-                                        last_status = Status::from((
-                                            "TLS unavailable for",
-                                            envelope.mx,
-                                            mail_send::Error::UnexpectedReply(response),
-                                        ));
+                                        last_status = if let Some(response) = response {
+                                            Status::from((
+                                                "TLS unavailable for",
+                                                envelope.mx,
+                                                mail_send::Error::UnexpectedReply(response),
+                                            ))
+                                        } else {
+                                            Status::PermanentFailure(Error::ConnectionError(
+                                                format!(
+                                                    "STARTTLS not supported by host {:?}.",
+                                                    envelope.mx
+                                                ),
+                                            ))
+                                        };
                                         continue 'next_host;
                                     } else {
                                         // TLS is not required, proceed in plain-text
@@ -294,7 +364,7 @@ impl DeliveryAttempt {
                                 .await
                         };
 
-                        // Update status for domain and continue with next domain
+                        // Update status for the current domain and continue with the next one
                         domain
                             .set_status(delivery_result, queue_config.retry.eval(&envelope).await);
                         continue 'next_domain;
@@ -379,6 +449,13 @@ impl<'x> RemoteHost<'x> {
             RemoteHost::Relay(host) => host.tls_implicit,
         }
     }
+
+    fn is_smtp(&self) -> bool {
+        match self {
+            RemoteHost::MX(_) => true,
+            RemoteHost::Relay(host) => host.protocol == ServerProtocol::Smtp,
+        }
+    }
 }
 
 impl Core {
@@ -392,7 +469,8 @@ impl Core {
         let mut source_ip = None;
 
         for (pos, remote_ip) in self
-            .resolver
+            .resolvers
+            .dns
             .ip_lookup(remote_host.fqdn_hostname().as_ref())
             .await?
             .take(max_multihomed)
@@ -436,7 +514,7 @@ impl Core {
         if !remote_ips.is_empty() {
             Ok((source_ip, remote_ips))
         } else {
-            Err(Status::TemporaryFailure(Error::DNSError(format!(
+            Err(Status::TemporaryFailure(Error::DnsError(format!(
                 "No IP addresses found for {:?}.",
                 envelope.mx
             ))))
@@ -502,9 +580,9 @@ impl From<mail_auth::Error> for Status {
     fn from(err: mail_auth::Error) -> Self {
         match &err {
             mail_auth::Error::DNSRecordNotFound(code) => {
-                Status::PermanentFailure(Error::DNSError(format!("Domain not found: {}", code)))
+                Status::PermanentFailure(Error::DnsError(format!("Domain not found: {}", code)))
             }
-            _ => Status::TemporaryFailure(Error::DNSError(err.to_string())),
+            _ => Status::TemporaryFailure(Error::DnsError(err.to_string())),
         }
     }
 }

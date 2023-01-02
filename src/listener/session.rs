@@ -296,8 +296,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             }
             Err(err) => {
                 tracing::debug!(parent: &self.span,
-                                event = "error",
-                                class = "io",
+                                event = "io-error",
                                 "Failed to write to stream: {:?}", err);
                 Err(())
             }
@@ -321,7 +320,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 tracing::debug!(
                     parent: &self.span,
                     event = "error",
-                    class = "io",
+                    module = "io",
                     "Failed to read from stream: {:?}", err
                 );
                 Err(())

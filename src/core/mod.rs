@@ -25,7 +25,7 @@ use tracing::Span;
 use crate::{
     config::{EnvelopeKey, List, QueueConfig, Script, ServerProtocol, SessionConfig},
     listener::auth::SaslToken,
-    queue::{self, QuotaLimiter},
+    queue::{self, dane::DnssecResolver, QuotaLimiter},
 };
 
 use self::throttle::{
@@ -39,7 +39,12 @@ pub mod throttle;
 pub struct Core {
     pub session: SessionCore,
     pub queue: QueueCore,
-    pub resolver: Resolver,
+    pub resolvers: Resolvers,
+}
+
+pub struct Resolvers {
+    pub dns: Resolver,
+    pub dnssec: DnssecResolver,
 }
 
 pub struct SessionCore {

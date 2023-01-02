@@ -99,8 +99,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         } else {
             tracing::warn!(
                 parent: &self.span,
-                event = "queue",
-                class = "quota-exceeded",
+                module = "queue",
+                event = "quota-exceeded",
                 "Queue quota exceeded, rejecting message."
             );
             self.write(b"452 4.3.1 Mail system full, try again later.\r\n")

@@ -333,6 +333,7 @@ pub struct QueueConfig {
     pub expire: IfBlock<Duration>,
 
     // Outbound
+    pub ehlo_name: IfBlock<String>,
     pub source_ipv4: IfBlock<Vec<Ipv4Addr>>,
     pub source_ipv6: IfBlock<Vec<Ipv6Addr>>,
     pub next_hop: IfBlock<Option<RelayHost>>,

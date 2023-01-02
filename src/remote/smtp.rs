@@ -135,7 +135,7 @@ impl RemoteLookup for Arc<SmtpClientBuilder<String>> {
             if let Err(err) = lookup_smtp(builder.as_ref(), lookup, &tx).await {
                 tracing::warn!(
                     event = "error",
-                    class = "remote",
+                    module = "remote",
                     remote.addr = &builder.addr,
                     remote.protocol = "smtp",
                     "Remote lookup failed: {}",

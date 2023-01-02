@@ -89,6 +89,8 @@ impl Config {
             }
         }
 
+        let default_ehlo_hostname = self.value_require("server.hostname")?;
+
         let config = QueueConfig {
             path: self
                 .parse_if_block("queue.path", ctx, &sender_envelope_keys)?
@@ -96,6 +98,7 @@ impl Config {
             hash: self
                 .parse_if_block("queue.hash", ctx, &sender_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(32)),
+
             retry: self
                 .parse_if_block("queue.schedule.retry", ctx, &host_envelope_keys)?
                 .unwrap_or_else(|| {
@@ -121,6 +124,9 @@ impl Config {
             expire: self
                 .parse_if_block("queue.schedule.expire", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 86400))),
+            ehlo_name: self
+                .parse_if_block("queue.outbound.ehlo-hostname", ctx, &sender_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(default_ehlo_hostname.to_string())),
             max_mx: self
                 .parse_if_block("queue.outbound.limits.mx", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(5)),

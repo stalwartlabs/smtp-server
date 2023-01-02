@@ -36,7 +36,7 @@ async fn main() -> std::io::Result<()> {
     // Build core
     let (queue_tx, queue_rx) = mpsc::channel(1024);
     let core = Arc::new(Core {
-        resolver: config.build_resolver().failed("Failed to build resolver"),
+        resolvers: config.build_resolvers().failed("Failed to build resolvers"),
         session: SessionCore {
             config: session_config,
             concurrency: ConcurrencyLimiter::new(

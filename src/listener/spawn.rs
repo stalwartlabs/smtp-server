@@ -79,8 +79,8 @@ impl Server {
                                     } else {
                                         tracing::info!(
                                             parent: &span,
-                                            event = "throttle",
-                                            class = "concurrency",
+                                            module = "throttle",
+                                            event = "too-many-requests",
                                             max_concurrent = core.session.concurrency.max_concurrent,
                                             "Too many concurrent connections."
                                         );
@@ -136,8 +136,8 @@ impl Server {
                                 }
                                 Err(err) => {
                                     tracing::debug!(parent: &listener_span,
-                                                    event = "error",
-                                                    class = "io",
+                                                    module = "smtp-listener",
+                                                    event = "io-error",
                                                     "Failed to accept TCP connection: {}", err);
                                 }
                             }
@@ -171,7 +171,7 @@ impl Session<TcpStream> {
                     tracing::debug!(
                         parent: &span,
                         event = "error",
-                        class = "tls",
+                        module = "tls",
                         "Failed to accept TLS connection: {}",
                         err
                     );

@@ -12,6 +12,7 @@ use crate::core::{
     Envelope,
 };
 
+pub mod dane;
 pub mod delivery;
 pub mod dsn;
 pub mod manager;
@@ -84,12 +85,13 @@ pub enum Status {
 }
 
 pub enum Error {
-    DNSError(String),
+    DnsError(String),
     UnexpectedResponse {
         message: String,
         response: Response<String>,
     },
     ConnectionError(String),
+    DaneError(String),
     RateLimited,
     ConcurrencyLimited,
 }

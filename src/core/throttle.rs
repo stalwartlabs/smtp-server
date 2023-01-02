@@ -295,8 +295,8 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
                             } else {
                                 tracing::info!(
                                     parent: &self.span,
-                                    event = "throttle",
-                                    class = "concurrency",
+                                    module = "throttle",
+                                    event = "too-many-requests",
                                     max_concurrent = limiter.max_concurrent,
                                     "Too many concurrent requests."
                                 );
@@ -307,8 +307,8 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
                             if !limiter.is_allowed() {
                                 tracing::info!(
                                     parent: &self.span,
-                                    event = "throttle",
-                                    class = "rate",
+                                    module = "throttle",
+                                    event = "rate-limit-exceeded",
                                     max_requests = limiter.max_requests as u64,
                                     max_interval = limiter.max_interval as u64,
                                     "Rate limit exceeded."

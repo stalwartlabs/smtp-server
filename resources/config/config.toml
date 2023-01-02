@@ -193,6 +193,7 @@ notify = ["1d", "3d"]
 expire = "5d"
 
 [queue.outbound]
+#ehlo-hostname = mx.domain.org
 source-ip.v4 = ["192.168.0.2", "162.168.0.1"]
 source-ip.v6 = ["192.168.0.2", "162.168.0.1"]
 #tls = optional, require, dane, dane-fallback-require, dane-require
@@ -230,12 +231,13 @@ preserve-intermediates = true
 concurrency = 2
 timeout = 100
 attempts = 3
+try-tcp-on-error = true
 
 [resolver.cache]
 a = 1000
 mx = 9393
 txt = 3233
-
+tlsa = 333
 
 
 [scripts]
