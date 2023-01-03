@@ -56,6 +56,7 @@ pub struct Message {
     pub domains: Vec<Domain>,
 
     pub flags: u64,
+    pub env_id: Option<String>,
     pub priority: i16,
     pub size: usize,
 
@@ -67,23 +68,35 @@ pub struct Domain {
     pub retry: Schedule<u32>,
     pub notify: Schedule<u32>,
     pub expires: Instant,
-    pub status: Status,
+    pub status: DomainStatus,
 }
 pub struct Recipient {
     pub domain_idx: usize,
     pub address: String,
     pub address_lcase: String,
-    pub status: Status,
+    pub status: RecipientStatus,
     pub flags: u64,
 }
 
-pub enum Status {
+pub const RCPT_SENT_DSN_FAILURE: u64 = 1 << 32;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DomainStatus {
     Scheduled,
-    Delivered,
+    Completed,
     TemporaryFailure(Error),
     PermanentFailure(Error),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum RecipientStatus {
+    Scheduled,
+    Delivered(Response<String>),
+    TemporaryFailure(Response<String>),
+    PermanentFailure(Response<String>),
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     DnsError(String),
     UnexpectedResponse {
@@ -94,6 +107,7 @@ pub enum Error {
     DaneError(String),
     RateLimited,
     ConcurrencyLimited,
+    Io(String),
 }
 
 pub struct DeliveryAttempt {

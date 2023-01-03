@@ -29,6 +29,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             flags: 0,
             priority: self.data.priority,
             size: self.data.message.len(),
+            env_id: self.data.env_id.take(),
             queue_refs: Vec::with_capacity(0),
         });
 
@@ -68,14 +69,14 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         } else {
                             Duration::from_secs(self.data.delivery_by)
                         },
-                    status: queue::Status::Scheduled,
+                    status: queue::DomainStatus::Scheduled,
                     domain: rcpt.domain,
                 });
             }
             message.recipients.push(queue::Recipient {
                 address: rcpt.address,
                 address_lcase: rcpt.address_lcase,
-                status: queue::Status::Scheduled,
+                status: queue::RecipientStatus::Scheduled,
                 flags: 0,
                 domain_idx: message.domains.len() - 1,
             });

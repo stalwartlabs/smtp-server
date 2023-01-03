@@ -7,7 +7,7 @@ use crate::{
     core::{Envelope, QueueCore},
 };
 
-use super::{Message, QuotaLimiter, SimpleEnvelope, UsedQuota};
+use super::{DomainStatus, Message, QuotaLimiter, RecipientStatus, SimpleEnvelope, UsedQuota};
 
 impl QueueCore {
     pub async fn has_quota(&self, message: &mut Message) -> bool {
@@ -102,6 +102,31 @@ impl QueueCore {
             }
         }
         true
+    }
+}
+
+impl Message {
+    pub fn release_quota(&mut self) {
+        let mut quota_ids = Vec::with_capacity(self.domains.len() + self.recipients.len());
+        for (pos, domain) in self.domains.iter().enumerate() {
+            if matches!(
+                &domain.status,
+                DomainStatus::Completed | DomainStatus::PermanentFailure(_)
+            ) {
+                quota_ids.push(((pos + 1) << 32) as u64);
+            }
+        }
+        for (pos, rcpt) in self.recipients.iter().enumerate() {
+            if matches!(
+                &rcpt.status,
+                RecipientStatus::Delivered(_) | RecipientStatus::PermanentFailure(_)
+            ) {
+                quota_ids.push((pos + 1) as u64);
+            }
+        }
+        if !quota_ids.is_empty() {
+            self.queue_refs.retain(|q| !quota_ids.contains(&q.id));
+        }
     }
 }
 

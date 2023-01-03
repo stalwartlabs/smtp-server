@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::{Domain, Status};
+use super::{Domain, DomainStatus};
 
 pub enum Error {
     Concurrency { limiter: ConcurrencyLimiter },
@@ -35,8 +35,8 @@ impl QueueCore {
                         } else {
                             tracing::info!(
                                 parent: span,
-                                event = "throttle",
-                                module = "concurrency",
+                                module = "throttle",
+                                event = "too-many-requests",
                                 max_concurrent = limiter.max_concurrent,
                                 "Queue concurrency limit exceeded."
                             );
@@ -49,8 +49,8 @@ impl QueueCore {
                         if !limiter.is_allowed() {
                             tracing::info!(
                                 parent: span,
-                                event = "throttle",
-                                module = "rate",
+                                module = "throttle",
+                                event = "rate-limit-exceeded",
                                 max_requests = limiter.max_requests as u64,
                                 max_interval = limiter.max_interval as u64,
                                 "Queue rate limit exceeded."
@@ -88,11 +88,11 @@ impl Domain {
         match err {
             Error::Concurrency { limiter } => {
                 on_hold.push(limiter);
-                self.status = Status::TemporaryFailure(super::Error::ConcurrencyLimited);
+                self.status = DomainStatus::TemporaryFailure(super::Error::ConcurrencyLimited);
             }
             Error::Rate { retry_at } => {
                 self.retry.due = retry_at;
-                self.status = Status::TemporaryFailure(super::Error::RateLimited);
+                self.status = DomainStatus::TemporaryFailure(super::Error::RateLimited);
             }
         }
     }

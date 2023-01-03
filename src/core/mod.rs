@@ -112,6 +112,7 @@ pub struct SessionData {
     pub priority: i16,
     pub delivery_by: u64,
     pub future_release: u64,
+    pub env_id: Option<String>,
 
     pub valid_until: Instant,
     pub bytes_left: usize,
@@ -201,6 +202,7 @@ impl SessionData {
             bytes_left: 0,
             delivery_by: 0,
             future_release: 0,
+            env_id: None,
         }
     }
 }

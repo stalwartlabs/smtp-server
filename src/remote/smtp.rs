@@ -134,8 +134,8 @@ impl RemoteLookup for Arc<SmtpClientBuilder<String>> {
         tokio::spawn(async move {
             if let Err(err) = lookup_smtp(builder.as_ref(), lookup, &tx).await {
                 tracing::warn!(
-                    event = "error",
                     module = "remote",
+                    event = "lookup-failed",
                     remote.addr = &builder.addr,
                     remote.protocol = "smtp",
                     "Remote lookup failed: {}",

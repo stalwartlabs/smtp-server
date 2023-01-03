@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::core::Core;
 
-use super::{DeliveryAttempt, Event, Message, OnHold, Schedule, Status, WorkerResult};
+use super::{DeliveryAttempt, DomainStatus, Event, Message, OnHold, Schedule, WorkerResult};
 
 pub struct Queue {
     short_wait: Duration,
@@ -127,7 +127,7 @@ impl Message {
         for domain in &self.domains {
             if matches!(
                 domain.status,
-                Status::Scheduled | Status::TemporaryFailure(_)
+                DomainStatus::Scheduled | DomainStatus::TemporaryFailure(_)
             ) {
                 if !has_events || domain.retry.due < next_event {
                     next_event = domain.retry.due;
@@ -156,7 +156,7 @@ impl Message {
         for domain in &self.domains {
             if matches!(
                 domain.status,
-                Status::Scheduled | Status::TemporaryFailure(_)
+                DomainStatus::Scheduled | DomainStatus::TemporaryFailure(_)
             ) {
                 if domain.retry.due > instant && (!has_events || domain.retry.due < next_event) {
                     next_event = domain.retry.due;
