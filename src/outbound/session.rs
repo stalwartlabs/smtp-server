@@ -15,7 +15,7 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 
 use crate::config::TlsStrategy;
 
-use super::{DomainStatus, Error, Message, Recipient, RecipientStatus};
+use crate::queue::{DomainStatus, Error, Message, Recipient, RecipientStatus};
 
 pub struct SessionParams<'x> {
     pub span: &'x tracing::Span,

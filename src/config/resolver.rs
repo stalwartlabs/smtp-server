@@ -6,7 +6,7 @@ use mail_auth::{
     Resolver,
 };
 
-use crate::{core::Resolvers, queue::dane::DnssecResolver};
+use crate::{core::Resolvers, outbound::dane::DnssecResolver};
 
 use super::{
     utils::{AsKey, ParseValue},

@@ -24,8 +24,9 @@ use tracing::Span;
 
 use crate::{
     config::{EnvelopeKey, List, QueueConfig, Script, ServerProtocol, SessionConfig},
-    listener::auth::SaslToken,
-    queue::{self, dane::DnssecResolver, QuotaLimiter},
+    inbound::auth::SaslToken,
+    outbound::dane::DnssecResolver,
+    queue::{self, QuotaLimiter},
 };
 
 use self::throttle::{

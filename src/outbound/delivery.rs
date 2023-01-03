@@ -14,11 +14,12 @@ use crate::{
     core::Core,
 };
 
-use super::{
-    manager::Queue,
-    session::{into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult},
-    throttle, DeliveryAttempt, Domain, DomainStatus, Error, Event, Message, OnHold, QueueEnvelope,
-    Schedule, WorkerResult,
+use super::session::{
+    into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult,
+};
+use crate::queue::{
+    manager::Queue, throttle, DeliveryAttempt, Domain, DomainStatus, Error, Event, Message, OnHold,
+    QueueEnvelope, Schedule, WorkerResult,
 };
 
 impl DeliveryAttempt {

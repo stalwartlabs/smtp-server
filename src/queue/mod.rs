@@ -12,12 +12,9 @@ use crate::core::{
     Envelope,
 };
 
-pub mod dane;
-pub mod delivery;
 pub mod dsn;
 pub mod manager;
 pub mod quota;
-pub mod session;
 pub mod spool;
 pub mod throttle;
 
@@ -34,9 +31,9 @@ pub enum WorkerResult {
 }
 
 pub struct OnHold {
-    next_due: Option<Instant>,
-    limiters: Vec<ConcurrencyLimiter>,
-    message: Box<Message>,
+    pub next_due: Option<Instant>,
+    pub limiters: Vec<ConcurrencyLimiter>,
+    pub message: Box<Message>,
 }
 
 pub struct Schedule<T> {
