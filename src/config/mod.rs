@@ -337,7 +337,9 @@ pub struct QueueConfig {
     pub source_ipv4: IfBlock<Vec<Ipv4Addr>>,
     pub source_ipv6: IfBlock<Vec<Ipv6Addr>>,
     pub next_hop: IfBlock<Option<RelayHost>>,
-    pub encryption: IfBlock<TlsStrategy>,
+    pub tls_dane: IfBlock<RequireOptional>,
+    pub tls_mta_sts: IfBlock<RequireOptional>,
+    pub tls_start: IfBlock<RequireOptional>,
     pub max_mx: IfBlock<usize>,
     pub max_multihomed: IfBlock<usize>,
 
@@ -349,6 +351,7 @@ pub struct QueueConfig {
     pub timeout_mail: IfBlock<Duration>,
     pub timeout_rcpt: IfBlock<Duration>,
     pub timeout_data: IfBlock<Duration>,
+    pub timeout_mta_sts: IfBlock<Duration>,
 
     // Throttle and Quotas
     pub throttle: QueueThrottle,
@@ -375,13 +378,18 @@ pub struct QueueQuota {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub enum TlsStrategy {
+pub struct TlsStrategy {
+    pub dane: RequireOptional,
+    pub mta_sts: RequireOptional,
+    pub tls: RequireOptional,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum RequireOptional {
     #[default]
     Optional,
-    Tls,
-    DaneOrOptional,
-    DaneOrTls,
-    Dane,
+    Require,
+    Disable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

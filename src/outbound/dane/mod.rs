@@ -7,7 +7,6 @@ pub mod verify;
 
 pub struct DnssecResolver {
     pub resolver: TokioAsyncResolver,
-    pub cache_tlsa: LruCache<String, Arc<Vec<Tlsa>>>,
 }
 
 #[derive(Debug)]

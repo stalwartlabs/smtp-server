@@ -4,4 +4,3 @@ pub mod inbound;
 pub mod outbound;
 pub mod queue;
 pub mod remote;
-pub mod reporting;

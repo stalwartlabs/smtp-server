@@ -8,12 +8,12 @@ use std::fmt::Write;
 use std::time::Duration;
 use tokio::{
     fs,
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
 };
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
-use crate::config::TlsStrategy;
+use crate::config::{RequireOptional, TlsStrategy};
 
 use crate::queue::{DomainStatus, Error, Message, Recipient, RecipientStatus};
 
@@ -39,19 +39,26 @@ impl Message {
         // Obtain capabilities
         let mut capabilities = match say_helo(&mut smtp_client, &params).await {
             Ok(capabilities) => capabilities,
-            Err(status) => return status,
+            Err(status) => {
+                quit(smtp_client).await;
+                return status;
+            }
         };
 
         // Authenticate
         if let Some(credentials) = params.credentials {
             if let Err(err) = smtp_client.authenticate(credentials, &capabilities).await {
+                quit(smtp_client).await;
                 return ("Authentication failed with", params.hostname, err).into();
             }
 
             // Refresh capabilities
             capabilities = match say_helo(&mut smtp_client, &params).await {
                 Ok(capabilities) => capabilities,
-                Err(status) => return status,
+                Err(status) => {
+                    quit(smtp_client).await;
+                    return status;
+                }
             };
         }
 
@@ -62,6 +69,7 @@ impl Message {
             .await
             .and_then(|r| r.assert_positive_completion())
         {
+            quit(smtp_client).await;
             return ("Sender rejected by", params.hostname, err).into();
         }
 
@@ -99,6 +107,7 @@ impl Message {
                 },
                 Err(err) => {
                     // Something went wrong, abort.
+                    quit(smtp_client).await;
                     return ("Unexpected error from", params.hostname, err).into();
                 }
             }
@@ -108,6 +117,7 @@ impl Message {
         if !accepted_rcpts.is_empty() {
             if let Err(status) = send_message(&mut smtp_client, self, &capabilities, &params).await
             {
+                quit(smtp_client).await;
                 return status;
             }
 
@@ -122,6 +132,7 @@ impl Message {
                                 total_completed += 1;
                             }
                         } else {
+                            quit(smtp_client).await;
                             return (
                                 "Message rejected by",
                                 params.hostname,
@@ -131,6 +142,7 @@ impl Message {
                         }
                     }
                     Err(status) => {
+                        quit(smtp_client).await;
                         return status;
                     }
                 }
@@ -158,12 +170,14 @@ impl Message {
                         }
                     }
                     Err(status) => {
+                        quit(smtp_client).await;
                         return status;
                     }
                 }
             }
         }
 
+        quit(smtp_client).await;
         if total_completed == total_rcpt {
             DomainStatus::Completed
         } else {
@@ -362,7 +376,7 @@ pub async fn send_message<T: AsyncRead + AsyncWrite + Unpin>(
                             module = "queue", 
                             event = "error", 
                             "Failed to read message file {} from disk: {}", 
-                            message.path.display(), 
+                            message.path.display(),
                             err);
         DomainStatus::TemporaryFailure(Error::Io("Queue system error.".to_string()))
     })?;
@@ -431,19 +445,47 @@ pub async fn say_helo<T: AsyncRead + AsyncWrite + Unpin>(
     .map_err(|err| DomainStatus::from(("Invalid EHLO reply from", params.hostname, err)))
 }
 
+pub async fn quit<T: AsyncRead + AsyncWrite + Unpin>(mut smtp_client: SmtpClient<T>) {
+    let _ = tokio::time::timeout(Duration::from_secs(10), async {
+        if smtp_client.stream.write_all(b"QUIT\r\n").await.is_ok() {
+            let mut buf = [0u8; 128];
+            let _ = smtp_client.stream.read(&mut buf).await;
+        }
+    })
+    .await;
+}
+
 impl TlsStrategy {
-    pub fn is_dane(&self) -> bool {
+    #[inline(always)]
+    pub fn try_dane(&self) -> bool {
         matches!(
-            self,
-            TlsStrategy::Dane | TlsStrategy::DaneOrOptional | TlsStrategy::DaneOrTls
+            self.dane,
+            RequireOptional::Require | RequireOptional::Optional
         )
     }
 
+    #[inline(always)]
     pub fn is_dane_required(&self) -> bool {
-        matches!(self, TlsStrategy::Dane)
+        matches!(self.dane, RequireOptional::Require)
     }
 
+    #[inline(always)]
+    pub fn try_mta_sts(&self) -> bool {
+        matches!(
+            self.mta_sts,
+            RequireOptional::Require | RequireOptional::Optional
+        )
+    }
+
+    #[inline(always)]
+    pub fn is_mta_sts_required(&self) -> bool {
+        matches!(self.mta_sts, RequireOptional::Require)
+    }
+
+    #[inline(always)]
     pub fn is_tls_required(&self) -> bool {
-        matches!(self, TlsStrategy::Dane | TlsStrategy::DaneOrTls)
+        matches!(self.tls, RequireOptional::Require)
+            || self.is_dane_required()
+            || self.is_mta_sts_required()
     }
 }

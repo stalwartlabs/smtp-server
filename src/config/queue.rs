@@ -182,9 +182,15 @@ impl Config {
                     None
                 },
             },
-            encryption: self
-                .parse_if_block("queue.outbound.encryption", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(TlsStrategy::Optional)),
+            tls_dane: self
+                .parse_if_block("queue.outbound.tls.dane", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
+            tls_mta_sts: self
+                .parse_if_block("queue.outbound.tls.mta_sts", ctx, &rcpt_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
+            tls_start: self
+                .parse_if_block("queue.outbound.tls.tls", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
             throttle,
             quota: self.parse_queue_quota(ctx)?,
             timeout_connect: self
@@ -211,6 +217,9 @@ impl Config {
                 .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
             timeout_data: self
                 .parse_if_block("queue.outbound.timeouts.data", ctx, &host_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
+            timeout_mta_sts: self
+                .parse_if_block("queue.outbound.timeouts.mta-sts", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
         };
 
@@ -346,16 +355,14 @@ impl From<&Host> for RelayHost {
     }
 }
 
-impl ParseValue for TlsStrategy {
+impl ParseValue for RequireOptional {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
         match value {
-            "optional" => Ok(TlsStrategy::Optional),
-            "tls" => Ok(TlsStrategy::Tls),
-            "dane-or-optional" => Ok(TlsStrategy::DaneOrOptional),
-            "dane-or-tls" => Ok(TlsStrategy::DaneOrTls),
-            "dane" => Ok(TlsStrategy::Dane),
+            "optional" => Ok(RequireOptional::Optional),
+            "require" | "required" => Ok(RequireOptional::Require),
+            "disable" | "disabled" | "none" | "false" => Ok(RequireOptional::Disable),
             _ => Err(format!(
-                "Invalid encryption value {:?} for key {:?}.",
+                "Invalid TLS option value {:?} for key {:?}.",
                 value,
                 key.as_key()
             )),

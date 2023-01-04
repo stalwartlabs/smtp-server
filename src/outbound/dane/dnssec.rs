@@ -15,31 +15,33 @@ use mail_auth::{
 };
 use std::sync::Arc;
 
+use crate::core::Resolvers;
+
 use super::{DnssecResolver, Tlsa};
 
 impl DnssecResolver {
     pub fn with_capacity(
         config: ResolverConfig,
         options: ResolverOpts,
-        capacity: usize,
     ) -> Result<Self, ResolveError> {
         Ok(Self {
             resolver: AsyncResolver::tokio(config, options)?,
-            cache_tlsa: LruCache::with_capacity(capacity),
         })
     }
+}
 
+impl Resolvers {
     pub async fn tlsa_lookup<'x>(
         &self,
         key: impl IntoFqdn<'x>,
     ) -> mail_auth::Result<Option<Arc<Vec<Tlsa>>>> {
         let key = key.into_fqdn();
-        if let Some(value) = self.cache_tlsa.get(key.as_ref()) {
+        if let Some(value) = self.cache.tlsa.get(key.as_ref()) {
             return Ok(Some(value));
         }
 
         let mut tlsa_list = Vec::new();
-        let tlsa_lookup = match self.resolver.tlsa_lookup(key.as_ref()).await {
+        let tlsa_lookup = match self.dnssec.resolver.tlsa_lookup(key.as_ref()).await {
             Ok(tlsa_lookup) => tlsa_lookup,
             Err(err) => {
                 return match &err.kind() {
@@ -75,7 +77,7 @@ impl DnssecResolver {
             }
         }
 
-        Ok(Some(self.cache_tlsa.insert(
+        Ok(Some(self.cache.tlsa.insert(
             key.into_owned(),
             Arc::new(tlsa_list),
             tlsa_lookup.valid_until(),
@@ -89,7 +91,8 @@ impl DnssecResolver {
         value: Vec<Tlsa>,
         valid_until: std::time::Instant,
     ) {
-        self.cache_tlsa
+        self.cache
+            .tlsa
             .insert(key.into_fqdn().into_owned(), Arc::new(value), valid_until);
     }
 }

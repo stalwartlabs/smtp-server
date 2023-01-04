@@ -1,4 +1,5 @@
 use mail_auth::{
+    common::lru::{DnsCache, LruCache},
     trust_dns_resolver::{
         config::{LookupIpStrategy, ResolverConfig, ResolverOpts},
         system_conf::read_system_conf,
@@ -64,12 +65,16 @@ impl Config {
                 capacities[4],
             )
             .map_err(|err| format!("Failed to build DNS resolver: {}", err))?,
-            dnssec: DnssecResolver::with_capacity(
-                config_dnssec,
-                opts_dnssec,
-                self.property("resolver.cache.tlsa")?.unwrap_or(1024),
-            )
-            .map_err(|err| format!("Failed to build DNSSEC resolver: {}", err))?,
+            dnssec: DnssecResolver::with_capacity(config_dnssec, opts_dnssec)
+                .map_err(|err| format!("Failed to build DNSSEC resolver: {}", err))?,
+            cache: crate::core::DnsCache {
+                tlsa: LruCache::with_capacity(
+                    self.property("resolver.cache.tlsa")?.unwrap_or(1024),
+                ),
+                mta_sts: LruCache::with_capacity(
+                    self.property("resolver.cache.mta-sts")?.unwrap_or(1024),
+                ),
+            },
         })
     }
 }

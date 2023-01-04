@@ -7,7 +7,7 @@ use std::{
 };
 
 use dashmap::DashMap;
-use mail_auth::Resolver;
+use mail_auth::{common::lru::LruCache, Resolver};
 use smtp_proto::{
     request::receiver::{
         BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, LineReceiver,
@@ -25,7 +25,10 @@ use tracing::Span;
 use crate::{
     config::{EnvelopeKey, List, QueueConfig, Script, ServerProtocol, SessionConfig},
     inbound::auth::SaslToken,
-    outbound::dane::DnssecResolver,
+    outbound::{
+        dane::{DnssecResolver, Tlsa},
+        mta_sts,
+    },
     queue::{self, QuotaLimiter},
 };
 
@@ -46,6 +49,12 @@ pub struct Core {
 pub struct Resolvers {
     pub dns: Resolver,
     pub dnssec: DnssecResolver,
+    pub cache: DnsCache,
+}
+
+pub struct DnsCache {
+    pub tlsa: LruCache<String, Arc<Vec<Tlsa>>>,
+    pub mta_sts: LruCache<String, Arc<mta_sts::Policy>>,
 }
 
 pub struct SessionCore {

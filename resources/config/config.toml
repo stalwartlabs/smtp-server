@@ -194,10 +194,16 @@ expire = "5d"
 
 [queue.outbound]
 #ehlo-hostname = mx.domain.org
-source-ip.v4 = ["192.168.0.2", "162.168.0.1"]
-source-ip.v6 = ["192.168.0.2", "162.168.0.1"]
-#tls = optional, require, dane, dane-fallback-require, dane-require
 next-hop = "lmtp"
+
+[queue.outbound.tls]
+dane = require
+mta-sts = disabled
+starttls = optional
+
+[queue.outbound.source-ip]
+v4 = ["192.168.0.2", "162.168.0.1"]
+v6 = ["192.168.0.2", "162.168.0.1"]
 
 [queue.outbound.limits]
 mx = 5
@@ -211,6 +217,7 @@ ehlo = "1m"
 mail-from = "1m"
 rcpt-to = "1m"
 data = "5m"
+mta-sts = "1m"
 
 [[queue.quota]]
 match = {if = "remote-ip", eq = "127.0.0.1"}

@@ -5,11 +5,12 @@ use mail_auth::{
 use rustls::Certificate;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use crate::queue::{DomainStatus, Error};
+use crate::{
+    core::Resolvers,
+    queue::{DomainStatus, Error},
+};
 
-use super::DnssecResolver;
-
-impl DnssecResolver {
+impl Resolvers {
     pub async fn verify_dane(
         &self,
         span: &tracing::Span,
@@ -229,10 +230,12 @@ mod test {
             config::{ResolverConfig, ResolverOpts},
             AsyncResolver,
         },
+        Resolver,
     };
     use rustls::Certificate;
 
     use crate::{
+        core::Resolvers,
         outbound::dane::{DnssecResolver, Tlsa},
         queue::{DomainStatus, Error},
     };
@@ -244,9 +247,15 @@ mod test {
         opts.validate = true;
         opts.try_tcp_on_error = true;
 
-        let r = DnssecResolver {
-            resolver: AsyncResolver::tokio(conf, opts).unwrap(),
-            cache_tlsa: LruCache::with_capacity(10),
+        let r = Resolvers {
+            dns: Resolver::new_cloudflare().unwrap(),
+            dnssec: DnssecResolver {
+                resolver: AsyncResolver::tokio(conf, opts).unwrap(),
+            },
+            cache: crate::core::DnsCache {
+                tlsa: LruCache::with_capacity(10),
+                mta_sts: LruCache::with_capacity(10),
+            },
         };
 
         // Add dns entries

@@ -102,6 +102,7 @@ pub enum Error {
     },
     ConnectionError(String),
     DaneError(String),
+    MtaStsError(String),
     RateLimited,
     ConcurrencyLimited,
     Io(String),

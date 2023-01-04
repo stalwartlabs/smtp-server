@@ -1,26 +1,29 @@
+pub mod lookup;
 pub mod parse;
+pub mod verify;
 
 #[derive(Debug, PartialEq, Eq)]
-enum Mode {
+pub enum Mode {
     Enforce,
     Testing,
     None,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum MxPattern {
+pub enum MxPattern {
     Equals(String),
     StartsWith(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct MtaSts {
-    id: String,
+pub struct Policy {
+    pub id: String,
+    pub mode: Mode,
+    pub mx: Vec<MxPattern>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct Policy {
-    id: String,
-    mode: Mode,
-    mx: Vec<MxPattern>,
+pub enum Error {
+    Dns(mail_auth::Error),
+    Http(reqwest::Error),
+    InvalidPolicy(String),
 }

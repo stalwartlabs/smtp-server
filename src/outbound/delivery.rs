@@ -5,17 +5,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+use mail_auth::mta_sts::TlsRpt;
 use mail_send::{Credentials, SmtpClient};
 use rand::{seq::SliceRandom, Rng};
+use reqwest::StatusCode;
 use smtp_proto::{Severity, MAIL_REQUIRETLS};
 
 use crate::{
-    config::{RelayHost, ServerProtocol},
+    config::{RelayHost, ServerProtocol, TlsStrategy},
     core::Core,
 };
 
-use super::session::{
-    into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult,
+use super::{
+    mta_sts,
+    session::{into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult},
 };
 use crate::queue::{
     manager::Queue, throttle, DeliveryAttempt, Domain, DomainStatus, Error, Event, Message, OnHold,
@@ -104,6 +107,46 @@ impl DeliveryAttempt {
                     }
                 }
 
+                // Prepare TLS strategy
+                let mut tls_strategy = TlsStrategy {
+                    mta_sts: *queue_config.tls_mta_sts.eval(&envelope).await,
+                    ..Default::default()
+                };
+
+                // Obtain MTA-STS policy for domain
+                let mta_sts_policy = if tls_strategy.try_mta_sts() {
+                    match core
+                        .resolvers
+                        .lookup_mta_sts_policy(
+                            envelope.domain,
+                            *queue_config.timeout_mta_sts.eval(&envelope).await,
+                        )
+                        .await
+                    {
+                        Ok(mta_sts_policy) => mta_sts_policy.into(),
+                        Err(err) => {
+                            if tls_strategy.is_mta_sts_required() {
+                                domain.set_status(err, queue_config.retry.eval(&envelope).await);
+                                continue 'next_domain;
+                            }
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Obtain TLS reporting
+                let tls_report = match core
+                    .resolvers
+                    .dns
+                    .txt_lookup::<TlsRpt>(format!("_smtp._tls.{}.", envelope.domain))
+                    .await
+                {
+                    Ok(tls_report) => tls_report.into(),
+                    Err(_) => None,
+                };
+
                 // Obtain remote hosts list
                 let mx_list;
                 let remote_hosts =
@@ -153,8 +196,21 @@ impl DeliveryAttempt {
                 let max_multihomed = *queue_config.max_multihomed.eval(&envelope).await;
                 let mut last_status = DomainStatus::Scheduled;
                 'next_host: for remote_host in &remote_hosts {
-                    // Obtain source and remote IPs
+                    // Validate MTA-STS
                     envelope.mx = remote_host.hostname();
+                    if let Some(mta_sts_policy) = &mta_sts_policy {
+                        if !mta_sts_policy.verify(envelope.mx) {
+                            // TODO log
+                            if mta_sts_policy.enforce() {
+                                last_status = DomainStatus::PermanentFailure(Error::MtaStsError(
+                                    format!("MX {:?} not authorized by policy.", envelope.mx),
+                                ));
+                                continue 'next_host;
+                            }
+                        }
+                    }
+
+                    // Obtain source and remote IPs
                     let (source_ip, remote_ips) = match core
                         .resolve_host(remote_host, &envelope, max_multihomed)
                         .await
@@ -207,7 +263,8 @@ impl DeliveryAttempt {
                         };
 
                         // Obtain TLS strategy
-                        let tls_strategy = *queue_config.encryption.eval(&envelope).await;
+                        tls_strategy.dane = *queue_config.tls_dane.eval(&envelope).await;
+                        tls_strategy.tls = *queue_config.tls_start.eval(&envelope).await;
                         let tls_connector = if !remote_host.allow_invalid_certs() {
                             &core.queue.connectors.pki_verify
                         } else {
@@ -258,10 +315,9 @@ impl DeliveryAttempt {
                             {
                                 Ok(StartTlsResult::Success { smtp_client }) => {
                                     // Verify DANE
-                                    if tls_strategy.is_dane() {
+                                    if tls_strategy.try_dane() {
                                         if let Err(status) = core
                                             .resolvers
-                                            .dnssec
                                             .verify_dane(
                                                 &span,
                                                 envelope.mx,
@@ -592,6 +648,49 @@ impl From<mail_auth::Error> for DomainStatus {
                 Error::DnsError(format!("Domain not found: {}", code)),
             ),
             _ => DomainStatus::TemporaryFailure(Error::DnsError(err.to_string())),
+        }
+    }
+}
+
+impl From<mta_sts::Error> for DomainStatus {
+    fn from(err: mta_sts::Error) -> Self {
+        match &err {
+            mta_sts::Error::Dns(err) => match err {
+                mail_auth::Error::DNSRecordNotFound(code) => DomainStatus::PermanentFailure(
+                    Error::MtaStsError(format!("Record not found: {}", code)),
+                ),
+                mail_auth::Error::InvalidRecordType => DomainStatus::PermanentFailure(
+                    Error::MtaStsError("Failed to parse MTA-STS DNS record.".to_string()),
+                ),
+                _ => DomainStatus::TemporaryFailure(Error::MtaStsError(format!(
+                    "DNS lookup error: {}",
+                    err
+                ))),
+            },
+            mta_sts::Error::Http(err) => {
+                if err.is_timeout() {
+                    DomainStatus::TemporaryFailure(Error::MtaStsError(
+                        "Timeout fetching policy.".to_string(),
+                    ))
+                } else if err.is_connect() {
+                    DomainStatus::TemporaryFailure(Error::MtaStsError(
+                        "Could not reach policy host.".to_string(),
+                    ))
+                } else if err.is_status()
+                    & err.status().map_or(false, |s| s == StatusCode::NOT_FOUND)
+                {
+                    DomainStatus::PermanentFailure(Error::MtaStsError(
+                        "Policy not found.".to_string(),
+                    ))
+                } else {
+                    DomainStatus::TemporaryFailure(Error::MtaStsError(
+                        "Failed to fetch policy.".to_string(),
+                    ))
+                }
+            }
+            mta_sts::Error::InvalidPolicy(err) => DomainStatus::PermanentFailure(
+                Error::MtaStsError(format!("Failed to parse policy: {}", err)),
+            ),
         }
     }
 }
