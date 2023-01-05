@@ -8,27 +8,43 @@ use std::{
 use mail_auth::mta_sts::TlsRpt;
 use mail_send::{Credentials, SmtpClient};
 use rand::{seq::SliceRandom, Rng};
-use reqwest::StatusCode;
-use smtp_proto::{Severity, MAIL_REQUIRETLS};
+use smtp_proto::MAIL_REQUIRETLS;
 
 use crate::{
     config::{RelayHost, ServerProtocol, TlsStrategy},
     core::Core,
 };
 
-use super::{
-    mta_sts,
-    session::{into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult},
+use super::session::{
+    into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult,
 };
 use crate::queue::{
-    manager::Queue, throttle, DeliveryAttempt, Domain, DomainStatus, Error, Event, Message, OnHold,
-    QueueEnvelope, Schedule, WorkerResult,
+    manager::Queue, throttle, DeliveryAttempt, Domain, Error, Event, Message, OnHold,
+    QueueEnvelope, Schedule, Status, WorkerResult,
 };
 
 impl DeliveryAttempt {
     pub async fn try_deliver(mut self, core: Arc<Core>, queue: &mut Queue) {
+        // Check that the message still has recipients to be delivered
+        let has_pending_delivery = self.message.has_pending_delivery();
+
         // Send any due Delivery Status Notifications
         core.queue.send_dsn(&mut self.message).await;
+
+        if has_pending_delivery {
+            // Re-queue the message if its not yet due for delivery
+            let due = self.message.next_delivery_event();
+            if due > Instant::now() {
+                queue.main.push(Schedule {
+                    due,
+                    inner: self.message,
+                });
+                return;
+            }
+        } else {
+            // All message recipients expired, do not re-queue. (DSN has been already sent)
+            return;
+        }
 
         // Throttle sender
         for throttle in &core.queue.config.throttle.sender {
@@ -72,7 +88,7 @@ impl DeliveryAttempt {
             let mut recipients = std::mem::take(&mut self.message.recipients);
             'next_domain: for (domain_idx, domain) in domains.iter_mut().enumerate() {
                 // Only process domains due for delivery
-                if !matches!(&domain.status, DomainStatus::Scheduled | DomainStatus::TemporaryFailure(_)
+                if !matches!(&domain.status, Status::Scheduled | Status::TemporaryFailure(_)
                 if domain.retry.due <= Instant::now())
                 {
                     continue;
@@ -194,7 +210,7 @@ impl DeliveryAttempt {
 
                 // Try delivering message
                 let max_multihomed = *queue_config.max_multihomed.eval(&envelope).await;
-                let mut last_status = DomainStatus::Scheduled;
+                let mut last_status = Status::Scheduled;
                 'next_host: for remote_host in &remote_hosts {
                     // Validate MTA-STS
                     envelope.mx = remote_host.hostname();
@@ -202,7 +218,7 @@ impl DeliveryAttempt {
                         if !mta_sts_policy.verify(envelope.mx) {
                             // TODO log
                             if mta_sts_policy.enforce() {
-                                last_status = DomainStatus::PermanentFailure(Error::MtaStsError(
+                                last_status = Status::PermanentFailure(Error::MtaStsError(
                                     format!("MX {:?} not authorized by policy.", envelope.mx),
                                 ));
                                 continue 'next_host;
@@ -256,8 +272,7 @@ impl DeliveryAttempt {
                         } {
                             Ok(smtp_client) => smtp_client,
                             Err(err) => {
-                                last_status =
-                                    DomainStatus::from(("Failed to connect to", envelope.mx, err));
+                                last_status = Status::from_smtp_error(envelope.mx, "", err);
                                 continue 'next_ip;
                             }
                         };
@@ -349,20 +364,7 @@ impl DeliveryAttempt {
                                     if tls_strategy.is_tls_required()
                                         || (self.message.flags & MAIL_REQUIRETLS) != 0
                                     {
-                                        last_status = if let Some(response) = response {
-                                            DomainStatus::from((
-                                                "TLS unavailable for",
-                                                envelope.mx,
-                                                mail_send::Error::UnexpectedReply(response),
-                                            ))
-                                        } else {
-                                            DomainStatus::PermanentFailure(Error::ConnectionError(
-                                                format!(
-                                                    "STARTTLS not supported by host {:?}.",
-                                                    envelope.mx
-                                                ),
-                                            ))
-                                        };
+                                        last_status = Status::from_tls_error(envelope.mx, response);
                                         continue 'next_host;
                                     } else {
                                         // TLS is not required, proceed in plain-text
@@ -461,6 +463,37 @@ impl DeliveryAttempt {
     }
 }
 
+impl Message {
+    /// Marks as failed all domains that reached their expiration time
+    pub fn has_pending_delivery(&mut self) -> bool {
+        let now = Instant::now();
+        let mut has_pending_delivery = false;
+
+        for domain in &mut self.domains {
+            match &domain.status {
+                Status::TemporaryFailure(_) if domain.expires <= now => {
+                    domain.status =
+                        match std::mem::replace(&mut domain.status, Status::Completed(())) {
+                            Status::TemporaryFailure(err) => Status::PermanentFailure(err),
+                            _ => unreachable!(),
+                        };
+                }
+                Status::Scheduled if domain.expires <= now => {
+                    domain.status = Status::PermanentFailure(Error::Io(
+                        "Queue rate limit exceeded.".to_string(),
+                    ));
+                }
+                Status::Completed(_) | Status::PermanentFailure(_) => (),
+                _ => {
+                    has_pending_delivery = true;
+                }
+            }
+        }
+
+        has_pending_delivery
+    }
+}
+
 enum RemoteHost<'x> {
     Relay(&'x RelayHost),
     MX(&'x str),
@@ -529,7 +562,7 @@ impl Core {
         remote_host: &RemoteHost<'_>,
         envelope: &QueueEnvelope<'_>,
         max_multihomed: usize,
-    ) -> Result<(Option<IpAddr>, Vec<IpAddr>), DomainStatus> {
+    ) -> Result<(Option<IpAddr>, Vec<IpAddr>), Status<(), Error>> {
         let mut remote_ips = Vec::new();
         let mut source_ip = None;
 
@@ -579,7 +612,7 @@ impl Core {
         if !remote_ips.is_empty() {
             Ok((source_ip, remote_ips))
         } else {
-            Err(DomainStatus::TemporaryFailure(Error::DnsError(format!(
+            Err(Status::TemporaryFailure(Error::DnsError(format!(
                 "No IP addresses found for {:?}.",
                 envelope.mx
             ))))
@@ -588,9 +621,9 @@ impl Core {
 }
 
 impl Domain {
-    pub fn set_status(&mut self, status: impl Into<DomainStatus>, schedule: &[Duration]) {
+    pub fn set_status(&mut self, status: impl Into<Status<(), Error>>, schedule: &[Duration]) {
         self.status = status.into();
-        if matches!(&self.status, DomainStatus::TemporaryFailure(_)) {
+        if matches!(&self.status, Status::TemporaryFailure(_)) {
             self.retry(schedule);
         }
     }
@@ -599,114 +632,5 @@ impl Domain {
         self.retry.due =
             Instant::now() + schedule[std::cmp::min(self.retry.inner as usize, schedule.len() - 1)];
         self.retry.inner += 1;
-    }
-}
-
-impl From<(&str, &str, mail_send::Error)> for DomainStatus {
-    fn from(value: (&str, &str, mail_send::Error)) -> Self {
-        match value.2 {
-            mail_send::Error::Io(_)
-            | mail_send::Error::Base64(_)
-            | mail_send::Error::UnparseableReply
-            | mail_send::Error::AuthenticationFailed(_)
-            | mail_send::Error::MissingCredentials
-            | mail_send::Error::MissingMailFrom
-            | mail_send::Error::MissingRcptTo
-            | mail_send::Error::Timeout => DomainStatus::TemporaryFailure(Error::ConnectionError(
-                format!("{} {:?}: {}", value.0, value.1, value.2),
-            )),
-
-            mail_send::Error::UnexpectedReply(reply) => {
-                let message = format!("{} {:?}", value.0, value.1);
-                if reply.severity() == Severity::PermanentNegativeCompletion {
-                    DomainStatus::PermanentFailure(Error::UnexpectedResponse {
-                        message,
-                        response: reply,
-                    })
-                } else {
-                    DomainStatus::TemporaryFailure(Error::UnexpectedResponse {
-                        message,
-                        response: reply,
-                    })
-                }
-            }
-
-            mail_send::Error::Auth(_)
-            | mail_send::Error::UnsupportedAuthMechanism
-            | mail_send::Error::InvalidTLSName
-            | mail_send::Error::MissingStartTls => DomainStatus::TemporaryFailure(
-                Error::ConnectionError(format!("{} {:?}: {}", value.0, value.1, value.2)),
-            ),
-        }
-    }
-}
-
-impl From<mail_auth::Error> for DomainStatus {
-    fn from(err: mail_auth::Error) -> Self {
-        match &err {
-            mail_auth::Error::DNSRecordNotFound(code) => DomainStatus::PermanentFailure(
-                Error::DnsError(format!("Domain not found: {}", code)),
-            ),
-            _ => DomainStatus::TemporaryFailure(Error::DnsError(err.to_string())),
-        }
-    }
-}
-
-impl From<mta_sts::Error> for DomainStatus {
-    fn from(err: mta_sts::Error) -> Self {
-        match &err {
-            mta_sts::Error::Dns(err) => match err {
-                mail_auth::Error::DNSRecordNotFound(code) => DomainStatus::PermanentFailure(
-                    Error::MtaStsError(format!("Record not found: {}", code)),
-                ),
-                mail_auth::Error::InvalidRecordType => DomainStatus::PermanentFailure(
-                    Error::MtaStsError("Failed to parse MTA-STS DNS record.".to_string()),
-                ),
-                _ => DomainStatus::TemporaryFailure(Error::MtaStsError(format!(
-                    "DNS lookup error: {}",
-                    err
-                ))),
-            },
-            mta_sts::Error::Http(err) => {
-                if err.is_timeout() {
-                    DomainStatus::TemporaryFailure(Error::MtaStsError(
-                        "Timeout fetching policy.".to_string(),
-                    ))
-                } else if err.is_connect() {
-                    DomainStatus::TemporaryFailure(Error::MtaStsError(
-                        "Could not reach policy host.".to_string(),
-                    ))
-                } else if err.is_status()
-                    & err.status().map_or(false, |s| s == StatusCode::NOT_FOUND)
-                {
-                    DomainStatus::PermanentFailure(Error::MtaStsError(
-                        "Policy not found.".to_string(),
-                    ))
-                } else {
-                    DomainStatus::TemporaryFailure(Error::MtaStsError(
-                        "Failed to fetch policy.".to_string(),
-                    ))
-                }
-            }
-            mta_sts::Error::InvalidPolicy(err) => DomainStatus::PermanentFailure(
-                Error::MtaStsError(format!("Failed to parse policy: {}", err)),
-            ),
-        }
-    }
-}
-
-impl From<Box<Message>> for DeliveryAttempt {
-    fn from(message: Box<Message>) -> Self {
-        DeliveryAttempt {
-            span: tracing::info_span!(
-                "delivery",
-                "queue-id" = message.id,
-                "from" = message.return_path_lcase,
-                "size" = message.size,
-                "nrcpt" = message.recipients.len()
-            ),
-            in_flight: Vec::new(),
-            message,
-        }
     }
 }

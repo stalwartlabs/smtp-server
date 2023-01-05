@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::core::Core;
 
-use super::{DeliveryAttempt, DomainStatus, Event, Message, OnHold, Schedule, WorkerResult};
+use super::{DeliveryAttempt, Event, Message, OnHold, Schedule, Status, WorkerResult};
 
 pub struct Queue {
     short_wait: Duration,
@@ -127,7 +127,7 @@ impl Message {
         for domain in &self.domains {
             if matches!(
                 domain.status,
-                DomainStatus::Scheduled | DomainStatus::TemporaryFailure(_)
+                Status::Scheduled | Status::TemporaryFailure(_)
             ) {
                 if !has_events || domain.retry.due < next_event {
                     next_event = domain.retry.due;
@@ -149,31 +149,44 @@ impl Message {
         }
     }
 
-    pub fn next_event_after(&self, instant: Instant) -> Option<Instant> {
-        let mut next_event = instant;
-        let mut has_events = false;
+    pub fn next_delivery_event(&self) -> Instant {
+        let mut next_delivery = Instant::now();
 
-        for domain in &self.domains {
-            if matches!(
-                domain.status,
-                DomainStatus::Scheduled | DomainStatus::TemporaryFailure(_)
-            ) {
-                if domain.retry.due > instant && (!has_events || domain.retry.due < next_event) {
-                    next_event = domain.retry.due;
-                    has_events = true;
-                }
-                if domain.notify.due > instant && (!has_events || domain.notify.due < next_event) {
-                    next_event = domain.notify.due;
-                    has_events = true;
-                }
-                if domain.expires > instant && (!has_events || domain.expires < next_event) {
-                    next_event = domain.expires;
-                    has_events = true;
-                }
+        for (pos, domain) in self
+            .domains
+            .iter()
+            .filter(|d| matches!(d.status, Status::Scheduled | Status::TemporaryFailure(_)))
+            .enumerate()
+        {
+            if pos == 0 || domain.retry.due < next_delivery {
+                next_delivery = domain.retry.due;
             }
         }
 
-        if has_events {
+        next_delivery
+    }
+
+    pub fn next_event_after(&self, instant: Instant) -> Option<Instant> {
+        let mut next_event = instant;
+
+        for (pos, domain) in self
+            .domains
+            .iter()
+            .filter(|d| matches!(d.status, Status::Scheduled | Status::TemporaryFailure(_)))
+            .enumerate()
+        {
+            if domain.retry.due > instant && (pos == 0 || domain.retry.due < next_event) {
+                next_event = domain.retry.due;
+            }
+            if domain.notify.due > instant && (pos == 0 || domain.notify.due < next_event) {
+                next_event = domain.notify.due;
+            }
+            if domain.expires > instant && (pos == 0 || domain.expires < next_event) {
+                next_event = domain.expires;
+            }
+        }
+
+        if next_event != instant {
             next_event.into()
         } else {
             None

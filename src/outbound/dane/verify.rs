@@ -7,7 +7,7 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::{
     core::Resolvers,
-    queue::{DomainStatus, Error},
+    queue::{Error, ErrorDetails, Status},
 };
 
 impl Resolvers {
@@ -17,16 +17,16 @@ impl Resolvers {
         hostname: &str,
         require_dane: bool,
         certificates: Option<&[Certificate]>,
-    ) -> Result<(), DomainStatus> {
+    ) -> Result<(), Status<(), Error>> {
         let tlsa_records = match self.tlsa_lookup(format!("_25._tcp.{}.", hostname)).await {
             Ok(tlsa_records) => tlsa_records,
             Err(err) => {
                 return if require_dane {
                     Err(if matches!(&err, mail_auth::Error::DNSRecordNotFound(_)) {
-                        DomainStatus::PermanentFailure(Error::DaneError(format!(
-                            "No TLSA records found for {:?}.",
-                            hostname
-                        )))
+                        Status::PermanentFailure(Error::DaneError(ErrorDetails {
+                            entity: hostname.to_string(),
+                            details: "No TLSA records found".to_string(),
+                        }))
                     } else {
                         err.into()
                     })
@@ -58,10 +58,10 @@ impl Resolvers {
                             "No valid TLSA records were found for host {}.",
                             hostname,
                         );
-                        Err(DomainStatus::PermanentFailure(Error::DaneError(format!(
-                            "No valid TLSA records were found for host {:?}.",
-                            hostname
-                        ))))
+                        Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
+                            entity: hostname.to_string(),
+                            details: "No valid TLSA records were found".to_string(),
+                        })))
                     } else {
                         Ok(())
                     };
@@ -83,10 +83,10 @@ impl Resolvers {
                                 err
                             );
                             return if require_dane {
-                                Err(DomainStatus::TemporaryFailure(Error::DaneError(format!(
-                                    "Failed to parse X.509 certificate for host {:?}.",
-                                    hostname
-                                ))))
+                                Err(Status::TemporaryFailure(Error::DaneError(ErrorDetails {
+                                    entity: hostname.to_string(),
+                                    details: "Failed to parse X.509 certificate".to_string(),
+                                })))
                             } else {
                                 Ok(())
                             };
@@ -169,10 +169,10 @@ impl Resolvers {
                         hostname = hostname,
                         "No matching certificates found in TLSA records.",
                     );
-                    Err(DomainStatus::PermanentFailure(Error::DaneError(format!(
-                        "No matching certificates found in TLSA records for host {:?}.",
-                        hostname
-                    ))))
+                    Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
+                        entity: hostname.to_string(),
+                        details: "No matching certificates found in TLSA records".to_string(),
+                    })))
                 }
             }
             (_, None) => {
@@ -184,10 +184,10 @@ impl Resolvers {
                         hostname = hostname,
                         "No TLSA DNSSEC records found."
                     );
-                    Err(DomainStatus::PermanentFailure(Error::DaneError(format!(
-                        "No TLSA DNSSEC records found for host {:?}.",
-                        hostname
-                    ))))
+                    Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
+                        entity: hostname.to_string(),
+                        details: "No TLSA DNSSEC records found".to_string(),
+                    })))
                 } else {
                     Ok(())
                 }
@@ -201,10 +201,10 @@ impl Resolvers {
                         hostname = hostname,
                         "No certificates were provided."
                     );
-                    Err(DomainStatus::TemporaryFailure(Error::DaneError(format!(
-                        "No certificates were provided for host {:?}.",
-                        hostname
-                    ))))
+                    Err(Status::TemporaryFailure(Error::DaneError(ErrorDetails {
+                        entity: hostname.to_string(),
+                        details: "No certificates were provided by host".to_string(),
+                    })))
                 } else {
                     Ok(())
                 }
@@ -237,7 +237,7 @@ mod test {
     use crate::{
         core::Resolvers,
         outbound::dane::{DnssecResolver, Tlsa},
-        queue::{DomainStatus, Error},
+        queue::{Error, ErrorDetails, Status},
     };
 
     #[tokio::test]
@@ -328,10 +328,10 @@ mod test {
             assert_eq!(
                 r.verify_dane(&tracing::info_span!("test_span"), &host, true, Some(&certs))
                     .await,
-                Err(DomainStatus::PermanentFailure(Error::DaneError(format!(
-                    "No matching certificates found in TLSA records for host \"{}\".",
-                    host
-                ))))
+                Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
+                    entity: host.to_string(),
+                    details: "No matching certificates found in TLSA records".to_string()
+                })))
             );
         }
     }

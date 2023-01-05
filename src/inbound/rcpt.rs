@@ -22,6 +22,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             address_lcase,
             address: to.address,
             flags: to.flags,
+            dsn_info: to.orcpt,
         };
 
         // Verify address

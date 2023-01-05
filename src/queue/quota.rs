@@ -7,7 +7,7 @@ use crate::{
     core::{Envelope, QueueCore},
 };
 
-use super::{DomainStatus, Message, QuotaLimiter, RecipientStatus, SimpleEnvelope, UsedQuota};
+use super::{Message, QuotaLimiter, SimpleEnvelope, Status, UsedQuota};
 
 impl QueueCore {
     pub async fn has_quota(&self, message: &mut Message) -> bool {
@@ -111,7 +111,7 @@ impl Message {
         for (pos, domain) in self.domains.iter().enumerate() {
             if matches!(
                 &domain.status,
-                DomainStatus::Completed | DomainStatus::PermanentFailure(_)
+                Status::Completed(_) | Status::PermanentFailure(_)
             ) {
                 quota_ids.push(((pos + 1) << 32) as u64);
             }
@@ -119,7 +119,7 @@ impl Message {
         for (pos, rcpt) in self.recipients.iter().enumerate() {
             if matches!(
                 &rcpt.status,
-                RecipientStatus::Delivered(_) | RecipientStatus::PermanentFailure(_)
+                Status::Completed(_) | Status::PermanentFailure(_)
             ) {
                 quota_ids.push((pos + 1) as u64);
             }

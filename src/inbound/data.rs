@@ -26,10 +26,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             return_path_domain: mail_from.domain,
             recipients: Vec::with_capacity(self.data.rcpt_to.len()),
             domains: Vec::with_capacity(3),
-            flags: 0,
+            flags: mail_from.flags,
             priority: self.data.priority,
             size: self.data.message.len(),
-            env_id: self.data.env_id.take(),
+            env_id: mail_from.dsn_info,
             queue_refs: Vec::with_capacity(0),
         });
 
@@ -45,40 +45,50 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             {
                 let envelope = SimpleEnvelope::new(message.as_ref(), &rcpt.domain);
 
-                message.domains.push(queue::Domain {
-                    retry: if self.data.future_release == 0 {
-                        queue::Schedule::now()
+                // Set next retry time
+                let retry = if self.data.future_release == 0 {
+                    queue::Schedule::now()
+                } else {
+                    queue::Schedule::later(future_release)
+                };
+
+                // Set expiration time
+                let expires = Instant::now()
+                    + if self.data.delivery_by == 0 {
+                        *self.core.queue.config.expire.eval(&envelope).await
                     } else {
-                        queue::Schedule::later(future_release)
-                    },
-                    notify: queue::Schedule::later(
-                        future_release
-                            + *self
-                                .core
-                                .queue
-                                .config
-                                .notify
-                                .eval(&envelope)
-                                .await
-                                .first()
-                                .unwrap(),
-                    ),
-                    expires: Instant::now()
-                        + if self.data.delivery_by == 0 {
-                            *self.core.queue.config.expire.eval(&envelope).await
-                        } else {
-                            Duration::from_secs(self.data.delivery_by)
-                        },
-                    status: queue::DomainStatus::Scheduled,
+                        Duration::from_secs(self.data.delivery_by)
+                    };
+
+                // Set delayed notification time
+                let notify = queue::Schedule::later(
+                    future_release
+                        + *self
+                            .core
+                            .queue
+                            .config
+                            .notify
+                            .eval(&envelope)
+                            .await
+                            .first()
+                            .unwrap(),
+                );
+
+                message.domains.push(queue::Domain {
+                    retry,
+                    notify,
+                    expires,
+                    status: queue::Status::Scheduled,
                     domain: rcpt.domain,
                 });
             }
             message.recipients.push(queue::Recipient {
                 address: rcpt.address,
                 address_lcase: rcpt.address_lcase,
-                status: queue::RecipientStatus::Scheduled,
+                status: queue::Status::Scheduled,
                 flags: 0,
                 domain_idx: message.domains.len() - 1,
+                orcpt: rcpt.dsn_info,
             });
         }
 

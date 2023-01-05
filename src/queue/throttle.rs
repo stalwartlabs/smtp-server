@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::{Domain, DomainStatus};
+use super::{Domain, Status};
 
 pub enum Error {
     Concurrency { limiter: ConcurrencyLimiter },
@@ -88,11 +88,11 @@ impl Domain {
         match err {
             Error::Concurrency { limiter } => {
                 on_hold.push(limiter);
-                self.status = DomainStatus::TemporaryFailure(super::Error::ConcurrencyLimited);
+                self.status = Status::TemporaryFailure(super::Error::ConcurrencyLimited);
             }
             Error::Rate { retry_at } => {
                 self.retry.due = retry_at;
-                self.status = DomainStatus::TemporaryFailure(super::Error::RateLimited);
+                self.status = Status::TemporaryFailure(super::Error::RateLimited);
             }
         }
     }

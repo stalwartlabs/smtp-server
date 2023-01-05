@@ -65,47 +65,50 @@ pub struct Domain {
     pub retry: Schedule<u32>,
     pub notify: Schedule<u32>,
     pub expires: Instant,
-    pub status: DomainStatus,
+    pub status: Status<(), Error>,
 }
 pub struct Recipient {
     pub domain_idx: usize,
     pub address: String,
     pub address_lcase: String,
-    pub status: RecipientStatus,
+    pub status: Status<HostResponse<String>, HostResponse<ErrorDetails>>,
     pub flags: u64,
+    pub orcpt: Option<String>,
 }
 
-pub const RCPT_SENT_DSN_FAILURE: u64 = 1 << 32;
+pub const RCPT_DSN_SENT: u64 = 1 << 32;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum DomainStatus {
+pub enum Status<T, E> {
     Scheduled,
-    Completed,
-    TemporaryFailure(Error),
-    PermanentFailure(Error),
+    Completed(T),
+    TemporaryFailure(E),
+    PermanentFailure(E),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum RecipientStatus {
-    Scheduled,
-    Delivered(Response<String>),
-    TemporaryFailure(Response<String>),
-    PermanentFailure(Response<String>),
+pub struct HostResponse<T> {
+    pub hostname: T,
+    pub response: Response<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     DnsError(String),
-    UnexpectedResponse {
-        message: String,
-        response: Response<String>,
-    },
-    ConnectionError(String),
-    DaneError(String),
+    UnexpectedResponse(HostResponse<ErrorDetails>),
+    ConnectionError(ErrorDetails),
+    TlsError(ErrorDetails),
+    DaneError(ErrorDetails),
     MtaStsError(String),
     RateLimited,
     ConcurrencyLimited,
     Io(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ErrorDetails {
+    pub entity: String,
+    pub details: String,
 }
 
 pub struct DeliveryAttempt {
