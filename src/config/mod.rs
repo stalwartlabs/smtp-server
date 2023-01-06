@@ -333,29 +333,47 @@ pub struct QueueConfig {
     pub expire: IfBlock<Duration>,
 
     // Outbound
-    pub ehlo_name: IfBlock<String>,
-    pub source_ipv4: IfBlock<Vec<Ipv4Addr>>,
-    pub source_ipv6: IfBlock<Vec<Ipv6Addr>>,
+    pub hostname: IfBlock<String>,
     pub next_hop: IfBlock<Option<RelayHost>>,
-    pub tls_dane: IfBlock<RequireOptional>,
-    pub tls_mta_sts: IfBlock<RequireOptional>,
-    pub tls_start: IfBlock<RequireOptional>,
     pub max_mx: IfBlock<usize>,
     pub max_multihomed: IfBlock<usize>,
+    pub source_ip: QueueOutboundSourceIp,
+    pub tls: QueueOutboundTls,
+    pub dsn: QueueOutboundDsn,
 
     // Timeouts
-    pub timeout_connect: IfBlock<Duration>,
-    pub timeout_greeting: IfBlock<Duration>,
-    pub timeout_tls: IfBlock<Duration>,
-    pub timeout_ehlo: IfBlock<Duration>,
-    pub timeout_mail: IfBlock<Duration>,
-    pub timeout_rcpt: IfBlock<Duration>,
-    pub timeout_data: IfBlock<Duration>,
-    pub timeout_mta_sts: IfBlock<Duration>,
+    pub timeout: QueueOutboundTimeout,
 
     // Throttle and Quotas
     pub throttle: QueueThrottle,
     pub quota: QueueQuotas,
+}
+
+pub struct QueueOutboundSourceIp {
+    pub ipv4: IfBlock<Vec<Ipv4Addr>>,
+    pub ipv6: IfBlock<Vec<Ipv6Addr>>,
+}
+
+pub struct QueueOutboundDsn {
+    pub name: IfBlock<String>,
+    pub address: IfBlock<String>,
+}
+
+pub struct QueueOutboundTls {
+    pub dane: IfBlock<RequireOptional>,
+    pub mta_sts: IfBlock<RequireOptional>,
+    pub start: IfBlock<RequireOptional>,
+}
+
+pub struct QueueOutboundTimeout {
+    pub connect: IfBlock<Duration>,
+    pub greeting: IfBlock<Duration>,
+    pub tls: IfBlock<Duration>,
+    pub ehlo: IfBlock<Duration>,
+    pub mail: IfBlock<Duration>,
+    pub rcpt: IfBlock<Duration>,
+    pub data: IfBlock<Duration>,
+    pub mta_sts: IfBlock<Duration>,
 }
 
 pub struct QueueThrottle {

@@ -1,17 +1,42 @@
+use mail_builder::headers::content_type::ContentType;
+use mail_builder::headers::HeaderType;
+use mail_builder::mime::{BodyPart, MimePart};
+use mail_builder::MessageBuilder;
 use mail_parser::DateTime;
-use smtp_proto::{Response, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS};
+use smtp_proto::{
+    Response, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS,
+};
 use std::fmt::Write;
+use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
+use crate::config::QueueConfig;
 use crate::core::QueueCore;
 
 use super::{
-    Domain, Error, ErrorDetails, HostResponse, Message, Recipient, SimpleEnvelope, Status,
-    RCPT_DSN_SENT,
+    Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule, SimpleEnvelope,
+    Status, RCPT_DSN_SENT,
 };
 
 impl QueueCore {
     pub async fn send_dsn(&self, message: &mut Message) {
+        if !message.return_path.is_empty() {
+            if let Some(dsn) = message.build_dsn(&self.config).await {
+                let mut message = message.build_dsn_message(&self.config).await;
+                message.size = dsn.len();
+                message.size_headers = dsn.len();
+                self.queue_message(message, dsn).await;
+            }
+        } else {
+            message.handle_double_bounce();
+        }
+    }
+}
+
+impl Message {
+    async fn build_dsn(&mut self, config: &QueueConfig) -> Option<Vec<u8>> {
         let now = Instant::now();
 
         let mut txt_success = String::new();
@@ -19,11 +44,11 @@ impl QueueCore {
         let mut txt_failed = String::new();
         let mut dsn = String::new();
 
-        for rcpt in &mut message.recipients {
+        for rcpt in &mut self.recipients {
             if rcpt.has_flag(RCPT_DSN_SENT | RCPT_NOTIFY_NEVER) {
                 continue;
             }
-            let domain = &mut message.domains[rcpt.domain_idx];
+            let domain = &mut self.domains[rcpt.domain_idx];
             match &rcpt.status {
                 Status::Completed(response) => {
                     rcpt.flags |= RCPT_DSN_SENT;
@@ -34,7 +59,9 @@ impl QueueCore {
                     rcpt.status.write_dsn(&mut dsn);
                     response.write_dsn_text(&rcpt.address, &mut txt_success);
                 }
-                Status::TemporaryFailure(response) if domain.notify.due <= now => {
+                Status::TemporaryFailure(response)
+                    if domain.notify.due <= now && rcpt.has_flag(RCPT_NOTIFY_DELAY) =>
+                {
                     rcpt.write_dsn(&mut dsn);
                     rcpt.status.write_dsn(&mut dsn);
                     domain.write_dsn_will_retry_until(&mut dsn);
@@ -42,6 +69,9 @@ impl QueueCore {
                 }
                 Status::PermanentFailure(response) => {
                     rcpt.flags |= RCPT_DSN_SENT;
+                    if !rcpt.has_flag(RCPT_NOTIFY_FAILURE) {
+                        continue;
+                    }
                     rcpt.write_dsn(&mut dsn);
                     rcpt.status.write_dsn(&mut dsn);
                     response.write_dsn_text(&rcpt.address, &mut txt_failed);
@@ -50,18 +80,25 @@ impl QueueCore {
                     // There is no status for this address, use the domain's status.
                     match &domain.status {
                         Status::PermanentFailure(err) => {
+                            rcpt.flags |= RCPT_DSN_SENT;
+                            if !rcpt.has_flag(RCPT_NOTIFY_FAILURE) {
+                                continue;
+                            }
                             rcpt.write_dsn(&mut dsn);
                             domain.status.write_dsn(&mut dsn);
                             err.write_dsn_text(&rcpt.address, &domain.domain, &mut txt_failed);
-                            rcpt.flags |= RCPT_DSN_SENT;
                         }
-                        Status::TemporaryFailure(err) if domain.notify.due <= now => {
+                        Status::TemporaryFailure(err)
+                            if domain.notify.due <= now && rcpt.has_flag(RCPT_NOTIFY_DELAY) =>
+                        {
                             rcpt.write_dsn(&mut dsn);
                             domain.status.write_dsn(&mut dsn);
                             domain.write_dsn_will_retry_until(&mut dsn);
                             err.write_dsn_text(&rcpt.address, &domain.domain, &mut txt_delay);
                         }
-                        Status::Scheduled if domain.notify.due <= now => {
+                        Status::Scheduled
+                            if domain.notify.due <= now && rcpt.has_flag(RCPT_NOTIFY_DELAY) =>
+                        {
                             // This case should not happen under normal circumstances
                             rcpt.write_dsn(&mut dsn);
                             domain.status.write_dsn(&mut dsn);
@@ -88,32 +125,36 @@ impl QueueCore {
         // Build text response
         let txt_len = txt_success.len() + txt_delay.len() + txt_failed.len();
         if txt_len == 0 {
-            return;
+            return None;
         }
+
         let has_success = !txt_success.is_empty();
         let has_delay = !txt_delay.is_empty();
         let has_failure = !txt_failed.is_empty();
 
         let mut txt = String::with_capacity(txt_len + 128);
-        let is_mixed = if has_success && !has_delay && !has_failure {
+        let (subject, is_mixed) = if has_success && !has_delay && !has_failure {
             txt.push_str(
                 "Your message has been successfully delivered to the following recipients:\r\n\r\n",
             );
-            false
+            ("Successfully delivered message", false)
         } else if has_delay && !has_success && !has_failure {
-            txt.push_str("There has been a delay delivering your message to the following recipients:\r\n\r\n");
-            false
+            txt.push_str("There was a temporary problem delivering your message to the following recipients:\r\n\r\n");
+            ("Warning: Delay in message delivery", false)
         } else if has_failure && !has_success && !has_delay {
             txt.push_str(
                 "Your message could not be delivered to the following recipients:\r\n\r\n",
             );
-            false
+            ("Failed to deliver message", false)
         } else if has_success {
             txt.push_str("Your message has been partially delivered:\r\n\r\n");
-            true
+            ("Partially delivered message", true)
         } else {
             txt.push_str("Your message could not be delivered to some recipients:\r\n\r\n");
-            true
+            (
+                "Warning: Temporary and permanent failures during message delivery",
+                true,
+            )
         };
 
         if has_success {
@@ -130,14 +171,14 @@ impl QueueCore {
         if has_delay {
             if is_mixed {
                 txt.push_str(
-                    "    ----- There has been a delay delivering to these addresses -----\r\n",
+                    "    ----- There was a temporary problem delivering to these addresses -----\r\n",
                 );
             }
             txt.push_str(&txt_delay);
             txt.push_str("\r\n");
         }
 
-        if has_delay {
+        if has_failure {
             if is_mixed {
                 txt.push_str("    ----- Delivery to the following addresses failed -----\r\n");
             }
@@ -147,13 +188,12 @@ impl QueueCore {
 
         // Update next delay notification time
         if has_delay {
-            let mut domains = std::mem::take(&mut message.domains);
+            let mut domains = std::mem::take(&mut self.domains);
             for domain in &mut domains {
                 if domain.notify.due <= now {
-                    let envelope = SimpleEnvelope::new(message, &domain.domain);
+                    let envelope = SimpleEnvelope::new(self, &domain.domain);
 
-                    if let Some(next_notify) = self
-                        .config
+                    if let Some(next_notify) = config
                         .notify
                         .eval(&envelope)
                         .await
@@ -166,7 +206,122 @@ impl QueueCore {
                     }
                 }
             }
-            message.domains = domains;
+            self.domains = domains;
+        }
+
+        // Obtain hostname and sender addresses
+        let from_name = config.dsn.name.eval(self).await;
+        let from_addr = config.dsn.address.eval(self).await;
+        let reporting_mta = config.hostname.eval(self).await;
+
+        // Prepare DSN
+        let mut dsn_header = String::with_capacity(dsn.len() + 128);
+        self.write_dsn_headers(&mut dsn_header, reporting_mta);
+        let dsn = dsn_header + &dsn;
+
+        // Fetch message headers
+        let headers = match File::open(&self.path).await {
+            Ok(mut file) => {
+                let mut buf = vec![0u8; self.size_headers];
+                if let Err(err) = file.read_exact(&mut buf).await {
+                    let log = "fsdf";
+                    String::new()
+                } else {
+                    String::from_utf8(buf).unwrap_or_default()
+                }
+            }
+            Err(err) => {
+                let log = "fsdf";
+                String::new()
+            }
+        };
+
+        // Build message
+        MessageBuilder::new()
+            .from((from_name.as_str(), from_addr.as_str()))
+            .header("To", HeaderType::Text(self.return_path.as_str().into()))
+            .header("Auto-Submitted", HeaderType::Text("auto-generated".into()))
+            .subject(subject)
+            .body(MimePart::new(
+                ContentType::new("multipart/report").attribute("report-type", "delivery-status"),
+                BodyPart::Multipart(vec![
+                    MimePart::new(ContentType::new("text/plain"), BodyPart::Text(txt.into())),
+                    MimePart::new(
+                        ContentType::new("message/delivery-status"),
+                        BodyPart::Text(dsn.into()),
+                    ),
+                    MimePart::new(
+                        ContentType::new("message/rfc822"),
+                        BodyPart::Text(headers.into()),
+                    ),
+                ]),
+            ))
+            .write_to_vec()
+            .unwrap_or_default()
+            .into()
+    }
+
+    async fn build_dsn_message(&self, config: &QueueConfig) -> Box<Message> {
+        let expires = *config
+            .expire
+            .eval(&SimpleEnvelope::new(self, &self.return_path_domain))
+            .await;
+
+        Box::new(Message {
+            id: 0,
+            path: PathBuf::new(),
+            created: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            return_path: "".to_string(),
+            return_path_lcase: "".to_string(),
+            return_path_domain: "".to_string(),
+            recipients: vec![Recipient {
+                domain_idx: 0,
+                address: self.return_path.clone(),
+                address_lcase: self.return_path_lcase.clone(),
+                status: Status::Scheduled,
+                flags: 0,
+                orcpt: None,
+            }],
+            domains: vec![Domain {
+                domain: self.return_path_domain.clone(),
+                retry: Schedule::now(),
+                notify: Schedule::later(expires + Duration::from_secs(10)),
+                expires: Instant::now() + expires,
+                status: Status::Scheduled,
+            }],
+            flags: 0,
+            env_id: None,
+            priority: 0,
+            size: 0,
+            size_headers: 0,
+            queue_refs: vec![],
+        })
+    }
+
+    fn handle_double_bounce(&mut self) {
+        let mut is_double_bounce = false;
+        for rcpt in &mut self.recipients {
+            if !rcpt.has_flag(RCPT_DSN_SENT | RCPT_NOTIFY_NEVER) {
+                if let Status::PermanentFailure(_) = &rcpt.status {
+                    rcpt.flags |= RCPT_DSN_SENT;
+                    is_double_bounce = true;
+                }
+            }
+        }
+
+        let now = Instant::now();
+        for domain in &mut self.domains {
+            if domain.notify.due <= now {
+                domain.notify.due = domain.expires + Duration::from_secs(10);
+            }
+        }
+
+        if is_double_bounce {
+            // TODO log
+            let coco = "fsdf";
         }
     }
 }
@@ -452,4 +607,161 @@ trait WriteDsn {
     fn write_dsn_status(&self, dsn: &mut String);
     fn write_dsn_diagnostic(&self, dsn: &mut String);
     fn write_response(&self, dsn: &mut String);
+}
+
+#[cfg(test)]
+mod test {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{Duration, Instant, SystemTime},
+    };
+
+    use smtp_proto::{Response, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_SUCCESS};
+
+    use crate::{
+        config::QueueConfig,
+        queue::{Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule, Status},
+    };
+
+    #[tokio::test]
+    async fn generate_dsn() {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("resources");
+        path.push("tests");
+        path.push("dsn");
+        path.push("original.txt");
+        let size = fs::metadata(&path).unwrap().len() as usize;
+
+        let flags = RCPT_NOTIFY_FAILURE | RCPT_NOTIFY_DELAY | RCPT_NOTIFY_SUCCESS;
+        let mut message = Message {
+            size_headers: size,
+            size,
+            id: 0,
+            path,
+            created: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            return_path: "sender@foobar.org".to_string(),
+            return_path_lcase: "".to_string(),
+            return_path_domain: "foobar.org".to_string(),
+            recipients: vec![Recipient {
+                domain_idx: 0,
+                address: "foobar@example.org".to_string(),
+                address_lcase: "foobar@example.org".to_string(),
+                status: Status::PermanentFailure(HostResponse {
+                    hostname: ErrorDetails {
+                        entity: "mx.example.org".to_string(),
+                        details: "RCPT TO:<foobar@example.org>".to_string(),
+                    },
+                    response: Response {
+                        code: 550,
+                        esc: [5, 1, 2],
+                        message: "User does not exist".to_string(),
+                    },
+                }),
+                flags: 0,
+                orcpt: None,
+            }],
+            domains: vec![Domain {
+                domain: "example.org".to_string(),
+                retry: Schedule::now(),
+                notify: Schedule::now(),
+                expires: Instant::now() + Duration::from_secs(10),
+                status: Status::TemporaryFailure(Error::ConnectionError(ErrorDetails {
+                    entity: "mx.domain.org".to_string(),
+                    details: "Connection timeout".to_string(),
+                })),
+            }],
+            flags: 0,
+            env_id: None,
+            priority: 0,
+
+            queue_refs: vec![],
+        };
+        let config = QueueConfig::default();
+
+        // Disabled DSN
+        assert!(message.build_dsn(&config).await.is_none());
+
+        // Failure DSN
+        message.recipients[0].flags = flags;
+        compare_dsn(&mut message, &config, "failure.eml").await;
+
+        // Success DSN
+        message.recipients.push(Recipient {
+            domain_idx: 0,
+            address: "jane@example.org".to_string(),
+            address_lcase: "jane@example.org".to_string(),
+            status: Status::Completed(HostResponse {
+                hostname: "mx2.example.org".to_string(),
+                response: Response {
+                    code: 250,
+                    esc: [2, 1, 5],
+                    message: "Message accepted for delivery".to_string(),
+                },
+            }),
+            flags,
+            orcpt: None,
+        });
+        compare_dsn(&mut message, &config, "success.eml").await;
+
+        // Delay DSN
+        message.recipients.push(Recipient {
+            domain_idx: 0,
+            address: "john.doe@example.org".to_string(),
+            address_lcase: "john.doe@example.org".to_string(),
+            status: Status::Scheduled,
+            flags,
+            orcpt: "jdoe@example.org".to_string().into(),
+        });
+        compare_dsn(&mut message, &config, "delay.eml").await;
+
+        // Mixed DSN
+        for rcpt in &mut message.recipients {
+            rcpt.flags = flags;
+        }
+        message.domains[0].notify.due = Instant::now();
+        compare_dsn(&mut message, &config, "mixed.eml").await;
+    }
+
+    async fn compare_dsn(message: &mut Message, config: &QueueConfig, test: &str) {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("resources");
+        path.push("tests");
+        path.push("dsn");
+        path.push(test);
+
+        let dsn = remove_ids(message.build_dsn(config).await.unwrap());
+        let dsn_expected = fs::read_to_string(&path).unwrap();
+
+        //fs::write(&path, dsn.as_bytes()).unwrap();
+        assert_eq!(dsn, dsn_expected, "Failed for {}", path.display());
+    }
+
+    fn remove_ids(message: Vec<u8>) -> String {
+        let old_message = String::from_utf8(message).unwrap();
+        let mut message = String::with_capacity(old_message.len());
+
+        let mut boundary = "";
+        for line in old_message.split("\r\n") {
+            if line.starts_with("Date:") || line.starts_with("Message-ID:") {
+                continue;
+            } else if line.starts_with("--") {
+                message.push_str(&line.replace(boundary, "mime_boundary"));
+            } else if let Some((_, boundary_)) = line.split_once("boundary=\"") {
+                boundary = boundary_.split_once('"').unwrap().0;
+                message.push_str(&line.replace(boundary, "mime_boundary"));
+            } else if line.starts_with("Arrival-Date:") {
+                message.push_str("Arrival-Date: <date goes here>");
+            } else if line.starts_with("Will-Retry-Until:") {
+                message.push_str("Will-Retry-Until: <date goes here>");
+            } else {
+                message.push_str(line);
+            }
+            message.push_str("\r\n");
+        }
+        message
+    }
 }

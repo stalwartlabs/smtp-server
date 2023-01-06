@@ -125,7 +125,7 @@ impl DeliveryAttempt {
 
                 // Prepare TLS strategy
                 let mut tls_strategy = TlsStrategy {
-                    mta_sts: *queue_config.tls_mta_sts.eval(&envelope).await,
+                    mta_sts: *queue_config.tls.mta_sts.eval(&envelope).await,
                     ..Default::default()
                 };
 
@@ -135,7 +135,7 @@ impl DeliveryAttempt {
                         .resolvers
                         .lookup_mta_sts_policy(
                             envelope.domain,
-                            *queue_config.timeout_mta_sts.eval(&envelope).await,
+                            *queue_config.timeout.mta_sts.eval(&envelope).await,
                         )
                         .await
                     {
@@ -260,13 +260,13 @@ impl DeliveryAttempt {
                             SmtpClient::connect_using(
                                 ip_addr,
                                 SocketAddr::new(remote_ip, remote_host.port()),
-                                *queue_config.timeout_connect.eval(&envelope).await,
+                                *queue_config.timeout.connect.eval(&envelope).await,
                             )
                             .await
                         } else {
                             SmtpClient::connect(
                                 SocketAddr::new(remote_ip, remote_host.port()),
-                                *queue_config.timeout_connect.eval(&envelope).await,
+                                *queue_config.timeout.connect.eval(&envelope).await,
                             )
                             .await
                         } {
@@ -278,8 +278,8 @@ impl DeliveryAttempt {
                         };
 
                         // Obtain TLS strategy
-                        tls_strategy.dane = *queue_config.tls_dane.eval(&envelope).await;
-                        tls_strategy.tls = *queue_config.tls_start.eval(&envelope).await;
+                        tls_strategy.dane = *queue_config.tls.dane.eval(&envelope).await;
+                        tls_strategy.tls = *queue_config.tls.start.eval(&envelope).await;
                         let tls_connector = if !remote_host.allow_invalid_certs() {
                             &core.queue.connectors.pki_verify
                         } else {
@@ -289,20 +289,20 @@ impl DeliveryAttempt {
                         // Obtail session parameters
                         let params = SessionParams {
                             span: &span,
-                            hostname: envelope.mx,
                             credentials: remote_host.credentials(),
                             is_smtp: remote_host.is_smtp(),
-                            ehlo_hostname: queue_config.ehlo_name.eval(&envelope).await,
-                            timeout_ehlo: *queue_config.timeout_ehlo.eval(&envelope).await,
-                            timeout_mail: *queue_config.timeout_mail.eval(&envelope).await,
-                            timeout_rcpt: *queue_config.timeout_rcpt.eval(&envelope).await,
-                            timeout_data: *queue_config.timeout_data.eval(&envelope).await,
+                            hostname: envelope.mx,
+                            local_hostname: queue_config.hostname.eval(&envelope).await,
+                            timeout_ehlo: *queue_config.timeout.ehlo.eval(&envelope).await,
+                            timeout_mail: *queue_config.timeout.mail.eval(&envelope).await,
+                            timeout_rcpt: *queue_config.timeout.rcpt.eval(&envelope).await,
+                            timeout_data: *queue_config.timeout.data.eval(&envelope).await,
                         };
 
                         let delivery_result = if !remote_host.implicit_tls() {
                             // Read greeting
                             smtp_client.timeout =
-                                *queue_config.timeout_greeting.eval(&envelope).await;
+                                *queue_config.timeout.greeting.eval(&envelope).await;
                             if let Err(status) = read_greeting(&mut smtp_client, envelope.mx).await
                             {
                                 last_status = status;
@@ -319,7 +319,7 @@ impl DeliveryAttempt {
                             };
 
                             // Try starting TLS
-                            smtp_client.timeout = *queue_config.timeout_tls.eval(&envelope).await;
+                            smtp_client.timeout = *queue_config.timeout.tls.eval(&envelope).await;
                             match try_start_tls(
                                 smtp_client,
                                 tls_connector,
@@ -386,7 +386,7 @@ impl DeliveryAttempt {
                             }
                         } else {
                             // Start TLS
-                            smtp_client.timeout = *queue_config.timeout_tls.eval(&envelope).await;
+                            smtp_client.timeout = *queue_config.timeout.tls.eval(&envelope).await;
                             let mut smtp_client =
                                 match into_tls(smtp_client, tls_connector, envelope.mx).await {
                                     Ok(smtp_client) => smtp_client,
@@ -398,7 +398,7 @@ impl DeliveryAttempt {
 
                             // Read greeting
                             smtp_client.timeout =
-                                *queue_config.timeout_greeting.eval(&envelope).await;
+                                *queue_config.timeout.greeting.eval(&envelope).await;
                             if let Err(status) = read_greeting(&mut smtp_client, envelope.mx).await
                             {
                                 last_status = status;
@@ -576,7 +576,7 @@ impl Core {
         {
             if pos == 0 {
                 if remote_ip.is_ipv4() {
-                    let source_ips = self.queue.config.source_ipv4.eval(envelope).await;
+                    let source_ips = self.queue.config.source_ip.ipv4.eval(envelope).await;
                     match source_ips.len().cmp(&1) {
                         std::cmp::Ordering::Equal => {
                             source_ip = IpAddr::from(*source_ips.first().unwrap()).into();
@@ -590,7 +590,7 @@ impl Core {
                         std::cmp::Ordering::Less => (),
                     }
                 } else {
-                    let source_ips = self.queue.config.source_ipv6.eval(envelope).await;
+                    let source_ips = self.queue.config.source_ip.ipv6.eval(envelope).await;
                     match source_ips.len().cmp(&1) {
                         std::cmp::Ordering::Equal => {
                             source_ip = IpAddr::from(*source_ips.first().unwrap()).into();

@@ -55,7 +55,9 @@ pub struct Message {
     pub flags: u64,
     pub env_id: Option<String>,
     pub priority: i16,
+
     pub size: usize,
+    pub size_headers: usize,
 
     pub queue_refs: Vec<UsedQuota>,
 }
@@ -333,5 +335,60 @@ impl Envelope for Message {
 
     fn priority(&self) -> i16 {
         self.priority
+    }
+}
+
+#[cfg(test)]
+impl Default for crate::config::QueueConfig {
+    fn default() -> Self {
+        use crate::config::{
+            IfBlock, QueueOutboundDsn, QueueOutboundSourceIp, QueueOutboundTimeout,
+            QueueOutboundTls, QueueQuotas, QueueThrottle,
+        };
+
+        Self {
+            path: Default::default(),
+            hash: Default::default(),
+            retry: IfBlock::new(vec![Duration::from_secs(10)]),
+            notify: IfBlock::new(vec![Duration::from_secs(20)]),
+            expire: IfBlock::new(Duration::from_secs(10)),
+            hostname: IfBlock::new("mx.example.org".to_string()),
+            next_hop: Default::default(),
+            max_mx: IfBlock::new(5),
+            max_multihomed: IfBlock::new(5),
+            source_ip: QueueOutboundSourceIp {
+                ipv4: IfBlock::new(vec![]),
+                ipv6: IfBlock::new(vec![]),
+            },
+            tls: QueueOutboundTls {
+                dane: IfBlock::new(crate::config::RequireOptional::Optional),
+                mta_sts: IfBlock::new(crate::config::RequireOptional::Optional),
+                start: IfBlock::new(crate::config::RequireOptional::Optional),
+            },
+            dsn: QueueOutboundDsn {
+                name: IfBlock::new("Mail Delivery Subsystem".to_string()),
+                address: IfBlock::new("MAILER-DAEMON@example.org".to_string()),
+            },
+            timeout: QueueOutboundTimeout {
+                connect: IfBlock::new(Duration::from_secs(1)),
+                greeting: IfBlock::new(Duration::from_secs(1)),
+                tls: IfBlock::new(Duration::from_secs(1)),
+                ehlo: IfBlock::new(Duration::from_secs(1)),
+                mail: IfBlock::new(Duration::from_secs(1)),
+                rcpt: IfBlock::new(Duration::from_secs(1)),
+                data: IfBlock::new(Duration::from_secs(1)),
+                mta_sts: IfBlock::new(Duration::from_secs(1)),
+            },
+            throttle: QueueThrottle {
+                sender: vec![],
+                rcpt: vec![],
+                host: vec![],
+            },
+            quota: QueueQuotas {
+                sender: vec![],
+                rcpt: vec![],
+                rcpt_domain: vec![],
+            },
+        }
     }
 }

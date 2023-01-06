@@ -25,7 +25,7 @@ pub struct SessionParams<'x> {
     pub hostname: &'x str,
     pub credentials: Option<&'x Credentials<String>>,
     pub is_smtp: bool,
-    pub ehlo_hostname: &'x str,
+    pub local_hostname: &'x str,
     pub timeout_ehlo: Duration,
     pub timeout_mail: Duration,
     pub timeout_rcpt: Duration,
@@ -454,9 +454,9 @@ pub async fn say_helo<T: AsyncRead + AsyncWrite + Unpin>(
     params: &SessionParams<'_>,
 ) -> Result<EhloResponse<String>, Status<(), Error>> {
     let cmd = if params.is_smtp {
-        format!("EHLO {}\r\n", params.ehlo_hostname)
+        format!("EHLO {}\r\n", params.local_hostname)
     } else {
-        format!("LHLO {}\r\n", params.ehlo_hostname)
+        format!("LHLO {}\r\n", params.local_hostname)
     };
     tokio::time::timeout(params.timeout_ehlo, async {
         smtp_client.stream.write_all(cmd.as_bytes()).await?;

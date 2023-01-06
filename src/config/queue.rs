@@ -89,7 +89,7 @@ impl Config {
             }
         }
 
-        let default_ehlo_hostname = self.value_require("server.hostname")?;
+        let default_hostname = self.value_require("server.hostname")?;
 
         let config = QueueConfig {
             path: self
@@ -124,21 +124,23 @@ impl Config {
             expire: self
                 .parse_if_block("queue.schedule.expire", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 86400))),
-            ehlo_name: self
-                .parse_if_block("queue.outbound.ehlo-hostname", ctx, &sender_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(default_ehlo_hostname.to_string())),
+            hostname: self
+                .parse_if_block("queue.outbound.hostname", ctx, &sender_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(default_hostname.to_string())),
             max_mx: self
                 .parse_if_block("queue.outbound.limits.mx", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(5)),
             max_multihomed: self
                 .parse_if_block("queue.outbound.limits.multihomed", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(2)),
-            source_ipv4: self
-                .parse_if_block("queue.outbound.source-ip.v4", ctx, &mx_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Vec::new())),
-            source_ipv6: self
-                .parse_if_block("queue.outbound.source-ip.v6", ctx, &mx_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Vec::new())),
+            source_ip: QueueOutboundSourceIp {
+                ipv4: self
+                    .parse_if_block("queue.outbound.source-ip.v4", ctx, &mx_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Vec::new())),
+                ipv6: self
+                    .parse_if_block("queue.outbound.source-ip.v6", ctx, &mx_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Vec::new())),
+            },
             next_hop: IfBlock {
                 if_then: {
                     let mut if_then = Vec::with_capacity(next_hop.if_then.len());
@@ -182,45 +184,57 @@ impl Config {
                     None
                 },
             },
-            tls_dane: self
-                .parse_if_block("queue.outbound.tls.dane", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
-            tls_mta_sts: self
-                .parse_if_block("queue.outbound.tls.mta_sts", ctx, &rcpt_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
-            tls_start: self
-                .parse_if_block("queue.outbound.tls.tls", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
+            tls: QueueOutboundTls {
+                dane: self
+                    .parse_if_block("queue.outbound.tls.dane", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
+                mta_sts: self
+                    .parse_if_block("queue.outbound.tls.mta_sts", ctx, &rcpt_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
+                start: self
+                    .parse_if_block("queue.outbound.tls.tls", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
+            },
             throttle,
             quota: self.parse_queue_quota(ctx)?,
-            timeout_connect: self
-                .parse_if_block("queue.outbound.timeouts.connect", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
-            timeout_greeting: self
-                .parse_if_block("queue.outbound.timeouts.greeting", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
-            timeout_tls: self
-                .parse_if_block("queue.outbound.timeouts.tls", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(3 * 60))),
-            timeout_ehlo: self
-                .parse_if_block("queue.outbound.timeouts.ehlo", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
-            timeout_mail: self
-                .parse_if_block(
-                    "queue.outbound.timeouts.mail-from",
-                    ctx,
-                    &host_envelope_keys,
-                )?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
-            timeout_rcpt: self
-                .parse_if_block("queue.outbound.timeouts.rcpt-to", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
-            timeout_data: self
-                .parse_if_block("queue.outbound.timeouts.data", ctx, &host_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
-            timeout_mta_sts: self
-                .parse_if_block("queue.outbound.timeouts.mta-sts", ctx, &rcpt_envelope_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
+            timeout: QueueOutboundTimeout {
+                connect: self
+                    .parse_if_block("queue.outbound.timeouts.connect", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+                greeting: self
+                    .parse_if_block("queue.outbound.timeouts.greeting", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+                tls: self
+                    .parse_if_block("queue.outbound.timeouts.tls", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(3 * 60))),
+                ehlo: self
+                    .parse_if_block("queue.outbound.timeouts.ehlo", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+                mail: self
+                    .parse_if_block(
+                        "queue.outbound.timeouts.mail-from",
+                        ctx,
+                        &host_envelope_keys,
+                    )?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+                rcpt: self
+                    .parse_if_block("queue.outbound.timeouts.rcpt-to", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(5 * 60))),
+                data: self
+                    .parse_if_block("queue.outbound.timeouts.data", ctx, &host_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
+                mta_sts: self
+                    .parse_if_block("queue.outbound.timeouts.mta-sts", ctx, &rcpt_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
+            },
+            dsn: QueueOutboundDsn {
+                name: self
+                    .parse_if_block("dsn.from.name", ctx, &sender_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new("Mail Delivery Subsystem".to_string())),
+                address: self
+                    .parse_if_block("dsn.from.address", ctx, &sender_envelope_keys)?
+                    .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{}", default_hostname))),
+            },
         };
 
         if config.retry.has_empty_list() {

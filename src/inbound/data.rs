@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use smtp_proto::{RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
@@ -29,9 +30,14 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             flags: mail_from.flags,
             priority: self.data.priority,
             size: self.data.message.len(),
+            size_headers: self.data.message.len(),
             env_id: mail_from.dsn_info,
             queue_refs: Vec::with_capacity(0),
         });
+
+        // Parse message
+        let coco = "parse";
+        //message.size_headers = ...;
 
         let future_release = Duration::from_secs(self.data.future_release);
 
@@ -82,11 +88,22 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     domain: rcpt.domain,
                 });
             }
+
             message.recipients.push(queue::Recipient {
                 address: rcpt.address,
                 address_lcase: rcpt.address_lcase,
                 status: queue::Status::Scheduled,
-                flags: 0,
+                flags: if rcpt.flags
+                    & (RCPT_NOTIFY_DELAY
+                        | RCPT_NOTIFY_FAILURE
+                        | RCPT_NOTIFY_SUCCESS
+                        | RCPT_NOTIFY_NEVER)
+                    != 0
+                {
+                    rcpt.flags
+                } else {
+                    rcpt.flags | RCPT_NOTIFY_DELAY | RCPT_NOTIFY_FAILURE
+                },
                 domain_idx: message.domains.len() - 1,
                 orcpt: rcpt.dsn_info,
             });

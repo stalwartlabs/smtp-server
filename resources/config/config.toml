@@ -193,7 +193,7 @@ notify = ["1d", "3d"]
 expire = "5d"
 
 [queue.outbound]
-#ehlo-hostname = mx.domain.org
+#hostname = mx.domain.org
 next-hop = "lmtp"
 
 [queue.outbound.tls]
@@ -264,6 +264,9 @@ host = "lmtp"
 #type = "file"
 #path = "/tmp/file.txt"
 
+[dsn.from]
+address = "MAILER-DAEMON@domain.org"
+name = "Mail Delivery Subsystem"
 
 [servers."relay".outgoing.dsn]
 name = "Mail Delivery Subsystem"
