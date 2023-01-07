@@ -95,5 +95,6 @@ impl Domain {
                 self.status = Status::TemporaryFailure(super::Error::RateLimited);
             }
         }
+        self.changed = true;
     }
 }

@@ -109,7 +109,7 @@ async fn main() -> std::io::Result<()> {
 
     // Spawn queue manager
     queue_rx
-        .spawn(core.clone())
+        .spawn(core.clone(), core.queue.read_queue().await)
         .failed("Failed to spawn queue manager");
 
     // Spawn listeners

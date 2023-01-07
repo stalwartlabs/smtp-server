@@ -15,7 +15,7 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 
 use crate::{
     config::{RequireOptional, TlsStrategy},
-    queue::{ErrorDetails, HostResponse},
+    queue::{ErrorDetails, HostResponse, RCPT_STATUS_CHANGED},
 };
 
 use crate::queue::{Error, Message, Recipient, Status};
@@ -112,6 +112,7 @@ impl Message {
                             },
                             response,
                         };
+                        rcpt.flags |= RCPT_STATUS_CHANGED;
                         rcpt.status = if severity == Severity::PermanentNegativeCompletion {
                             total_completed += 1;
                             Status::PermanentFailure(response)
@@ -149,6 +150,7 @@ impl Message {
                         if response.code() == 250 {
                             for (rcpt, status) in accepted_rcpts {
                                 rcpt.status = status;
+                                rcpt.flags |= RCPT_STATUS_CHANGED;
                                 total_completed += 1;
                             }
                         } else {
@@ -172,6 +174,7 @@ impl Message {
                 {
                     Ok(responses) => {
                         for ((rcpt, _), response) in accepted_rcpts.into_iter().zip(responses) {
+                            rcpt.flags |= RCPT_STATUS_CHANGED;
                             rcpt.status = match response.severity() {
                                 Severity::PositiveCompletion => {
                                     total_completed += 1;

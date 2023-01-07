@@ -35,6 +35,9 @@ impl DeliveryAttempt {
             // Re-queue the message if its not yet due for delivery
             let due = self.message.next_delivery_event();
             if due > Instant::now() {
+                // Save changes to disk
+                self.message.save_changes().await;
+
                 queue.main.push(Schedule {
                     due,
                     inner: self.message,
@@ -43,6 +46,7 @@ impl DeliveryAttempt {
             }
         } else {
             // All message recipients expired, do not re-queue. (DSN has been already sent)
+            self.message.remove().await;
             return;
         }
 
@@ -58,6 +62,9 @@ impl DeliveryAttempt {
                 )
                 .await
             {
+                // Save changes to disk
+                self.message.save_changes().await;
+
                 match err {
                     throttle::Error::Concurrency { limiter } => {
                         queue.on_hold.push(OnHold {
@@ -437,6 +444,9 @@ impl DeliveryAttempt {
                 // Release quota for completed deliveries
                 self.message.release_quota();
 
+                // Save changes to disk
+                self.message.save_changes().await;
+
                 WorkerResult::OnHold(OnHold {
                     next_due: self.message.next_event_after(Instant::now()),
                     limiters: on_hold,
@@ -446,11 +456,17 @@ impl DeliveryAttempt {
                 // Release quota for completed deliveries
                 self.message.release_quota();
 
+                // Save changes to disk
+                self.message.save_changes().await;
+
                 WorkerResult::Retry(Schedule {
                     due,
                     inner: self.message,
                 })
             } else {
+                // Delete message from queue
+                self.message.remove().await;
+
                 WorkerResult::Done
             };
             if core.queue.tx.send(Event::Done(result)).await.is_err() {
@@ -477,11 +493,13 @@ impl Message {
                             Status::TemporaryFailure(err) => Status::PermanentFailure(err),
                             _ => unreachable!(),
                         };
+                    domain.changed = true;
                 }
                 Status::Scheduled if domain.expires <= now => {
                     domain.status = Status::PermanentFailure(Error::Io(
                         "Queue rate limit exceeded.".to_string(),
                     ));
+                    domain.changed = true;
                 }
                 Status::Completed(_) | Status::PermanentFailure(_) => (),
                 _ => {
@@ -623,6 +641,7 @@ impl Core {
 impl Domain {
     pub fn set_status(&mut self, status: impl Into<Status<(), Error>>, schedule: &[Duration]) {
         self.status = status.into();
+        self.changed = true;
         if matches!(&self.status, Status::TemporaryFailure(_)) {
             self.retry(schedule);
         }

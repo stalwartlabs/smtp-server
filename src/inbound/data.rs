@@ -86,6 +86,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     expires,
                     status: queue::Status::Scheduled,
                     domain: rcpt.domain,
+                    changed: false,
                 });
             }
 

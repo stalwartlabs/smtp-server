@@ -2,7 +2,7 @@ use std::{
     net::IpAddr,
     path::PathBuf,
     sync::{atomic::AtomicUsize, Arc},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use smtp_proto::Response;
@@ -36,11 +36,13 @@ pub struct OnHold {
     pub message: Box<Message>,
 }
 
+#[derive(Debug)]
 pub struct Schedule<T> {
     pub due: Instant,
     pub inner: T,
 }
 
+#[derive(Debug)]
 pub struct Message {
     pub id: u64,
     pub created: u64,
@@ -62,13 +64,17 @@ pub struct Message {
     pub queue_refs: Vec<UsedQuota>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Domain {
     pub domain: String,
     pub retry: Schedule<u32>,
     pub notify: Schedule<u32>,
     pub expires: Instant,
     pub status: Status<(), Error>,
+    pub changed: bool,
 }
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Recipient {
     pub domain_idx: usize,
     pub address: String,
@@ -79,6 +85,7 @@ pub struct Recipient {
 }
 
 pub const RCPT_DSN_SENT: u64 = 1 << 32;
+pub const RCPT_STATUS_CHANGED: u64 = 2 << 32;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Status<T, E> {
@@ -119,6 +126,7 @@ pub struct DeliveryAttempt {
     pub message: Box<Message>,
 }
 
+#[derive(Debug)]
 pub struct QuotaLimiter {
     pub max_size: usize,
     pub max_messages: usize,
@@ -126,11 +134,20 @@ pub struct QuotaLimiter {
     pub messages: AtomicUsize,
 }
 
+#[derive(Debug)]
 pub struct UsedQuota {
     id: u64,
     size: usize,
     limiter: Arc<QuotaLimiter>,
 }
+
+impl PartialEq for UsedQuota {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.size == other.size
+    }
+}
+
+impl Eq for UsedQuota {}
 
 impl<T> Ord for Schedule<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -336,6 +353,14 @@ impl Envelope for Message {
     fn priority(&self) -> i16 {
         self.priority
     }
+}
+
+#[inline(always)]
+pub fn instant_to_timestamp(now: Instant, time: Instant) -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+        + time.checked_duration_since(now).map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]

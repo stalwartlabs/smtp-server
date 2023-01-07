@@ -6,7 +6,7 @@ use std::{
 
 use tokio::sync::mpsc;
 
-use crate::core::Core;
+use crate::core::{Core, QueueCore};
 
 use super::{DeliveryAttempt, Event, Message, OnHold, Schedule, Status, WorkerResult};
 
@@ -18,15 +18,8 @@ pub struct Queue {
 }
 
 impl SpawnQueue for mpsc::Receiver<Event> {
-    fn spawn(mut self, core: Arc<Core>) -> Result<(), String> {
+    fn spawn(mut self, core: Arc<Core>, mut queue: Queue) -> Result<(), String> {
         tokio::spawn(async move {
-            let mut queue = Queue {
-                short_wait: Duration::from_millis(1),
-                long_wait: Duration::from_secs(86400 * 365),
-                main: BinaryHeap::with_capacity(128),
-                on_hold: Vec::with_capacity(128),
-            };
-
             loop {
                 let result = tokio::time::timeout(queue.wake_up_time(), self.recv()).await;
 
@@ -194,6 +187,130 @@ impl Message {
     }
 }
 
+impl QueueCore {
+    pub async fn read_queue(&self) -> Queue {
+        let mut queue = Queue::default();
+        let mut messages = Vec::new();
+
+        for path in self
+            .config
+            .path
+            .if_then
+            .iter()
+            .map(|t| &t.then)
+            .chain([&self.config.path.default])
+        {
+            let mut dir = match tokio::fs::read_dir(path).await {
+                Ok(dir) => dir,
+                Err(_) => continue,
+            };
+            loop {
+                match dir.next_entry().await {
+                    Ok(Some(file)) => {
+                        let file = file.path();
+                        if file.is_dir() {
+                            match tokio::fs::read_dir(path).await {
+                                Ok(mut dir) => {
+                                    let file_ = file;
+                                    loop {
+                                        match dir.next_entry().await {
+                                            Ok(Some(file)) => {
+                                                let file = file.path();
+                                                if file.extension().map_or(false, |e| e == "msg") {
+                                                    messages.push(tokio::spawn(
+                                                        Message::from_path(file),
+                                                    ));
+                                                }
+                                            }
+                                            Ok(None) => break,
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    "Failed to read queue directory {}: {}",
+                                                    file_.display(),
+                                                    err
+                                                );
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "Failed to read queue directory {}: {}",
+                                        file.display(),
+                                        err
+                                    )
+                                }
+                            };
+                        } else if file.extension().map_or(false, |e| e == "msg") {
+                            messages.push(tokio::spawn(Message::from_path(file)));
+                        }
+                    }
+                    Ok(None) => {
+                        break;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to read queue directory {}: {}",
+                            path.display(),
+                            err
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Join all futures
+        for message in messages {
+            match message.await {
+                Ok(Ok(mut message)) => {
+                    // Reserve quota
+                    self.has_quota(&mut message).await;
+
+                    // Schedule message
+                    queue.main.push(Schedule {
+                        due: message.next_event().unwrap_or_else(|| {
+                            tracing::warn!(
+                                module = "queue",
+                                event = "warn",
+                                "No due events found for message {}",
+                                message.path.display()
+                            );
+                            Instant::now()
+                        }),
+                        inner: Box::new(message),
+                    });
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        module = "queue",
+                        event = "error",
+                        "Queue startup error: {}",
+                        err
+                    );
+                }
+                Err(err) => {
+                    tracing::error!("Join error while starting queue: {}", err);
+                }
+            }
+        }
+
+        queue
+    }
+}
+
+impl Default for Queue {
+    fn default() -> Self {
+        Queue {
+            short_wait: Duration::from_millis(1),
+            long_wait: Duration::from_secs(86400 * 365),
+            main: BinaryHeap::with_capacity(128),
+            on_hold: Vec::with_capacity(128),
+        }
+    }
+}
+
 pub trait SpawnQueue {
-    fn spawn(self, core: Arc<Core>) -> Result<(), String>;
+    fn spawn(self, core: Arc<Core>, queue: Queue) -> Result<(), String>;
 }

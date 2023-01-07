@@ -16,8 +16,8 @@ use crate::config::QueueConfig;
 use crate::core::QueueCore;
 
 use super::{
-    Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule, SimpleEnvelope,
-    Status, RCPT_DSN_SENT,
+    instant_to_timestamp, Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule,
+    SimpleEnvelope, Status, RCPT_DSN_SENT, RCPT_STATUS_CHANGED,
 };
 
 impl QueueCore {
@@ -48,10 +48,10 @@ impl Message {
             if rcpt.has_flag(RCPT_DSN_SENT | RCPT_NOTIFY_NEVER) {
                 continue;
             }
-            let domain = &mut self.domains[rcpt.domain_idx];
+            let domain = &self.domains[rcpt.domain_idx];
             match &rcpt.status {
                 Status::Completed(response) => {
-                    rcpt.flags |= RCPT_DSN_SENT;
+                    rcpt.flags |= RCPT_DSN_SENT | RCPT_STATUS_CHANGED;
                     if !rcpt.has_flag(RCPT_NOTIFY_SUCCESS) {
                         continue;
                     }
@@ -68,7 +68,7 @@ impl Message {
                     response.write_dsn_text(&rcpt.address, &mut txt_delay);
                 }
                 Status::PermanentFailure(response) => {
-                    rcpt.flags |= RCPT_DSN_SENT;
+                    rcpt.flags |= RCPT_DSN_SENT | RCPT_STATUS_CHANGED;
                     if !rcpt.has_flag(RCPT_NOTIFY_FAILURE) {
                         continue;
                     }
@@ -80,7 +80,7 @@ impl Message {
                     // There is no status for this address, use the domain's status.
                     match &domain.status {
                         Status::PermanentFailure(err) => {
-                            rcpt.flags |= RCPT_DSN_SENT;
+                            rcpt.flags |= RCPT_DSN_SENT | RCPT_STATUS_CHANGED;
                             if !rcpt.has_flag(RCPT_NOTIFY_FAILURE) {
                                 continue;
                             }
@@ -204,6 +204,7 @@ impl Message {
                     } else {
                         domain.notify.due = domain.expires + Duration::from_secs(10);
                     }
+                    domain.changed = true;
                 }
             }
             self.domains = domains;
@@ -291,6 +292,7 @@ impl Message {
                 notify: Schedule::later(expires + Duration::from_secs(10)),
                 expires: Instant::now() + expires,
                 status: Status::Scheduled,
+                changed: false,
             }],
             flags: 0,
             env_id: None,
@@ -449,14 +451,8 @@ impl Domain {
         if self.expires > now {
             dsn.push_str("Will-Retry-Until: ");
             dsn.push_str(
-                &DateTime::from_timestamp(
-                    (SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0)
-                        + self.expires.duration_since(now).as_secs()) as i64,
-                )
-                .to_rfc822(),
+                &DateTime::from_timestamp(instant_to_timestamp(now, self.expires) as i64)
+                    .to_rfc822(),
             );
             dsn.push_str("\r\n");
         }
@@ -673,6 +669,7 @@ mod test {
                     entity: "mx.domain.org".to_string(),
                     details: "Connection timeout".to_string(),
                 })),
+                changed: false,
             }],
             flags: 0,
             env_id: None,
