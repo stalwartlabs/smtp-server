@@ -59,7 +59,7 @@ impl Config {
                 .property::<u64>((prefix.as_str(), "concurrency"))?
                 .filter(|&v| v > 0),
             rate: self
-                .property::<ThrottleRate>((prefix.as_str(), "rate"))?
+                .property::<Rate>((prefix.as_str(), "rate"))?
                 .filter(|v| v.requests > 0),
         };
 
@@ -78,10 +78,10 @@ impl Config {
     }
 }
 
-impl ParseValue for ThrottleRate {
+impl ParseValue for Rate {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
         if let Some((requests, period)) = value.split_once('/') {
-            Ok(ThrottleRate {
+            Ok(Rate {
                 requests: requests
                     .trim()
                     .parse::<u64>()
@@ -97,7 +97,7 @@ impl ParseValue for ThrottleRate {
                 period: period.parse_key(key)?,
             })
         } else if ["false", "none", "unlimited"].contains(&value) {
-            Ok(ThrottleRate::default())
+            Ok(Rate::default())
         } else {
             Err(format!(
                 "Invalid rate value {:?} for property {:?}.",
@@ -163,8 +163,7 @@ mod tests {
 
     use crate::config::{
         Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
-        IpAddrMask, Throttle, ThrottleRate, THROTTLE_AUTH_AS, THROTTLE_REMOTE_IP,
-        THROTTLE_SENDER_DOMAIN,
+        IpAddrMask, Rate, Throttle, THROTTLE_AUTH_AS, THROTTLE_REMOTE_IP, THROTTLE_SENDER_DOMAIN,
     };
 
     #[test]
@@ -210,7 +209,7 @@ mod tests {
                     },
                     keys: THROTTLE_REMOTE_IP | THROTTLE_AUTH_AS,
                     concurrency: 100.into(),
-                    rate: ThrottleRate {
+                    rate: Rate {
                         requests: 50,
                         period: Duration::from_secs(30)
                     }

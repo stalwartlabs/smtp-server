@@ -22,7 +22,7 @@ impl Resolvers {
             Ok(tlsa_records) => tlsa_records,
             Err(err) => {
                 return if require_dane {
-                    Err(if matches!(&err, mail_auth::Error::DNSRecordNotFound(_)) {
+                    Err(if matches!(&err, mail_auth::Error::DnsRecordNotFound(_)) {
                         Status::PermanentFailure(Error::DaneError(ErrorDetails {
                             entity: hostname.to_string(),
                             details: "No TLSA records found".to_string(),

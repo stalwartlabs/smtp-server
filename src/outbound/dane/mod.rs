@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use mail_auth::{common::lru::LruCache, trust_dns_resolver::TokioAsyncResolver};
+use mail_auth::trust_dns_resolver::TokioAsyncResolver;
 
 pub mod dnssec;
 pub mod verify;

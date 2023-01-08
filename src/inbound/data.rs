@@ -155,3 +155,14 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         }
     }
 }
+
+/*
+
+Received: from open.nlnet.nl (open.nlnet.nl [IPv6:2a04:b900::1:0:0:12])
+    (using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits)
+     key-exchange X25519 server-signature RSA-PSS (2048 bits) server-digest SHA256)
+    (No client certificate requested)
+    by mail.stalw.art (Postfix) with ESMTPS id 1BC637CF44
+    for <mauro@stalw.art>; Wed,  4 Jan 2023 20:33:01 +0000 (UTC)
+
+*/

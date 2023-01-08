@@ -4,7 +4,7 @@ use rustls::{
     server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni},
     sign::CertifiedKey,
     version::{TLS12, TLS13},
-    Certificate, KeyLog, PrivateKey, SupportedProtocolVersion,
+    Certificate, PrivateKey, SupportedProtocolVersion,
 };
 use rustls_pemfile::{certs, read_one, Item};
 
@@ -24,15 +24,6 @@ impl ResolvesServerCert for CertificateResolver {
             .as_ref()
             .and_then(|r| r.resolve(hello))
             .or_else(|| self.default_cert.clone())
-    }
-}
-
-#[derive(Default)]
-pub struct KeyLogger;
-
-impl KeyLog for KeyLogger {
-    fn log(&self, _label: &str, _client_random: &[u8], _secret: &[u8]) {
-        //TODO
     }
 }
 

@@ -32,6 +32,9 @@ async fn main() -> std::io::Result<()> {
     let queue_config = config
         .parse_queue(&config_context)
         .failed("Configuration error");
+    let mail_auth_config = config
+        .parse_mail_auth(&config_context)
+        .failed("Configuration error");
 
     // Build core
     let (queue_tx, queue_rx) = mpsc::channel(1024);
@@ -88,6 +91,7 @@ async fn main() -> std::io::Result<()> {
                 dummy_verify: build_tls_connector(true),
             },
         },
+        mail_auth: mail_auth_config,
     });
 
     // Enable logging

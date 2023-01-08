@@ -213,8 +213,10 @@ impl<T: ParseValue> ParseValue for Option<T> {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
         if !value.is_empty()
             && !value.eq_ignore_ascii_case("false")
-            && !value.eq("0")
             && !value.eq_ignore_ascii_case("disable")
+            && !value.eq_ignore_ascii_case("disabled")
+            && !value.eq_ignore_ascii_case("never")
+            && !value.eq("0")
         {
             T::parse_value(key, value).map(Some)
         } else {

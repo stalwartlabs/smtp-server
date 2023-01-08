@@ -1,8 +1,5 @@
 use mail_auth::{
-    common::{
-        lru::{DnsCache, LruCache},
-        resolver::IntoFqdn,
-    },
+    common::{lru::DnsCache, resolver::IntoFqdn},
     trust_dns_resolver::{
         config::{ResolverConfig, ResolverOpts},
         error::{ResolveError, ResolveErrorKind},

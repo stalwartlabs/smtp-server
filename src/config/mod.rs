@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod certificate;
 pub mod condition;
 pub mod if_block;
@@ -20,6 +21,11 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
+use mail_auth::{
+    common::crypto::{Ed25519Key, RsaKey},
+    dkim::{Canonicalization, Done},
+    sha2::Sha256,
+};
 use mail_send::Credentials;
 use regex::Regex;
 use rustls::ServerConfig;
@@ -200,7 +206,7 @@ pub struct Throttle {
     pub conditions: Conditions,
     pub keys: u16,
     pub concurrency: Option<u64>,
-    pub rate: Option<ThrottleRate>,
+    pub rate: Option<Rate>,
 }
 
 pub const THROTTLE_RCPT: u16 = 1 << 0;
@@ -215,7 +221,7 @@ pub const THROTTLE_LOCAL_IP: u16 = 1 << 8;
 pub const THROTTLE_HELO_DOMAIN: u16 = 1 << 9;
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct ThrottleRate {
+pub struct Rate {
     pub requests: u64,
     pub period: Duration,
 }
@@ -407,6 +413,74 @@ pub enum RequireOptional {
     #[default]
     Optional,
     Require,
+    Disable,
+}
+
+pub struct MailAuthConfig {
+    pub dkim: DkimAuthConfig,
+    pub arc: ArcAuthConfig,
+    pub spf: SpfAuthConfig,
+    pub dmarc: DmarcAuthConfig,
+    pub tls: TlsAuthConfig,
+    pub iprev: IpRevAuthConfig,
+}
+
+pub enum DkimSigner {
+    RsaSha256(mail_auth::dkim::DkimSigner<RsaKey<Sha256>, Done>),
+    Ed25519Sha256(mail_auth::dkim::DkimSigner<Ed25519Key, Done>),
+}
+
+pub enum ArcSealer {
+    RsaSha256(mail_auth::arc::ArcSealer<RsaKey<Sha256>, Done>),
+    Ed25519Sha256(mail_auth::arc::ArcSealer<Ed25519Key, Done>),
+}
+
+pub struct DkimAuthConfig {
+    pub verify: IfBlock<VerifyStrategy>,
+    pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
+    pub report_request: IfBlock<bool>,
+    pub report_send: IfBlock<Option<Rate>>,
+    pub report_analyze: IfBlock<bool>,
+}
+
+pub struct ArcAuthConfig {
+    pub verify: IfBlock<VerifyStrategy>,
+    pub seal: IfBlock<Option<Arc<ArcSealer>>>,
+}
+
+pub struct SpfAuthConfig {
+    pub verify_ehlo: IfBlock<VerifyStrategy>,
+    pub verify_mail_from: IfBlock<VerifyStrategy>,
+    pub report_send: IfBlock<Option<Rate>>,
+    pub report_analyze: IfBlock<bool>,
+}
+pub struct DmarcAuthConfig {
+    pub verify: IfBlock<VerifyStrategy>,
+    pub report_aggregate: IfBlock<Option<Duration>>,
+    pub report_send: IfBlock<Option<Rate>>,
+    pub report_analyze: IfBlock<bool>,
+}
+
+pub struct TlsAuthConfig {
+    pub report_send: IfBlock<Option<Rate>>,
+    pub report_analyze: IfBlock<bool>,
+}
+
+pub struct IpRevAuthConfig {
+    pub verify: IfBlock<VerifyStrategy>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DkimCanonicalization {
+    pub headers: Canonicalization,
+    pub body: Canonicalization,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum VerifyStrategy {
+    #[default]
+    Relaxed,
+    Strict,
     Disable,
 }
 

@@ -92,7 +92,7 @@ impl Status<(), Error> {
 impl From<mail_auth::Error> for Status<(), Error> {
     fn from(err: mail_auth::Error) -> Self {
         match &err {
-            mail_auth::Error::DNSRecordNotFound(code) => {
+            mail_auth::Error::DnsRecordNotFound(code) => {
                 Status::PermanentFailure(Error::DnsError(format!("Domain not found: {:?}", code)))
             }
             _ => Status::TemporaryFailure(Error::DnsError(err.to_string())),
@@ -104,7 +104,7 @@ impl From<mta_sts::Error> for Status<(), Error> {
     fn from(err: mta_sts::Error) -> Self {
         match &err {
             mta_sts::Error::Dns(err) => match err {
-                mail_auth::Error::DNSRecordNotFound(code) => Status::PermanentFailure(
+                mail_auth::Error::DnsRecordNotFound(code) => Status::PermanentFailure(
                     Error::MtaStsError(format!("Record not found: {:?}", code)),
                 ),
                 mail_auth::Error::InvalidRecordType => Status::PermanentFailure(

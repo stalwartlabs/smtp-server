@@ -101,7 +101,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         conditions: Conditions { conditions: vec![] },
         keys: THROTTLE_LISTENER, //u16::MAX,
         concurrency: 10.into(),
-        rate: ThrottleRate {
+        rate: Rate {
             requests: 30,
             period: Duration::from_secs(60),
         }

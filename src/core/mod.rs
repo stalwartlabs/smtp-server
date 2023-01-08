@@ -23,7 +23,9 @@ use tokio_rustls::TlsConnector;
 use tracing::Span;
 
 use crate::{
-    config::{EnvelopeKey, List, QueueConfig, Script, ServerProtocol, SessionConfig},
+    config::{
+        EnvelopeKey, List, MailAuthConfig, QueueConfig, Script, ServerProtocol, SessionConfig,
+    },
     inbound::auth::SaslToken,
     outbound::{
         dane::{DnssecResolver, Tlsa},
@@ -44,6 +46,7 @@ pub struct Core {
     pub session: SessionCore,
     pub queue: QueueCore,
     pub resolvers: Resolvers,
+    pub mail_auth: MailAuthConfig,
 }
 
 pub struct Resolvers {

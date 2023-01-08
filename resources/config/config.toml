@@ -130,14 +130,19 @@ rate = "50/30s"
 key = "sender-domain"
 concurrency = 10000
 
-[dkim]
+[auth.iprev]
 verify = "strict"
 
-[dkim.sign]
-pki = "cert"
-domain = ""
+[auth.dkim]
+verify = "strict"
+sign = true
+
+[auth.signature."default"]
+public-key = "cert-name"
+private-key = "cert-name"
+domain = "example.org"
 selector = ""
-headers = ["From", "To", "Date", "Message-ID"]
+headers = ["From", "To", "Date", "Subject", "Message-ID"]
 algorithm = "rsa-sha256"
 canonicalization = "simple/relaxed"
 expire = "10d"
@@ -145,17 +150,24 @@ third-party = ""
 third-party-algo = ""
 auid = ""
 set-body-length = false
-reporting = true
 
-[spf]
-verify-ehlo = ""
-verify-mail-from = ""
+[auth.dkim.reporting]
+request = true
+send-rate = "1/20d"
+analyze = true
 
-[arc]
+[auth.spf]
+verify.ehlo = "relaxed"
+verify.mail-from = "relaxed"
+
+[auth.spf.reporting]
+send-rate = "1/20d"
+analyze = true
+
+[auth.arc]
 verify = "strict"
-
-[arc.seal]
-pki = "cert"
+seal = true
+cert = "cert-name"
 domain = ""
 selector = ""
 headers = ["From", "To", "Date", "Message-ID", "DKIM-Signature"]
@@ -164,7 +176,17 @@ canonicalization = "simple/relaxed"
 expire = "10d"
 set-body-length = false
 
-[external]
+[auth.dmarc]
+verify = "strict"
+
+[auth.dmarc.reporting]
+aggregate-frequency = never
+send-rate = "1/20d"
+analyze = true
+
+[auth.tls.reporting]
+send-rate = "1/30d"
+analyze = true
 
 [remote."lmtp"]
 address = 192.168.0.1
@@ -290,7 +312,6 @@ incoming-address = "dmarc@*"
 
 [certificate]
 [certificate."default"]
-type = "rsa"
 cert = '''
 -----BEGIN CERTIFICATE-----
 MIIFCTCCAvGgAwIBAgIUCgHGQYUqtelbHGVSzCVwBL3fyEUwDQYJKoZIhvcNAQEL
