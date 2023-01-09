@@ -22,9 +22,8 @@ use std::{
 
 use ahash::{AHashMap, AHashSet};
 use mail_auth::{
-    common::crypto::{Ed25519Key, RsaKey},
+    common::crypto::{Ed25519Key, RsaKey, Sha256},
     dkim::{Canonicalization, Done},
-    sha2::Sha256,
 };
 use mail_send::Credentials;
 use regex::Regex;
@@ -220,7 +219,7 @@ pub const THROTTLE_REMOTE_IP: u16 = 1 << 7;
 pub const THROTTLE_LOCAL_IP: u16 = 1 << 8;
 pub const THROTTLE_HELO_DOMAIN: u16 = 1 << 9;
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct Rate {
     pub requests: u64,
     pub period: Duration,
@@ -241,7 +240,6 @@ pub struct Ehlo {
     pub require: IfBlock<bool>,
 
     // Capabilities
-    pub auth: IfBlock<u64>,
     pub pipelining: IfBlock<bool>,
     pub chunking: IfBlock<bool>,
     pub requiretls: IfBlock<bool>,
@@ -249,14 +247,12 @@ pub struct Ehlo {
     pub future_release: IfBlock<Option<Duration>>,
     pub deliver_by: IfBlock<Option<Duration>>,
     pub mt_priority: IfBlock<Option<MtPriority>>,
-    pub size: IfBlock<Option<usize>>,
-    pub expn: IfBlock<bool>,
-    pub vrfy: IfBlock<bool>,
 }
 
 pub struct Auth {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub lookup: IfBlock<Option<Arc<List>>>,
+    pub mechanisms: IfBlock<u64>,
     pub errors_max: IfBlock<usize>,
     pub errors_wait: IfBlock<Duration>,
 }
@@ -288,8 +284,6 @@ pub struct Data {
     pub max_messages: IfBlock<usize>,
     pub max_message_size: IfBlock<usize>,
     pub max_received_headers: IfBlock<usize>,
-    pub max_mime_parts: IfBlock<usize>,
-    pub max_nested_messages: IfBlock<usize>,
 
     // Headers
     pub add_received: IfBlock<bool>,
@@ -438,7 +432,6 @@ pub enum ArcSealer {
 pub struct DkimAuthConfig {
     pub verify: IfBlock<VerifyStrategy>,
     pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
-    pub report_request: IfBlock<bool>,
     pub report_send: IfBlock<Option<Rate>>,
     pub report_analyze: IfBlock<bool>,
 }

@@ -867,9 +867,9 @@ dependencies = [
 
 [[package]]
 name = "ipnet"
-version = "2.7.0"
+version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11b0d96e660696543b251e58030cf9787df56da39dab19ad60eae7353040917e"
+checksum = "30e22bd8629359895450b59ea7a776c850561b96a3b1d31321c1949d9e6c9146"
 
 [[package]]
 name = "itertools"
@@ -967,7 +967,7 @@ dependencies = [
  "ed25519-dalek",
  "flate2",
  "lru-cache",
- "mail-builder",
+ "mail-builder 0.2.4 (git+https://github.com/stalwartlabs/mail-builder)",
  "mail-parser",
  "parking_lot",
  "quick-xml",
@@ -978,6 +978,13 @@ dependencies = [
  "sha2 0.10.6",
  "trust-dns-resolver",
  "zip",
+]
+
+[[package]]
+name = "mail-builder"
+version = "0.2.4"
+dependencies = [
+ "gethostname",
 ]
 
 [[package]]
@@ -1476,9 +1483,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.7.0"
+version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e076559ef8e241f2ae3479e36f97bd5741c0330689e217ad51ce2c76808b868a"
+checksum = "48aaa5748ba571fb95cd2c85c09f629215d3a6ece942baa100950af03a34f733"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1772,7 +1779,7 @@ dependencies = [
  "dashmap",
  "lru-cache",
  "mail-auth",
- "mail-builder",
+ "mail-builder 0.2.4",
  "mail-parser",
  "mail-send",
  "parking_lot",

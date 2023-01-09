@@ -1,18 +1,52 @@
 use std::time::SystemTime;
 
+use mail_auth::SpfResult;
 use smtp_proto::*;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::core::Session;
 
-impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
+use super::IsTls;
+
+impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
     pub async fn handle_ehlo(&mut self, domain: String) -> Result<(), ()> {
         // Set EHLO domain
         if domain != self.data.helo_domain {
-            self.data.helo_domain = domain;
+            // SPF check
+            if self.params.spf_ehlo.verify() {
+                let spf_result = self
+                    .core
+                    .resolvers
+                    .dns
+                    .verify_spf_helo(self.data.remote_ip, &domain, &self.instance.hostname)
+                    .await;
 
-            // Eval mail parameters
-            self.eval_mail_params().await;
+                // Reject EHLO when SPF fails in strict mode
+                match spf_result.result() {
+                    SpfResult::Pass => (),
+                    SpfResult::TempError if self.params.spf_ehlo.is_strict() => {
+                        return self
+                            .write(b"451 4.7.24 Temporary SPF validation error.\r\n")
+                            .await;
+                    }
+                    result => {
+                        if self.params.spf_ehlo.is_strict() {
+                            return self
+                                .write(
+                                    format!(
+                                        "550 5.7.23 SPF validation failed, status: {}.\r\n",
+                                        result
+                                    )
+                                    .as_bytes(),
+                                )
+                                .await;
+                        }
+                    }
+                }
+
+                self.data.spf_ehlo = spf_result.into();
+            }
+            self.data.helo_domain = domain;
         }
 
         // Reset
@@ -23,29 +57,52 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         let mut response = EhloResponse::new(self.instance.hostname.as_str());
         response.capabilities =
             EXT_ENHANCED_STATUS_CODES | EXT_8BIT_MIME | EXT_BINARY_MIME | EXT_SMTP_UTF8;
-        if self.params.starttls {
+        if !self.stream.is_tls() {
             response.capabilities |= EXT_START_TLS;
         }
-        if self.params.pipelining {
+        let ec = &self.core.session.config.ehlo;
+        let rc = &self.core.session.config.rcpt;
+        let ac = &self.core.session.config.auth;
+        let dc = &self.core.session.config.data;
+
+        // Pipelining
+        if *ec.pipelining.eval(self).await {
             response.capabilities |= EXT_PIPELINING;
         }
-        if self.params.chunking {
+
+        // Chunking
+        if *ec.chunking.eval(self).await {
             response.capabilities |= EXT_CHUNKING;
         }
-        if self.params.expn {
+
+        // Address Expansion
+        if rc.lookup_expn.eval(self).await.is_some() {
             response.capabilities |= EXT_EXPN;
         }
-        if self.params.vrfy {
+
+        // Recipient Verification
+        if rc.lookup_vrfy.eval(self).await.is_some() {
             response.capabilities |= EXT_VRFY;
         }
-        if self.params.requiretls {
+
+        // Require TLS
+        if *ec.requiretls.eval(self).await {
             response.capabilities |= EXT_REQUIRE_TLS;
         }
-        if self.params.auth != 0 {
-            response.capabilities |= EXT_AUTH;
-            response.auth_mechanisms = self.params.auth;
+
+        // Authentication
+        response.auth_mechanisms = *ac.mechanisms.eval(self).await;
+        if response.auth_mechanisms != 0 {
+            if !self.stream.is_tls() {
+                response.auth_mechanisms &= !(AUTH_PLAIN | AUTH_LOGIN);
+            }
+            if response.auth_mechanisms != 0 {
+                response.capabilities |= EXT_AUTH;
+            }
         }
-        if let Some(value) = &self.params.future_release {
+
+        // Future release
+        if let Some(value) = ec.future_release.eval(self).await {
             response.capabilities |= EXT_FUTURE_RELEASE;
             response.future_release_interval = value.as_secs();
             response.future_release_datetime = SystemTime::now()
@@ -54,19 +111,27 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 .unwrap_or(0)
                 + value.as_secs();
         }
-        if let Some(value) = &self.params.deliver_by {
+
+        // Deliver By
+        if let Some(value) = ec.deliver_by.eval(self).await {
             response.capabilities |= EXT_DELIVER_BY;
             response.deliver_by = value.as_secs();
         }
-        if let Some(value) = &self.params.mt_priority {
+
+        // Priority
+        if let Some(value) = ec.mt_priority.eval(self).await {
             response.capabilities |= EXT_MT_PRIORITY;
             response.mt_priority = *value;
         }
-        if let Some(value) = &self.params.size {
+
+        // Size
+        response.size = *dc.max_message_size.eval(self).await;
+        if response.size > 0 {
             response.capabilities |= EXT_SIZE;
-            response.size = *value;
         }
-        if let Some(value) = &self.params.no_soliciting {
+
+        // No soliciting
+        if let Some(value) = ec.no_soliciting.eval(self).await {
             response.capabilities |= EXT_NO_SOLICITING;
             response.no_soliciting = if !value.is_empty() {
                 value.to_string().into()

@@ -126,13 +126,6 @@ impl Config {
             EnvelopeKey::RemoteIp,
             EnvelopeKey::LocalIp,
         ];
-        let mechanisms = self
-            .parse_if_block::<Vec<Mechanism>>(
-                "session.ehlo.capabilities.auth",
-                ctx,
-                &available_keys,
-            )?
-            .unwrap_or_default();
 
         Ok(Ehlo {
             script: self
@@ -143,48 +136,51 @@ impl Config {
                 .parse_if_block("session.ehlo.require", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             pipelining: self
-                .parse_if_block("session.ehlo.capabilities.pipelining", ctx, &available_keys)?
+                .parse_if_block("session.extensions.pipelining", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             chunking: self
-                .parse_if_block("session.ehlo.capabilities.chunking", ctx, &available_keys)?
+                .parse_if_block("session.extensions.chunking", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             requiretls: self
-                .parse_if_block("session.ehlo.capabilities.requiretls", ctx, &available_keys)?
+                .parse_if_block("session.extensions.requiretls", ctx, &available_keys)?
                 .unwrap_or_default(),
             no_soliciting: self
-                .parse_if_block(
-                    "session.ehlo.capabilities.no-soliciting",
-                    ctx,
-                    &available_keys,
-                )?
+                .parse_if_block("session.extensions.no-soliciting", ctx, &available_keys)?
                 .unwrap_or_default(),
             future_release: self
-                .parse_if_block(
-                    "session.ehlo.capabilities.future-release",
-                    ctx,
-                    &available_keys,
-                )?
+                .parse_if_block("session.extensions.future-release", ctx, &available_keys)?
                 .unwrap_or_default(),
             deliver_by: self
-                .parse_if_block("session.ehlo.capabilities.deliver-by", ctx, &available_keys)?
+                .parse_if_block("session.extensions.deliver-by", ctx, &available_keys)?
                 .unwrap_or_default(),
             mt_priority: self
-                .parse_if_block(
-                    "session.ehlo.capabilities.mt-priority",
-                    ctx,
-                    &available_keys,
-                )?
+                .parse_if_block("session.extensions.mt-priority", ctx, &available_keys)?
                 .unwrap_or_default(),
-            size: self
-                .parse_if_block("session.ehlo.capabilities.size", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(Some(25 * 1024 * 1024))),
-            expn: self
-                .parse_if_block("session.ehlo.capabilities.expn", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(false)),
-            vrfy: self
-                .parse_if_block("session.ehlo.capabilities.vrfy", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(false)),
-            auth: IfBlock {
+        })
+    }
+
+    fn parse_session_auth(&self, ctx: &ConfigContext) -> super::Result<Auth> {
+        let available_keys = [
+            EnvelopeKey::Listener,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+            EnvelopeKey::HeloDomain,
+        ];
+
+        let mechanisms = self
+            .parse_if_block::<Vec<Mechanism>>("session.auth.mechanisms", ctx, &available_keys)?
+            .unwrap_or_default();
+
+        Ok(Auth {
+            script: self
+                .parse_if_block::<Option<String>>("session.auth.script", ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.scripts, "session.auth.script", "script")?,
+            lookup: self
+                .parse_if_block::<Option<String>>("session.auth.lookup", ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.lists, "session.auth.lookup", "lookup list")?,
+            mechanisms: IfBlock {
                 if_then: mechanisms
                     .if_then
                     .into_iter()
@@ -198,26 +194,6 @@ impl Config {
                     .into_iter()
                     .fold(0, |acc, m| acc | m.mechanism),
             },
-        })
-    }
-
-    fn parse_session_auth(&self, ctx: &ConfigContext) -> super::Result<Auth> {
-        let available_keys = [
-            EnvelopeKey::Listener,
-            EnvelopeKey::RemoteIp,
-            EnvelopeKey::LocalIp,
-            EnvelopeKey::HeloDomain,
-        ];
-
-        Ok(Auth {
-            script: self
-                .parse_if_block::<Option<String>>("session.auth.script", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "session.auth.script", "script")?,
-            lookup: self
-                .parse_if_block::<Option<String>>("session.auth.lookup", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.lists, "session.auth.lookup", "lookup list")?,
             errors_max: self
                 .parse_if_block("session.auth.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(3)),
@@ -302,8 +278,6 @@ impl Config {
         let available_keys = [
             EnvelopeKey::Sender,
             EnvelopeKey::SenderDomain,
-            EnvelopeKey::Recipient,
-            EnvelopeKey::RecipientDomain,
             EnvelopeKey::AuthenticatedAs,
             EnvelopeKey::Listener,
             EnvelopeKey::RemoteIp,
@@ -325,12 +299,6 @@ impl Config {
             max_received_headers: self
                 .parse_if_block("session.data.limits.received-headers", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(50)),
-            max_mime_parts: self
-                .parse_if_block("session.data.limits.mime-parts", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(50)),
-            max_nested_messages: self
-                .parse_if_block("session.data.limits.nested-messages", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(3)),
             add_received: self
                 .parse_if_block("session.data.add-headers.received", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),

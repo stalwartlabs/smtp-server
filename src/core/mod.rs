@@ -7,13 +7,9 @@ use std::{
 };
 
 use dashmap::DashMap;
-use mail_auth::{common::lru::LruCache, Resolver};
-use smtp_proto::{
-    request::receiver::{
-        BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, LineReceiver,
-        RequestReceiver,
-    },
-    MtPriority,
+use mail_auth::{common::lru::LruCache, IprevOutput, Resolver, SpfOutput};
+use smtp_proto::request::receiver::{
+    BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, LineReceiver, RequestReceiver,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -25,6 +21,7 @@ use tracing::Span;
 use crate::{
     config::{
         EnvelopeKey, List, MailAuthConfig, QueueConfig, Script, ServerProtocol, SessionConfig,
+        VerifyStrategy,
     },
     inbound::auth::SaslToken,
     outbound::{
@@ -129,6 +126,10 @@ pub struct SessionData {
     pub valid_until: Instant,
     pub bytes_left: usize,
     pub messages_sent: usize,
+
+    pub iprev: Option<IprevOutput>,
+    pub spf_ehlo: Option<SpfOutput>,
+    pub spf_mail_from: Option<SpfOutput>,
 }
 
 pub struct SessionAddress {
@@ -147,29 +148,13 @@ pub struct SessionParameters {
     // Ehlo parameters
     pub ehlo_script: Option<Arc<Script>>,
     pub ehlo_require: bool,
-
-    // Supported capabilities
-    pub pipelining: bool,
-    pub chunking: bool,
-    pub requiretls: bool,
-    pub starttls: bool,
-    pub expn: bool,
-    pub vrfy: bool,
-    pub no_soliciting: Option<String>,
-    pub future_release: Option<Duration>,
-    pub deliver_by: Option<Duration>,
-    pub mt_priority: Option<MtPriority>,
-    pub size: Option<usize>,
-    pub auth: u64,
+    //pub starttls: bool,
 
     // Auth parameters
     pub auth_script: Option<Arc<Script>>,
     pub auth_lookup: Option<Arc<List>>,
     pub auth_errors_max: usize,
     pub auth_errors_wait: Duration,
-
-    // Mail parameters
-    pub mail_script: Option<Arc<Script>>,
 
     // Rcpt parameters
     pub rcpt_script: Option<Arc<Script>>,
@@ -181,20 +166,12 @@ pub struct SessionParameters {
     pub rcpt_lookup_addresses: Option<Arc<List>>,
     pub rcpt_lookup_expn: Option<Arc<List>>,
     pub rcpt_lookup_vrfy: Option<Arc<List>>,
+    pub max_message_size: usize,
 
-    // Data parameters
-    pub data_script: Option<Arc<Script>>,
-    pub data_max_messages: usize,
-    pub data_max_message_size: usize,
-    pub data_max_received_headers: usize,
-    pub data_max_mime_parts: usize,
-    pub data_max_nested_messages: usize,
-    pub data_add_received: bool,
-    pub data_add_received_spf: bool,
-    pub data_add_return_path: bool,
-    pub data_add_auth_results: bool,
-    pub data_add_message_id: bool,
-    pub data_add_date: bool,
+    // Mail authentication parameters
+    pub iprev: VerifyStrategy,
+    pub spf_ehlo: VerifyStrategy,
+    pub spf_mail_from: VerifyStrategy,
 }
 
 impl SessionData {
@@ -215,6 +192,9 @@ impl SessionData {
             bytes_left: 0,
             delivery_by: 0,
             future_release: 0,
+            iprev: None,
+            spf_ehlo: None,
+            spf_mail_from: None,
         }
     }
 }
@@ -253,6 +233,18 @@ pub trait Envelope {
             EnvelopeKey::LocalIp => self.local_ip().to_string().into(),
             EnvelopeKey::Priority => self.priority().to_string().into(),
         }
+    }
+}
+
+impl VerifyStrategy {
+    #[inline(always)]
+    pub fn verify(&self) -> bool {
+        matches!(self, VerifyStrategy::Strict | VerifyStrategy::Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn is_strict(&self) -> bool {
+        matches!(self, VerifyStrategy::Strict)
     }
 }
 

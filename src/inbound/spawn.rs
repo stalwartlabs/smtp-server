@@ -12,6 +12,8 @@ use crate::{
     core::{Core, ServerInstance, Session, SessionData, SessionParameters, State},
 };
 
+use super::IsTls;
+
 impl Server {
     pub fn spawn(self, core: Arc<Core>, shutdown_rx: watch::Receiver<bool>) -> Result<(), String> {
         // Build TLS acceptor
@@ -96,8 +98,7 @@ impl Server {
                                         stream,
                                         in_flight,
                                         data: SessionData::new(local_ip, remote_addr.ip()),
-                                        params: SessionParameters::default()
-                                                .can_starttls(tls_acceptor.is_some() && !tls_implicit),
+                                        params: SessionParameters::default(),
                                     };
 
                                     // Enforce throttle
@@ -115,21 +116,11 @@ impl Server {
                                             if let Ok(mut session) = session.into_tls(tls_acceptor.unwrap()).await {
                                                 if session.write(&instance.greeting).await.is_ok() {
                                                     session.eval_session_params().await;
-                                                    session.eval_ehlo_params().await;
-                                                    session.eval_auth_params().await;
-                                                    if !session.params.ehlo_require {
-                                                        session.eval_mail_params().await;
-                                                    }
                                                     session.handle_conn(shutdown_rx).await;
                                                 }
                                             }
                                         } else if session.write(&instance.greeting).await.is_ok() {
                                             session.eval_session_params().await;
-                                            session.eval_ehlo_params().await;
-                                            session.eval_auth_params().await;
-                                            if !session.params.ehlo_require {
-                                                session.eval_mail_params().await;
-                                            }
                                             session.handle_conn(tls_acceptor, shutdown_rx).await;
                                         }
                                     });
@@ -159,11 +150,10 @@ impl Server {
 
 impl Session<TcpStream> {
     pub async fn into_tls(
-        mut self,
+        self,
         acceptor: TlsAcceptor,
     ) -> Result<Session<TlsStream<TcpStream>>, ()> {
         let span = self.span;
-        self.params.starttls = false;
         Ok(Session {
             stream: match acceptor.accept(self.stream).await {
                 Ok(stream) => stream,
@@ -209,7 +199,7 @@ impl Session<TlsStream<TcpStream>> {
     }
 }
 
-impl<T: AsyncRead + AsyncWrite + Unpin> Session<T> {
+impl<T: AsyncRead + AsyncWrite + IsTls + Unpin> Session<T> {
     pub async fn handle_conn_(
         mut self,
         mut shutdown_rx: watch::Receiver<bool>,

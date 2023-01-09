@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use mail_auth::{common::lru::DnsCache, mta_sts::MtaSts};
+use reqwest::redirect;
 
 use crate::core::Resolvers;
 
@@ -14,10 +15,21 @@ impl Resolvers {
         timeout: Duration,
     ) -> Result<Arc<Policy>, Error> {
         // Lookup MTA-STS TXT record
-        let record = self
+        let record = match self
             .dns
             .txt_lookup::<MtaSts>(format!("_mta-sts.{}.", domain))
-            .await?;
+            .await
+        {
+            Ok(record) => record,
+            Err(err) => {
+                // Return the cached policy in case of failure
+                return if let Some(value) = self.cache.mta_sts.get(domain) {
+                    Ok(value)
+                } else {
+                    Err(err.into())
+                };
+            }
+        };
 
         // Check if the policy has been cached
         if let Some(value) = self.cache.mta_sts.get(domain) {
@@ -30,6 +42,7 @@ impl Resolvers {
         let bytes = reqwest::Client::builder()
             .user_agent(HTTP_USER_AGENT)
             .timeout(timeout)
+            .redirect(redirect::Policy::none())
             .build()?
             .get(&format!(
                 "https://mta-sts.{}/.well-known/mta-sts.txt",

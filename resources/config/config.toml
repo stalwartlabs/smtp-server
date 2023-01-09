@@ -53,11 +53,7 @@ duration = "10m"
 require = true
 #script = ehlo.sieve
 
-[session.ehlo.capabilities]
-auth = [
-    { if = "listener", eq = "submission", then = ["plain", "login"]},
-    { else = false }
-]
+[session.extensions]
 pipelining = true
 chunking = true
 requiretls = true
@@ -69,10 +65,12 @@ future-release = [
 ]
 deliver-by = false
 mt-priority = false
-vrfy = true
-expn = true
 
 [session.auth]
+mechanisms = [
+    { if = "listener", eq = "submission", then = ["plain", "login"]},
+    { else = false }
+]
 lookup = [ { if = "listener", eq = "submission", then = "local-addresses" }, 
            { else = false } ]
 
@@ -150,9 +148,9 @@ third-party = ""
 third-party-algo = ""
 auid = ""
 set-body-length = false
+report = true
 
 [auth.dkim.reporting]
-request = true
 send-rate = "1/20d"
 analyze = true
 

@@ -17,7 +17,11 @@ use super::{
 };
 
 impl QueueCore {
-    pub async fn queue_message(&self, mut message: Box<Message>, message_bytes: Vec<u8>) -> bool {
+    pub async fn queue_message(
+        &self,
+        mut message: Box<Message>,
+        mut message_bytes: Vec<Vec<u8>>,
+    ) -> bool {
         // Generate id
         message.id = (message.created.saturating_sub(946684800) & 0xFFFFFFFF)
             | (self.id_seq.fetch_add(1, Ordering::Relaxed) as u64) << 32;
@@ -34,7 +38,7 @@ impl QueueCore {
             .push(format!("{}_{}.msg", message.id, message.size));
 
         // Serialize metadata
-        let metadata = message.serialize();
+        message_bytes.push(message.serialize());
 
         // Save message
         let mut file = match fs::File::create(&message.path).await {
@@ -44,8 +48,8 @@ impl QueueCore {
                 return false;
             }
         };
-        for bytes in [&message_bytes, &metadata] {
-            if let Err(err) = file.write_all(bytes).await {
+        for bytes in message_bytes {
+            if let Err(err) = file.write_all(&bytes).await {
                 tracing::error!(
                     "Failed to write to file {}: {}",
                     message.path.display(),

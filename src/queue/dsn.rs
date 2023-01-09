@@ -27,7 +27,7 @@ impl QueueCore {
                 let mut message = message.build_dsn_message(&self.config).await;
                 message.size = dsn.len();
                 message.size_headers = dsn.len();
-                self.queue_message(message, dsn).await;
+                self.queue_message(message, vec![dsn]).await;
             }
         } else {
             message.handle_double_bounce();

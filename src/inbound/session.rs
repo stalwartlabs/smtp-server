@@ -14,9 +14,9 @@ use crate::{
     core::{Envelope, Session, State},
 };
 
-use super::auth::SaslToken;
+use super::{auth::SaslToken, IsTls};
 
-impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
+impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
     pub async fn ingest(&mut self, bytes: &[u8]) -> Result<bool, ()> {
         let mut iter = bytes.iter();
         let mut state = std::mem::replace(&mut self.state, State::None);
@@ -40,7 +40,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 }
                             }
                             Request::Data => {
-                                self.eval_data_params().await;
                                 if self.can_send_data().await? {
                                     self.write(b"354 Start mail input; end with <CRLF>.<CRLF>\r\n")
                                         .await?;
@@ -53,9 +52,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 chunk_size,
                                 is_last,
                             } => {
-                                self.eval_data_params().await;
                                 state = if chunk_size + self.data.message.len()
-                                    < self.params.data_max_message_size
+                                    < self.params.max_message_size
                                 {
                                     if self.data.message.is_empty() {
                                         self.data.message = Vec::with_capacity(chunk_size);
@@ -73,13 +71,18 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 mechanism,
                                 initial_response,
                             } => {
-                                // TODO no plain auth over plaintext
-                                if self.params.auth == 0 || self.params.auth_lookup.is_none() {
+                                let auth =
+                                    *self.core.session.config.auth.mechanisms.eval(self).await;
+                                if auth == 0 || self.params.auth_lookup.is_none() {
                                     self.write(b"503 5.5.1 AUTH not allowed.\r\n").await?;
                                 } else if !self.data.authenticated_as.is_empty() {
                                     self.write(b"503 5.5.1 Already authenticated.\r\n").await?;
+                                } else if mechanism & (AUTH_LOGIN | AUTH_PLAIN) != 0
+                                    && !self.stream.is_tls()
+                                {
+                                    self.write(b"503 5.5.1 Clear text authentication without TLS is forbidden.\r\n").await?;
                                 } else if let Some(mut token) =
-                                    SaslToken::from_mechanism(mechanism & self.params.auth)
+                                    SaslToken::from_mechanism(mechanism & auth)
                                 {
                                     if self
                                         .handle_sasl_response(
@@ -108,12 +111,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                 self.handle_expn(value).await?;
                             }
                             Request::StartTls => {
-                                if self.params.starttls {
+                                if !self.stream.is_tls() {
                                     self.write(b"220 2.0.0 Ready to start TLS.\r\n").await?;
                                     self.state = State::default();
                                     return Ok(false);
                                 } else {
-                                    self.write(b"504 5.7.4 Unable to start TLS.\r\n").await?;
+                                    self.write(b"504 5.7.4 Already in TLS mode.\r\n").await?;
                                 }
                             }
                             Request::Rset => {
@@ -135,7 +138,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                                     && self.data.helo_domain.is_empty()
                                 {
                                     self.data.helo_domain = host;
-                                    self.eval_mail_params().await;
                                     self.write(
                                         format!("250 {} says hello\r\n", self.instance.hostname)
                                             .as_bytes(),
@@ -201,7 +203,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     }
                 },
                 State::Data(receiver) => {
-                    if self.data.message.len() + bytes.len() < self.params.data_max_message_size {
+                    if self.data.message.len() + bytes.len() < self.params.max_message_size {
                         if receiver.ingest(&mut iter, &mut self.data.message) {
                             self.queue_message().await?;
                             state = State::default();
@@ -274,9 +276,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
 
         Ok(true)
     }
+}
 
+impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     pub fn reset(&mut self) {
         self.data.mail_from = None;
+        self.data.spf_mail_from = None;
         self.data.rcpt_to.clear();
         self.data.message = Vec::with_capacity(0);
         self.data.priority = 0;
