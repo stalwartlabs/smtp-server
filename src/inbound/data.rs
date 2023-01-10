@@ -5,7 +5,7 @@ use std::{
 };
 
 use mail_auth::{
-    common::headers::HeaderWriter, AuthenticatedMessage, AuthenticationResults, DkimResult,
+    common::headers::HeaderWriter, dmarc, AuthenticatedMessage, AuthenticationResults, DkimResult,
     DmarcResult, ReceivedSpf, SpfOutput, SpfResult,
 };
 use mail_builder::headers::{date::Date, message_id::generate_message_id_header};
@@ -13,16 +13,18 @@ use smtp_proto::{RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    core::Session,
+    core::{Session, SessionAddress},
     queue::{self, Message, SimpleEnvelope},
 };
 
-impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
+use super::IsTls;
+
+impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
     pub async fn queue_message(&mut self) -> Result<(), ()> {
         // Authenticate message
         let dc = &self.core.session.config.data;
         let ac = &self.core.mail_auth;
-        let mail_from = self.data.mail_from.take().unwrap();
+
         let auth_message =
             if let Some(auth_message) = AuthenticatedMessage::parse(&self.data.message) {
                 auth_message
@@ -88,6 +90,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         };
 
         // Verify DMARC
+        let mail_from = self.data.mail_from.take().unwrap();
         let dmarc_output = if dmarc.verify() && self.data.spf_mail_from.is_some() {
             let spf_output = if let Some(spf_helo) = &self.data.spf_ehlo {
                 if matches!(spf_helo.result(), SpfResult::Pass) {
@@ -114,7 +117,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     spf_output,
                 )
                 .await;
-            if dmarc.is_strict()
+            if (dmarc.is_strict() || dmarc_output.policy() == dmarc::Policy::Reject)
                 && !matches!(
                     (dmarc_output.spf_result(), dmarc_output.dkim_result()),
                     (DmarcResult::Pass, DmarcResult::Pass)
@@ -134,6 +137,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         } else {
             None
         };
+
+        // Build message
+        let rcpt_to = std::mem::take(&mut self.data.rcpt_to);
+        let mut message = self.build_message(mail_from, rcpt_to).await;
 
         // Build authentication results header
         let mut auth_results = AuthenticationResults::new(&self.instance.hostname);
@@ -158,7 +165,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             auth_results = auth_results.with_spf_mailfrom_result(
                 spf_mail_from,
                 self.data.remote_ip,
-                &mail_from.address,
+                &message.return_path,
                 &self.data.helo_domain,
             );
         }
@@ -169,8 +176,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             auth_results = auth_results.with_iprev_result(iprev, self.data.remote_ip);
         }
 
-        // Add authentication results header
+        // Add Received header
         let mut headers = Vec::with_capacity(64);
+        if *dc.add_received.eval(self).await {
+            self.write_received(&mut headers, message.id)
+        }
+
+        // Add authentication results header
         if *dc.add_auth_results.eval(self).await {
             auth_results.write_header(&mut headers);
         }
@@ -191,7 +203,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     spf_output,
                     self.data.remote_ip,
                     &self.data.helo_domain,
-                    &mail_from.address,
+                    &message.return_path,
                     &self.instance.hostname,
                 )
                 .write_header(&mut headers);
@@ -227,18 +239,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         // Add Return-Path
         if *dc.add_return_path.eval(self).await {
             headers.extend_from_slice(b"Return-Path: <");
-            headers.extend_from_slice(mail_from.address.as_bytes());
+            headers.extend_from_slice(message.return_path.as_bytes());
             headers.extend_from_slice(b">\r\n");
-        }
-
-        // Add Received header
-        if *dc.add_received.eval(self).await {
-            let coco = "fdf";
         }
 
         // DKIM sign
         for signer in ac.dkim.sign.eval(self).await.iter() {
-            match signer.sign(&[headers.as_ref(), &self.data.message]) {
+            match signer.sign_chained(&[headers.as_ref(), &self.data.message]) {
                 Ok(signature) => {
                     signature.write_header(&mut headers);
                 }
@@ -248,31 +255,79 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             }
         }
 
+        // Update size
+        message.size = self.data.message.len() + headers.len();
+        message.size_headers = auth_message.body_offset() + headers.len();
+
+        // Verify queue quota
+        if self.core.queue.has_quota(&mut message).await {
+            let id = message.id;
+            if self
+                .core
+                .queue
+                .queue_message(
+                    message,
+                    vec![headers, std::mem::take(&mut self.data.message)],
+                )
+                .await
+            {
+                self.data.messages_sent += 1;
+                self.write(
+                    format!(
+                        "250 2.0.0 Message queued for delivery with ID {:X}.\r\n",
+                        id
+                    )
+                    .as_bytes(),
+                )
+                .await?;
+            } else {
+                self.write(b"451 4.3.5 Unable to accept message at this time.\r\n")
+                    .await?;
+            }
+        } else {
+            tracing::warn!(
+                parent: &self.span,
+                module = "queue",
+                event = "quota-exceeded",
+                "Queue quota exceeded, rejecting message."
+            );
+            self.write(b"452 4.3.1 Mail system full, try again later.\r\n")
+                .await?;
+        }
+
+        self.reset();
+        Ok(())
+    }
+
+    async fn build_message(
+        &self,
+        mail_from: SessionAddress,
+        mut rcpt_to: Vec<SessionAddress>,
+    ) -> Box<Message> {
         // Build message
         let mut message = Box::new(Message {
-            id: 0,
+            id: self.core.queue.queue_id(),
             path: PathBuf::new(),
             created: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_secs()),
             return_path: mail_from.address,
             return_path_lcase: mail_from.address_lcase,
             return_path_domain: mail_from.domain,
-            recipients: Vec::with_capacity(self.data.rcpt_to.len()),
+            recipients: Vec::with_capacity(rcpt_to.len()),
             domains: Vec::with_capacity(3),
             flags: mail_from.flags,
             priority: self.data.priority,
-            size: self.data.message.len() + headers.len(),
-            size_headers: auth_message.body_offset() + headers.len(),
+            size: 0,
+            size_headers: 0,
             env_id: mail_from.dsn_info,
             queue_refs: Vec::with_capacity(0),
         });
 
         // Add recipients
         let future_release = Duration::from_secs(self.data.future_release);
-        self.data.rcpt_to.sort_unstable();
-        for rcpt in self.data.rcpt_to.drain(..) {
+        rcpt_to.sort_unstable();
+        for rcpt in rcpt_to {
             if message
                 .domains
                 .last()
@@ -338,38 +393,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 orcpt: rcpt.dsn_info,
             });
         }
-
-        // Verify queue quota
-        if self.core.queue.has_quota(&mut message).await {
-            if self
-                .core
-                .queue
-                .queue_message(
-                    message,
-                    vec![headers, std::mem::take(&mut self.data.message)],
-                )
-                .await
-            {
-                self.data.messages_sent += 1;
-                self.write(b"250 2.0.0 Message queued for delivery.\r\n")
-                    .await?;
-            } else {
-                self.write(b"451 4.3.5 Unable to accept message at this time.\r\n")
-                    .await?;
-            }
-        } else {
-            tracing::warn!(
-                parent: &self.span,
-                module = "queue",
-                event = "quota-exceeded",
-                "Queue quota exceeded, rejecting message."
-            );
-            self.write(b"452 4.3.1 Mail system full, try again later.\r\n")
-                .await?;
-        }
-
-        self.reset();
-        Ok(())
+        message
     }
 
     pub async fn can_send_data(&mut self) -> Result<bool, ()> {
@@ -388,15 +412,39 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             Ok(false)
         }
     }
+
+    fn write_received(&self, headers: &mut Vec<u8>, id: u64) {
+        headers.extend_from_slice(b"Received: from ");
+        headers.extend_from_slice(self.data.helo_domain.as_bytes());
+        headers.extend_from_slice(b" (");
+        headers.extend_from_slice(
+            self.data
+                .iprev
+                .as_ref()
+                .and_then(|ir| ir.ptr.as_ref())
+                .and_then(|ptr| ptr.first().map(|s| s.as_str()))
+                .unwrap_or("unknown")
+                .as_bytes(),
+        );
+        headers.extend_from_slice(b" [");
+        headers.extend_from_slice(self.data.remote_ip.to_string().as_bytes());
+        headers.extend_from_slice(b"])\r\n\t");
+        self.stream.write_tls_header(headers);
+        headers.extend_from_slice(b"by ");
+        headers.extend_from_slice(self.instance.hostname.as_bytes());
+        headers.extend_from_slice(b" (Stalwart SMTP) with ");
+        headers.extend_from_slice(
+            if self.stream.is_tls() {
+                "ESMTPS"
+            } else {
+                "ESMTP"
+            }
+            .as_bytes(),
+        );
+        headers.extend_from_slice(b" id ");
+        headers.extend_from_slice(format!("{:X}", id).as_bytes());
+        headers.extend_from_slice(b";\r\n\t");
+        headers.extend_from_slice(Date::now().to_rfc822().as_bytes());
+        headers.extend_from_slice(b"\r\n");
+    }
 }
-
-/*
-
-Received: from open.nlnet.nl (open.nlnet.nl [IPv6:2a04:b900::1:0:0:12])
-    (using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits)
-     key-exchange X25519 server-signature RSA-PSS (2048 bits) server-digest SHA256)
-    (No client certificate requested)
-    by mail.stalw.art (Postfix) with ESMTPS id 1BC637CF44
-    for <mauro@stalw.art>; Wed,  4 Jan 2023 20:33:01 +0000 (UTC)
-
-*/

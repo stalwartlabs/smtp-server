@@ -13,7 +13,7 @@ use crate::core::QueueCore;
 
 use super::{
     instant_to_timestamp, Domain, Error, ErrorDetails, Event, HostResponse, Message, Recipient,
-    Schedule, Status, RCPT_STATUS_CHANGED,
+    Schedule, SimpleEnvelope, Status, RCPT_STATUS_CHANGED,
 };
 
 impl QueueCore {
@@ -23,8 +23,9 @@ impl QueueCore {
         mut message_bytes: Vec<Vec<u8>>,
     ) -> bool {
         // Generate id
-        message.id = (message.created.saturating_sub(946684800) & 0xFFFFFFFF)
-            | (self.id_seq.fetch_add(1, Ordering::Relaxed) as u64) << 32;
+        if message.id == 0 {
+            message.id = self.queue_id();
+        }
 
         // Build path
         message.path = self.config.path.eval(message.as_ref()).await.clone();
@@ -79,6 +80,69 @@ impl QueueCore {
         }
 
         true
+    }
+
+    pub fn queue_id(&self) -> u64 {
+        (SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+            .saturating_sub(946684800)
+            & 0xFFFFFFFF)
+            | (self.id_seq.fetch_add(1, Ordering::Relaxed) as u64) << 32
+    }
+
+    pub async fn new_message(
+        &self,
+        return_path: impl Into<String>,
+        return_path_lcase: impl Into<String>,
+        return_path_domain: impl Into<String>,
+        to_domain: impl Into<String>,
+        to_addr: impl Into<String>,
+        to_addr_lcase: impl Into<String>,
+    ) -> Box<Message> {
+        let mut message = Box::new(Message {
+            id: 0,
+            path: PathBuf::new(),
+            created: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            return_path: return_path.into(),
+            return_path_lcase: return_path_lcase.into(),
+            return_path_domain: return_path_domain.into(),
+            recipients: vec![Recipient {
+                domain_idx: 0,
+                address: to_addr.into(),
+                address_lcase: to_addr_lcase.into(),
+                status: Status::Scheduled,
+                flags: 0,
+                orcpt: None,
+            }],
+            domains: Vec::with_capacity(1),
+            flags: 0,
+            env_id: None,
+            priority: 0,
+            size: 0,
+            size_headers: 0,
+            queue_refs: vec![],
+        });
+
+        let to_domain = to_domain.into();
+        let expires = *self
+            .config
+            .expire
+            .eval(&SimpleEnvelope::new(message.as_ref(), &to_domain))
+            .await;
+        message.domains.push(Domain {
+            domain: to_domain,
+            retry: Schedule::now(),
+            notify: Schedule::later(expires + Duration::from_secs(10)),
+            expires: Instant::now() + expires,
+            status: Status::Scheduled,
+            changed: false,
+        });
+
+        message
     }
 }
 

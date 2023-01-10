@@ -1,6 +1,5 @@
 use std::time::SystemTime;
 
-use mail_auth::SpfResult;
 use smtp_proto::*;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -13,40 +12,31 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         // Set EHLO domain
         if domain != self.data.helo_domain {
             // SPF check
+            let prev_helo_domain = std::mem::replace(&mut self.data.helo_domain, domain);
+
             if self.params.spf_ehlo.verify() {
-                let spf_result = self
+                let spf_output = self
                     .core
                     .resolvers
                     .dns
-                    .verify_spf_helo(self.data.remote_ip, &domain, &self.instance.hostname)
+                    .verify_spf_helo(
+                        self.data.remote_ip,
+                        &self.data.helo_domain,
+                        &self.instance.hostname,
+                    )
                     .await;
 
-                // Reject EHLO when SPF fails in strict mode
-                match spf_result.result() {
-                    SpfResult::Pass => (),
-                    SpfResult::TempError if self.params.spf_ehlo.is_strict() => {
-                        return self
-                            .write(b"451 4.7.24 Temporary SPF validation error.\r\n")
-                            .await;
-                    }
-                    result => {
-                        if self.params.spf_ehlo.is_strict() {
-                            return self
-                                .write(
-                                    format!(
-                                        "550 5.7.23 SPF validation failed, status: {}.\r\n",
-                                        result
-                                    )
-                                    .as_bytes(),
-                                )
-                                .await;
-                        }
-                    }
+                if self
+                    .handle_spf(&spf_output, self.params.spf_ehlo.is_strict())
+                    .await?
+                {
+                    self.data.spf_ehlo = spf_output.into();
+                } else {
+                    self.data.mail_from = None;
+                    self.data.helo_domain = prev_helo_domain;
+                    return Ok(());
                 }
-
-                self.data.spf_ehlo = spf_result.into();
             }
-            self.data.helo_domain = domain;
         }
 
         // Reset

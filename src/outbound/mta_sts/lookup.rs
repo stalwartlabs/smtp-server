@@ -3,10 +3,9 @@ use std::{sync::Arc, time::Duration};
 use mail_auth::{common::lru::DnsCache, mta_sts::MtaSts};
 use reqwest::redirect;
 
-use crate::core::Resolvers;
+use crate::{core::Resolvers, USER_AGENT};
 
 use super::{Error, Policy};
-static HTTP_USER_AGENT: &str = concat!("StalwartSMTP/", env!("CARGO_PKG_VERSION"),);
 
 impl Resolvers {
     pub async fn lookup_mta_sts_policy<'x>(
@@ -40,7 +39,7 @@ impl Resolvers {
 
         // Fetch policy
         let bytes = reqwest::Client::builder()
-            .user_agent(HTTP_USER_AGENT)
+            .user_agent(USER_AGENT)
             .timeout(timeout)
             .redirect(redirect::Policy::none())
             .build()?

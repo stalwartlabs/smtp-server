@@ -7,16 +7,16 @@ use smtp_proto::{
     Response, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS,
 };
 use std::fmt::Write;
-use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
 use crate::config::QueueConfig;
 use crate::core::QueueCore;
+use crate::reporting::sign_local_message;
 
 use super::{
-    instant_to_timestamp, Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule,
+    instant_to_timestamp, Domain, Error, ErrorDetails, HostResponse, Message, Recipient,
     SimpleEnvelope, Status, RCPT_DSN_SENT, RCPT_STATUS_CHANGED,
 };
 
@@ -24,10 +24,20 @@ impl QueueCore {
     pub async fn send_dsn(&self, message: &mut Message) {
         if !message.return_path.is_empty() {
             if let Some(dsn) = message.build_dsn(&self.config).await {
-                let mut message = message.build_dsn_message(&self.config).await;
-                message.size = dsn.len();
-                message.size_headers = dsn.len();
-                self.queue_message(message, vec![dsn]).await;
+                let mut message = self
+                    .new_message(
+                        "",
+                        "",
+                        "",
+                        &message.return_path_domain,
+                        &message.return_path,
+                        &message.return_path_lcase,
+                    )
+                    .await;
+
+                // Sign message
+                let message_bytes = message.sign(&self.config.dsn.sign, dsn).await;
+                self.queue_message(message, message_bytes).await;
             }
         } else {
             message.handle_double_bounce();
@@ -260,47 +270,6 @@ impl Message {
             .write_to_vec()
             .unwrap_or_default()
             .into()
-    }
-
-    async fn build_dsn_message(&self, config: &QueueConfig) -> Box<Message> {
-        let expires = *config
-            .expire
-            .eval(&SimpleEnvelope::new(self, &self.return_path_domain))
-            .await;
-
-        Box::new(Message {
-            id: 0,
-            path: PathBuf::new(),
-            created: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            return_path: "".to_string(),
-            return_path_lcase: "".to_string(),
-            return_path_domain: "".to_string(),
-            recipients: vec![Recipient {
-                domain_idx: 0,
-                address: self.return_path.clone(),
-                address_lcase: self.return_path_lcase.clone(),
-                status: Status::Scheduled,
-                flags: 0,
-                orcpt: None,
-            }],
-            domains: vec![Domain {
-                domain: self.return_path_domain.clone(),
-                retry: Schedule::now(),
-                notify: Schedule::later(expires + Duration::from_secs(10)),
-                expires: Instant::now() + expires,
-                status: Status::Scheduled,
-                changed: false,
-            }],
-            flags: 0,
-            env_id: None,
-            priority: 0,
-            size: 0,
-            size_headers: 0,
-            queue_refs: vec![],
-        })
     }
 
     fn handle_double_bounce(&mut self) {

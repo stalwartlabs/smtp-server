@@ -6,6 +6,7 @@ pub mod list;
 pub mod parser;
 pub mod queue;
 pub mod remote;
+pub mod report;
 pub mod resolver;
 pub mod server;
 pub mod session;
@@ -339,7 +340,7 @@ pub struct QueueConfig {
     pub max_multihomed: IfBlock<usize>,
     pub source_ip: QueueOutboundSourceIp,
     pub tls: QueueOutboundTls,
-    pub dsn: QueueOutboundDsn,
+    pub dsn: Dsn,
 
     // Timeouts
     pub timeout: QueueOutboundTimeout,
@@ -354,9 +355,27 @@ pub struct QueueOutboundSourceIp {
     pub ipv6: IfBlock<Vec<Ipv6Addr>>,
 }
 
-pub struct QueueOutboundDsn {
+pub struct ReportConfig {
+    pub dkim: Report,
+    pub spf: Report,
+    pub dmarc: Report,
+    pub dmarc_aggregate: IfBlock<Option<Duration>>,
+    pub tls: Report,
+}
+
+pub struct Dsn {
     pub name: IfBlock<String>,
     pub address: IfBlock<String>,
+    pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
+}
+
+pub struct Report {
+    pub name: IfBlock<String>,
+    pub address: IfBlock<String>,
+    pub subject: IfBlock<String>,
+    pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
+    pub send: IfBlock<Option<Rate>>,
+    pub analyze: IfBlock<bool>,
 }
 
 pub struct QueueOutboundTls {
@@ -415,7 +434,6 @@ pub struct MailAuthConfig {
     pub arc: ArcAuthConfig,
     pub spf: SpfAuthConfig,
     pub dmarc: DmarcAuthConfig,
-    pub tls: TlsAuthConfig,
     pub iprev: IpRevAuthConfig,
 }
 
@@ -432,8 +450,6 @@ pub enum ArcSealer {
 pub struct DkimAuthConfig {
     pub verify: IfBlock<VerifyStrategy>,
     pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
-    pub report_send: IfBlock<Option<Rate>>,
-    pub report_analyze: IfBlock<bool>,
 }
 
 pub struct ArcAuthConfig {
@@ -444,19 +460,9 @@ pub struct ArcAuthConfig {
 pub struct SpfAuthConfig {
     pub verify_ehlo: IfBlock<VerifyStrategy>,
     pub verify_mail_from: IfBlock<VerifyStrategy>,
-    pub report_send: IfBlock<Option<Rate>>,
-    pub report_analyze: IfBlock<bool>,
 }
 pub struct DmarcAuthConfig {
     pub verify: IfBlock<VerifyStrategy>,
-    pub report_aggregate: IfBlock<Option<Duration>>,
-    pub report_send: IfBlock<Option<Rate>>,
-    pub report_analyze: IfBlock<bool>,
-}
-
-pub struct TlsAuthConfig {
-    pub report_send: IfBlock<Option<Rate>>,
-    pub report_analyze: IfBlock<bool>,
 }
 
 pub struct IpRevAuthConfig {
@@ -482,12 +488,14 @@ pub struct Config {
     keys: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ConfigContext {
     pub servers: Vec<Server>,
     pub hosts: AHashMap<String, Host>,
     pub scripts: AHashMap<String, Arc<Script>>,
     pub lists: AHashMap<String, Arc<List>>,
+    pub signers: AHashMap<String, Arc<DkimSigner>>,
+    pub sealers: AHashMap<String, Arc<ArcSealer>>,
 }
 
 pub type Result<T> = std::result::Result<T, String>;

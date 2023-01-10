@@ -26,6 +26,9 @@ async fn main() -> std::io::Result<()> {
     config
         .parse_lists(&mut config_context)
         .failed("Configuration error");
+    config
+        .parse_signatures(&mut config_context)
+        .failed("Configuration error");
     let session_config = config
         .parse_session_config(&config_context)
         .failed("Configuration error");
@@ -34,6 +37,9 @@ async fn main() -> std::io::Result<()> {
         .failed("Configuration error");
     let mail_auth_config = config
         .parse_mail_auth(&config_context)
+        .failed("Configuration error");
+    let report_config = config
+        .parse_reports(&config_context)
         .failed("Configuration error");
 
     // Build core
@@ -92,6 +98,7 @@ async fn main() -> std::io::Result<()> {
             },
         },
         mail_auth: mail_auth_config,
+        report: report_config,
     });
 
     // Enable logging

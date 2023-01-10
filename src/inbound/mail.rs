@@ -1,4 +1,4 @@
-use mail_auth::{IprevOutput, IprevResult, SpfResult};
+use mail_auth::{IprevOutput, IprevResult, SpfOutput, SpfResult};
 use smtp_proto::MailFrom;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -78,7 +78,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             // Verify SPF
             if self.params.spf_mail_from.verify() {
                 let mail_from = self.data.mail_from.as_ref().unwrap();
-                let spf_result = if !mail_from.address.is_empty() {
+                let spf_output = if !mail_from.address.is_empty() {
                     self.core
                         .resolvers
                         .dns
@@ -104,32 +104,15 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         .await
                 };
 
-                // Reject EHLO when SPF fails in strict mode
-                match spf_result.result() {
-                    SpfResult::Pass => (),
-                    SpfResult::TempError if self.params.spf_mail_from.is_strict() => {
-                        self.data.mail_from = None;
-                        return self
-                            .write(b"451 4.7.24 Temporary SPF validation error.\r\n")
-                            .await;
-                    }
-                    result => {
-                        if self.params.spf_ehlo.is_strict() {
-                            self.data.mail_from = None;
-                            return self
-                                .write(
-                                    format!(
-                                        "550 5.7.23 SPF validation failed, status: {}.\r\n",
-                                        result
-                                    )
-                                    .as_bytes(),
-                                )
-                                .await;
-                        }
-                    }
+                if self
+                    .handle_spf(&spf_output, self.params.spf_mail_from.is_strict())
+                    .await?
+                {
+                    self.data.spf_mail_from = spf_output.into();
+                } else {
+                    self.data.mail_from = None;
+                    return Ok(());
                 }
-
-                self.data.spf_mail_from = spf_result.into();
             }
 
             self.eval_rcpt_params().await;
@@ -139,5 +122,39 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             self.write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n")
                 .await
         }
+    }
+
+    pub async fn handle_spf(&mut self, spf_output: &SpfOutput, strict: bool) -> Result<bool, ()> {
+        let result = match spf_output.result() {
+            SpfResult::Pass => true,
+            SpfResult::TempError if strict => {
+                self.write(b"451 4.7.24 Temporary SPF validation error.\r\n")
+                    .await?;
+                false
+            }
+            result => {
+                if strict {
+                    self.write(
+                        format!("550 5.7.23 SPF validation failed, status: {}.\r\n", result)
+                            .as_bytes(),
+                    )
+                    .await?;
+                    false
+                } else {
+                    true
+                }
+            }
+        };
+
+        // Send report
+        if let (Some(recipient), Some(rate)) = (
+            spf_output.report_address(),
+            self.core.report.spf.send.eval(self).await,
+        ) {
+            self.send_spf_report(recipient, rate, !result, spf_output)
+                .await;
+        }
+
+        Ok(result)
     }
 }

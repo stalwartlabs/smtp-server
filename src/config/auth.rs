@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use ahash::AHashMap;
 use mail_auth::{
     common::crypto::{Algorithm, Ed25519Key, HashAlgorithm, RsaKey, Sha256, SigningKey},
     dkim::{Canonicalization, Done},
@@ -11,7 +10,7 @@ use super::{
     utils::{AsKey, ParseValue},
     ArcAuthConfig, ArcSealer, Config, ConfigContext, DkimAuthConfig, DkimCanonicalization,
     DkimSigner, DmarcAuthConfig, EnvelopeKey, IfBlock, IpRevAuthConfig, MailAuthConfig,
-    SpfAuthConfig, TlsAuthConfig, VerifyStrategy,
+    SpfAuthConfig, VerifyStrategy,
 };
 
 impl Config {
@@ -31,8 +30,6 @@ impl Config {
             EnvelopeKey::LocalIp,
         ];
 
-        let (signers, sealers) = self.parse_signatures()?;
-
         Ok(MailAuthConfig {
             dkim: DkimAuthConfig {
                 verify: self
@@ -41,13 +38,7 @@ impl Config {
                 sign: self
                     .parse_if_block::<Vec<String>>("auth.dkim.sign", ctx, &envelope_sender_keys)?
                     .unwrap_or_default()
-                    .map_if_block(&signers, "auth.dkim.sign", "signature")?,
-                report_send: self
-                    .parse_if_block("auth.dkim.reporting.send-rate", ctx, &envelope_sender_keys)?
-                    .unwrap_or_default(),
-                report_analyze: self
-                    .parse_if_block("auth.dkim.reporting.analyze", ctx, &envelope_sender_keys)?
-                    .unwrap_or_else(|| IfBlock::new(true)),
+                    .map_if_block(&ctx.signers, "auth.dkim.sign", "signature")?,
             },
             arc: ArcAuthConfig {
                 verify: self
@@ -56,7 +47,7 @@ impl Config {
                 seal: self
                     .parse_if_block::<Option<String>>("auth.arc.seal", ctx, &envelope_sender_keys)?
                     .unwrap_or_default()
-                    .map_if_block(&sealers, "auth.arc.seal", "signature")?,
+                    .map_if_block(&ctx.sealers, "auth.arc.seal", "signature")?,
             },
             spf: SpfAuthConfig {
                 verify_ehlo: self
@@ -65,38 +56,11 @@ impl Config {
                 verify_mail_from: self
                     .parse_if_block("auth.spf.verify.mail-from", ctx, &envelope_conn_keys)?
                     .unwrap_or_else(|| IfBlock::new(VerifyStrategy::Relaxed)),
-                report_send: self
-                    .parse_if_block("auth.spf.reporting.send-rate", ctx, &envelope_conn_keys)?
-                    .unwrap_or_default(),
-                report_analyze: self
-                    .parse_if_block("auth.spf.reporting.analyze", ctx, &envelope_sender_keys)?
-                    .unwrap_or_else(|| IfBlock::new(true)),
             },
             dmarc: DmarcAuthConfig {
                 verify: self
                     .parse_if_block("auth.dmarc.verify", ctx, &envelope_sender_keys)?
                     .unwrap_or_else(|| IfBlock::new(VerifyStrategy::Relaxed)),
-                report_aggregate: self
-                    .parse_if_block(
-                        "auth.dmarc.reporting.aggregate-frequency",
-                        ctx,
-                        &envelope_sender_keys,
-                    )?
-                    .unwrap_or_default(),
-                report_send: self
-                    .parse_if_block("auth.dmarc.reporting.send-rate", ctx, &envelope_sender_keys)?
-                    .unwrap_or_default(),
-                report_analyze: self
-                    .parse_if_block("auth.dmarc.reporting.analyze", ctx, &envelope_sender_keys)?
-                    .unwrap_or_else(|| IfBlock::new(true)),
-            },
-            tls: TlsAuthConfig {
-                report_send: self
-                    .parse_if_block("auth.tls.reporting.send-rate", ctx, &envelope_conn_keys)?
-                    .unwrap_or_default(),
-                report_analyze: self
-                    .parse_if_block("auth.tls.reporting.analyze", ctx, &envelope_sender_keys)?
-                    .unwrap_or_else(|| IfBlock::new(true)),
             },
             iprev: IpRevAuthConfig {
                 verify: self
@@ -107,22 +71,14 @@ impl Config {
     }
 
     #[allow(clippy::type_complexity)]
-    fn parse_signatures(
-        &self,
-    ) -> super::Result<(
-        AHashMap<String, Arc<DkimSigner>>,
-        AHashMap<String, Arc<ArcSealer>>,
-    )> {
-        let mut signers = AHashMap::new();
-        let mut sealers = AHashMap::new();
-
-        for id in self.sub_keys("auth.signature") {
+    pub fn parse_signatures(&self, ctx: &mut ConfigContext) -> super::Result<()> {
+        for id in self.sub_keys("signature") {
             let (signer, sealer) =
-                match self.property_require::<Algorithm>(("auth.signature", id, "algorithm"))? {
+                match self.property_require::<Algorithm>(("signature", id, "algorithm"))? {
                     Algorithm::RsaSha256 => {
                         let key = RsaKey::<Sha256>::from_pkcs1_pem(
                             &String::from_utf8(self.file_contents((
-                                "auth.signature",
+                                "signature",
                                 id,
                                 "public-key",
                             ))?)
@@ -131,7 +87,7 @@ impl Config {
                         .map_err(|err| {
                             format!(
                                 "Failed to build RSA key for {}: {}",
-                                ("auth.signature", id, "public-key",).as_key(),
+                                ("signature", id, "public-key",).as_key(),
                                 err
                             )
                         })?;
@@ -139,28 +95,22 @@ impl Config {
                         (DkimSigner::RsaSha256(signer), ArcSealer::RsaSha256(sealer))
                     }
                     Algorithm::Ed25519Sha256 => {
-                        let cert = base64_decode(&self.file_contents((
-                            "auth.signature",
-                            id,
-                            "public-key",
-                        ))?)
-                        .ok_or_else(|| {
-                            format!(
-                                "Failed to base64 decode public key for {}.",
-                                ("auth.signature", id, "public-key",).as_key(),
-                            )
-                        })?;
-                        let pk = base64_decode(&self.file_contents((
-                            "auth.signature",
-                            id,
-                            "private-key",
-                        ))?)
-                        .ok_or_else(|| {
-                            format!(
-                                "Failed to base64 decode private key for {}.",
-                                ("auth.signature", id, "private-key",).as_key(),
-                            )
-                        })?;
+                        let cert =
+                            base64_decode(&self.file_contents(("signature", id, "public-key"))?)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "Failed to base64 decode public key for {}.",
+                                        ("signature", id, "public-key",).as_key(),
+                                    )
+                                })?;
+                        let pk =
+                            base64_decode(&self.file_contents(("signature", id, "private-key"))?)
+                                .ok_or_else(|| {
+                                format!(
+                                    "Failed to base64 decode private key for {}.",
+                                    ("signature", id, "private-key",).as_key(),
+                                )
+                            })?;
                         let key = Ed25519Key::from_bytes(&cert, &pk).map_err(|err| {
                             format!(
                                 "Failed to build ED25519 key for signature {:?}: {}",
@@ -187,11 +137,11 @@ impl Config {
                         ))
                     }
                 };
-            signers.insert(id.to_string(), Arc::new(signer));
-            sealers.insert(id.to_string(), Arc::new(sealer));
+            ctx.signers.insert(id.to_string(), Arc::new(signer));
+            ctx.sealers.insert(id.to_string(), Arc::new(sealer));
         }
 
-        Ok((signers, sealers))
+        Ok(())
     }
 
     fn parse_signature<T: SigningKey, U: SigningKey<Hasher = Sha256>>(
@@ -203,10 +153,10 @@ impl Config {
         mail_auth::dkim::DkimSigner<T, Done>,
         mail_auth::arc::ArcSealer<U, Done>,
     )> {
-        let domain = self.value_require(("auth.signature", id, "domain"))?;
-        let selector = self.value_require(("auth.signature", id, "selector"))?;
+        let domain = self.value_require(("signature", id, "domain"))?;
+        let selector = self.value_require(("signature", id, "selector"))?;
         let mut headers = self
-            .values(("auth.signature", id, "headers"))
+            .values(("signature", id, "headers"))
             .filter_map(|(_, v)| {
                 if !v.is_empty() {
                     v.to_string().into()
@@ -241,7 +191,7 @@ impl Config {
             .headers(headers);
 
         if let Some(c) =
-            self.property::<DkimCanonicalization>(("auth.signature", id, "canonicalization"))?
+            self.property::<DkimCanonicalization>(("signature", id, "canonicalization"))?
         {
             signer = signer
                 .body_canonicalization(c.body)
@@ -251,30 +201,30 @@ impl Config {
                 .header_canonicalization(c.headers);
         }
 
-        if let Some(c) = self.property::<Duration>(("auth.signature", id, "expire"))? {
+        if let Some(c) = self.property::<Duration>(("signature", id, "expire"))? {
             signer = signer.expiration(c.as_secs());
             sealer = sealer.expiration(c.as_secs());
         }
 
-        if let Some(true) = self.property::<bool>(("auth.signature", id, "set-body-length"))? {
+        if let Some(true) = self.property::<bool>(("signature", id, "set-body-length"))? {
             signer = signer.body_length(true);
             sealer = sealer.body_length(true);
         }
 
-        if let Some(true) = self.property::<bool>(("auth.signature", id, "report"))? {
+        if let Some(true) = self.property::<bool>(("signature", id, "report"))? {
             signer = signer.reporting(true);
         }
 
-        if let Some(auid) = self.property::<String>(("auth.signature", id, "auid"))? {
+        if let Some(auid) = self.property::<String>(("signature", id, "auid"))? {
             signer = signer.agent_user_identifier(auid);
         }
 
-        if let Some(atps) = self.property::<String>(("auth.signature", id, "third-party"))? {
+        if let Some(atps) = self.property::<String>(("signature", id, "third-party"))? {
             signer = signer.atps(atps);
         }
 
         if let Some(atpsh) =
-            self.property::<HashAlgorithm>(("auth.signature", id, "third-party-algo"))?
+            self.property::<HashAlgorithm>(("signature", id, "third-party-algo"))?
         {
             signer = signer.atpsh(atpsh);
         }

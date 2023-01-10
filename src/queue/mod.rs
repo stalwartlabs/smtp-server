@@ -367,8 +367,8 @@ pub fn instant_to_timestamp(now: Instant, time: Instant) -> u64 {
 impl Default for crate::config::QueueConfig {
     fn default() -> Self {
         use crate::config::{
-            IfBlock, QueueOutboundDsn, QueueOutboundSourceIp, QueueOutboundTimeout,
-            QueueOutboundTls, QueueQuotas, QueueThrottle,
+            Dsn, IfBlock, QueueOutboundSourceIp, QueueOutboundTimeout, QueueOutboundTls,
+            QueueQuotas, QueueThrottle,
         };
 
         Self {
@@ -390,9 +390,10 @@ impl Default for crate::config::QueueConfig {
                 mta_sts: IfBlock::new(crate::config::RequireOptional::Optional),
                 start: IfBlock::new(crate::config::RequireOptional::Optional),
             },
-            dsn: QueueOutboundDsn {
+            dsn: Dsn {
                 name: IfBlock::new("Mail Delivery Subsystem".to_string()),
                 address: IfBlock::new("MAILER-DAEMON@example.org".to_string()),
+                sign: IfBlock::default(),
             },
             timeout: QueueOutboundTimeout {
                 connect: IfBlock::new(Duration::from_secs(1)),

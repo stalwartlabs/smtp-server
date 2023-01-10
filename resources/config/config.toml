@@ -150,41 +150,16 @@ auid = ""
 set-body-length = false
 report = true
 
-[auth.dkim.reporting]
-send-rate = "1/20d"
-analyze = true
-
 [auth.spf]
 verify.ehlo = "relaxed"
 verify.mail-from = "relaxed"
 
-[auth.spf.reporting]
-send-rate = "1/20d"
-analyze = true
-
 [auth.arc]
 verify = "strict"
 seal = true
-cert = "cert-name"
-domain = ""
-selector = ""
-headers = ["From", "To", "Date", "Message-ID", "DKIM-Signature"]
-algorithm = "rsa-sha256"
-canonicalization = "simple/relaxed"
-expire = "10d"
-set-body-length = false
 
 [auth.dmarc]
 verify = "strict"
-
-[auth.dmarc.reporting]
-aggregate-frequency = never
-send-rate = "1/20d"
-analyze = true
-
-[auth.tls.reporting]
-send-rate = "1/30d"
-analyze = true
 
 [remote."lmtp"]
 address = 192.168.0.1
@@ -284,24 +259,43 @@ host = "lmtp"
 #type = "file"
 #path = "/tmp/file.txt"
 
-[dsn.from]
-address = "MAILER-DAEMON@domain.org"
-name = "Mail Delivery Subsystem"
-
-[servers."relay".outgoing.dsn]
-name = "Mail Delivery Subsystem"
-address = "MAILER-DAEMON"
+[report.dsn]
+from-name = "Mail Delivery Subsystem"
+from-address = "MAILER-DAEMON@domain.org"
 subject = "Delivery Status Notification"
+sign-with = []
 
-[servers."relay".outgoing.auth-failure]
-name = "Autentication Report"
-address = "noreply-auth-failure"
-subject = "Authentication Failure Report"
+[report.dkim]
+from-name = "Autentication Report"
+from-address = "noreply-auth-failure"
+subject = "SPF Authentication Failure Report"
+send-rate = "1/20d"
+analyze = true
 
-[servers."relay".outgoing.dmarc]
-name = "DMARC report"
-address = "noreply-dmarc"
+[report.spf]
+from-name = "Autentication Report"
+from-address = "noreply-auth-failure"
+subject = "SPF Authentication Failure Report"
+sign-with = []
+send-rate = "1/20d"
+analyze = true
+
+[report.dmarc]
+from-name = "DMARC report"
+from-address = "noreply-dmarc"
 subject = "DMARC aggregate report for $1"
+send-rate = "1/20d"
+sign-with = []
+aggregate-frequency = never
+analyze = true
+
+[report.tls]
+from-name = "Autentication Report"
+from-address = "noreply-auth-failure"
+subject = "TLS Failure Report"
+send-rate = "1/30d"
+analyze = true
+sign-with = []
 
 [servers."relay".dmarc]
 send-reports = true

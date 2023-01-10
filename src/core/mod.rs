@@ -20,8 +20,8 @@ use tracing::Span;
 
 use crate::{
     config::{
-        EnvelopeKey, List, MailAuthConfig, QueueConfig, Script, ServerProtocol, SessionConfig,
-        VerifyStrategy,
+        EnvelopeKey, List, MailAuthConfig, QueueConfig, ReportConfig, Script, ServerProtocol,
+        SessionConfig, VerifyStrategy,
     },
     inbound::auth::SaslToken,
     outbound::{
@@ -44,6 +44,7 @@ pub struct Core {
     pub queue: QueueCore,
     pub resolvers: Resolvers,
     pub mail_auth: MailAuthConfig,
+    pub report: ReportConfig,
 }
 
 pub struct Resolvers {
@@ -148,7 +149,6 @@ pub struct SessionParameters {
     // Ehlo parameters
     pub ehlo_script: Option<Arc<Script>>,
     pub ehlo_require: bool,
-    //pub starttls: bool,
 
     // Auth parameters
     pub auth_script: Option<Arc<Script>>,

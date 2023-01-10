@@ -227,13 +227,17 @@ impl Config {
                     .parse_if_block("queue.outbound.timeouts.mta-sts", ctx, &rcpt_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(Duration::from_secs(10 * 60))),
             },
-            dsn: QueueOutboundDsn {
+            dsn: Dsn {
                 name: self
-                    .parse_if_block("dsn.from.name", ctx, &sender_envelope_keys)?
+                    .parse_if_block("report.dsn.from-name", ctx, &sender_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new("Mail Delivery Subsystem".to_string())),
                 address: self
-                    .parse_if_block("dsn.from.address", ctx, &sender_envelope_keys)?
+                    .parse_if_block("report.dsn.from-address", ctx, &sender_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{}", default_hostname))),
+                sign: self
+                    .parse_if_block::<Vec<String>>("report.dsn.sign", ctx, &sender_envelope_keys)?
+                    .unwrap_or_default()
+                    .map_if_block(&ctx.signers, "report.dsn.sign", "signature")?,
             },
         };
 

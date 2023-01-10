@@ -338,4 +338,32 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
 
         true
     }
+
+    pub fn throttle_rcpt(&self, rcpt: &str, rate: &Rate, ctx: &str) -> bool {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(rcpt.as_bytes());
+        hasher.update(ctx.as_bytes());
+        hasher.update(&rate.period.as_secs().to_ne_bytes()[..]);
+        hasher.update(&rate.requests.to_ne_bytes()[..]);
+        let key = ThrottleKey {
+            hash: hasher.finalize().into(),
+        };
+
+        match self.core.session.throttle.entry(key) {
+            Entry::Occupied(mut e) => {
+                if let Some(limiter) = &mut e.get_mut().rate {
+                    limiter.is_allowed()
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(Limiter {
+                    rate: RateLimiter::new(rate.requests, rate.period.as_secs()).into(),
+                    concurrency: None,
+                });
+                true
+            }
+        }
+    }
 }
