@@ -1,12 +1,11 @@
 use std::{
-    f32::consts::E,
     path::PathBuf,
     time::{Duration, Instant, SystemTime},
 };
 
 use mail_auth::{
     common::headers::HeaderWriter, dmarc, AuthenticatedMessage, AuthenticationResults, DkimResult,
-    DmarcResult, ReceivedSpf, SpfOutput, SpfResult,
+    DmarcResult, ReceivedSpf, SpfResult,
 };
 use mail_builder::headers::{date::Date, message_id::generate_message_id_header};
 use smtp_proto::{RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS};
@@ -24,6 +23,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         // Authenticate message
         let dc = &self.core.session.config.data;
         let ac = &self.core.mail_auth;
+        let rc = &self.core.report.config;
 
         let auth_message =
             if let Some(auth_message) = AuthenticatedMessage::parse(&self.data.message) {
@@ -46,11 +46,22 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         let dmarc = *ac.dmarc.verify.eval(self).await;
         let dkim_output = if dkim.verify() || dmarc.verify() {
             let dkim_output = self.core.resolvers.dns.verify_dkim(&auth_message).await;
-            if dkim.is_strict()
+            let rejected = dkim.is_strict()
                 && !dkim_output
                     .iter()
-                    .any(|d| matches!(d.result(), DkimResult::Pass))
-            {
+                    .any(|d| matches!(d.result(), DkimResult::Pass));
+
+            // Send reports for failed signatures
+            if let Some(rate) = rc.dkim.send.eval(self).await {
+                for output in &dkim_output {
+                    if let Some(rcpt) = output.failure_report_addr() {
+                        self.send_dkim_report(rcpt, &auth_message, rate, rejected, output)
+                            .await;
+                    }
+                }
+            }
+
+            if rejected {
                 // This violates the advice of Section 6.1 of RFC6376
                 let message = if dkim_output
                     .iter()
@@ -89,9 +100,33 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             None
         };
 
-        // Verify DMARC
+        // Build authentication results header
         let mail_from = self.data.mail_from.take().unwrap();
-        let dmarc_output = if dmarc.verify() && self.data.spf_mail_from.is_some() {
+        let mut auth_results = AuthenticationResults::new(&self.instance.hostname);
+        if !dkim_output.is_empty() {
+            auth_results = auth_results.with_dkim_results(&dkim_output, auth_message.from())
+        }
+        if let Some(spf_ehlo) = &self.data.spf_ehlo {
+            auth_results = auth_results.with_spf_ehlo_result(
+                spf_ehlo,
+                self.data.remote_ip,
+                &self.data.helo_domain,
+            );
+        }
+        if let Some(spf_mail_from) = &self.data.spf_mail_from {
+            auth_results = auth_results.with_spf_mailfrom_result(
+                spf_mail_from,
+                self.data.remote_ip,
+                &mail_from.address,
+                &self.data.helo_domain,
+            );
+        }
+        if let Some(iprev) = &self.data.iprev {
+            auth_results = auth_results.with_iprev_result(iprev, self.data.remote_ip);
+        }
+
+        // Verify DMARC
+        if dmarc.verify() && self.data.spf_mail_from.is_some() {
             let spf_output = if let Some(spf_helo) = &self.data.spf_ehlo {
                 if matches!(spf_helo.result(), SpfResult::Pass) {
                     self.data.spf_mail_from.as_ref().unwrap()
@@ -117,64 +152,47 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     spf_output,
                 )
                 .await;
-            if (dmarc.is_strict() || dmarc_output.policy() == dmarc::Policy::Reject)
+            let rejected = dmarc.is_strict()
+                && dmarc_output.policy() == dmarc::Policy::Reject
                 && !matches!(
                     (dmarc_output.spf_result(), dmarc_output.dkim_result()),
                     (DmarcResult::Pass, DmarcResult::Pass)
+                );
+            let is_temp_fail = rejected
+                && matches!(dmarc_output.spf_result(), DmarcResult::TempError(_))
+                || matches!(dmarc_output.dkim_result(), DmarcResult::TempError(_));
+
+            // Add to DMARC output to the Authentication-Results header
+            auth_results = auth_results.with_dmarc_result(&dmarc_output);
+
+            // Send DMARC report
+            if dmarc_output.requested_reports() {
+                self.send_dmarc_report(
+                    &auth_message,
+                    &auth_results,
+                    rejected,
+                    dmarc_output,
+                    &dkim_output,
+                    &arc_output,
                 )
-            {
-                let message = if matches!(dmarc_output.spf_result(), DmarcResult::TempError(_))
-                    || matches!(dmarc_output.dkim_result(), DmarcResult::TempError(_))
-                {
-                    &b"451 4.7.26 DMARC authentication failed.\r\n"[..]
-                } else {
-                    &b"550 5.7.26 DMARC authentication failed.\r\n"[..]
-                };
-                self.reset();
-                return self.write(message).await;
+                .await;
             }
-            dmarc_output.into()
-        } else {
-            None
-        };
+
+            if rejected {
+                self.reset();
+                return self
+                    .write(if is_temp_fail {
+                        &b"451 4.7.1 Email temporarily rejected per DMARC policy.\r\n"[..]
+                    } else {
+                        &b"550 5.7.1 Email rejected per DMARC policy.\r\n"[..]
+                    })
+                    .await;
+            }
+        }
 
         // Build message
         let rcpt_to = std::mem::take(&mut self.data.rcpt_to);
         let mut message = self.build_message(mail_from, rcpt_to).await;
-
-        // Build authentication results header
-        let mut auth_results = AuthenticationResults::new(&self.instance.hostname);
-        if !dkim_output.is_empty() {
-            auth_results = auth_results.with_dkim_result(
-                &dkim_output,
-                auth_message
-                    .from()
-                    .first()
-                    .map(|a| a.as_str())
-                    .unwrap_or_default(),
-            )
-        }
-        if let Some(spf_ehlo) = &self.data.spf_ehlo {
-            auth_results = auth_results.with_spf_ehlo_result(
-                spf_ehlo,
-                self.data.remote_ip,
-                &self.data.helo_domain,
-            );
-        }
-        if let Some(spf_mail_from) = &self.data.spf_mail_from {
-            auth_results = auth_results.with_spf_mailfrom_result(
-                spf_mail_from,
-                self.data.remote_ip,
-                &message.return_path,
-                &self.data.helo_domain,
-            );
-        }
-        if let Some(dmarc_output) = &dmarc_output {
-            auth_results = auth_results.with_dmarc_result(dmarc_output);
-        }
-        if let Some(iprev) = &self.data.iprev {
-            auth_results = auth_results.with_iprev_result(iprev, self.data.remote_ip);
-        }
 
         // Add Received header
         let mut headers = Vec::with_capacity(64);

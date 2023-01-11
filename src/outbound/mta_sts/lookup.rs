@@ -1,6 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{fmt::Display, sync::Arc, time::Duration};
 
-use mail_auth::{common::lru::DnsCache, mta_sts::MtaSts};
+use mail_auth::{
+    common::lru::DnsCache,
+    mta_sts::MtaSts,
+    report::tlsrpt::{FailureDetails, ResultType},
+};
 use reqwest::redirect;
 
 use crate::{core::Resolvers, USER_AGENT};
@@ -74,6 +78,47 @@ impl Resolvers {
         self.cache
             .mta_sts
             .insert(key.into_fqdn().into_owned(), Arc::new(value), valid_until);
+    }
+}
+
+impl From<&Error> for ResultType {
+    fn from(err: &Error) -> Self {
+        match &err {
+            Error::InvalidPolicy(_) => ResultType::StsPolicyInvalid,
+            _ => ResultType::StsPolicyFetchError,
+        }
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Dns(err) => match err {
+                mail_auth::Error::DnsRecordNotFound(code) => {
+                    write!(f, "Record not found: {:?}", code)
+                }
+                mail_auth::Error::InvalidRecordType => {
+                    f.write_str("Failed to parse MTA-STS DNS record.")
+                }
+                _ => write!(f, "DNS lookup error: {}", err),
+            },
+            Error::Http(err) => {
+                if err.is_timeout() {
+                    f.write_str("Timeout fetching policy.")
+                } else if err.is_connect() {
+                    f.write_str("Could not reach policy host.")
+                } else if err.is_status()
+                    & err
+                        .status()
+                        .map_or(false, |s| s == reqwest::StatusCode::NOT_FOUND)
+                {
+                    f.write_str("Policy not found.")
+                } else {
+                    f.write_str("Failed to fetch policy.")
+                }
+            }
+            Error::InvalidPolicy(err) => write!(f, "Failed to parse policy: {}", err),
+        }
     }
 }
 

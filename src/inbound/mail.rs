@@ -149,7 +149,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         // Send report
         if let (Some(recipient), Some(rate)) = (
             spf_output.report_address(),
-            self.core.report.spf.send.eval(self).await,
+            self.core.report.config.spf.send.eval(self).await,
         ) {
             self.send_spf_report(recipient, rate, !result, spf_output)
                 .await;

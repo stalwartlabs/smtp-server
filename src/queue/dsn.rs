@@ -13,7 +13,6 @@ use tokio::io::AsyncReadExt;
 
 use crate::config::QueueConfig;
 use crate::core::QueueCore;
-use crate::reporting::sign_local_message;
 
 use super::{
     instant_to_timestamp, Domain, Error, ErrorDetails, HostResponse, Message, Recipient,
@@ -24,20 +23,19 @@ impl QueueCore {
     pub async fn send_dsn(&self, message: &mut Message) {
         if !message.return_path.is_empty() {
             if let Some(dsn) = message.build_dsn(&self.config).await {
-                let mut message = self
-                    .new_message(
-                        "",
-                        "",
-                        "",
-                        &message.return_path_domain,
+                let mut dsn_message = Message::new_boxed("", "", "");
+                dsn_message
+                    .add_recipient(
                         &message.return_path,
                         &message.return_path_lcase,
+                        &message.return_path_domain,
+                        &self.config,
                     )
                     .await;
 
                 // Sign message
                 let message_bytes = message.sign(&self.config.dsn.sign, dsn).await;
-                self.queue_message(message, message_bytes).await;
+                self.queue_message(dsn_message, message_bytes).await;
             }
         } else {
             message.handle_double_bounce();

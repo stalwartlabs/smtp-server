@@ -9,6 +9,7 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::{fs, io::AsyncWriteExt};
 
+use crate::config::QueueConfig;
 use crate::core::QueueCore;
 
 use super::{
@@ -90,17 +91,15 @@ impl QueueCore {
             & 0xFFFFFFFF)
             | (self.id_seq.fetch_add(1, Ordering::Relaxed) as u64) << 32
     }
+}
 
-    pub async fn new_message(
-        &self,
+impl Message {
+    pub fn new_boxed(
         return_path: impl Into<String>,
         return_path_lcase: impl Into<String>,
         return_path_domain: impl Into<String>,
-        to_domain: impl Into<String>,
-        to_addr: impl Into<String>,
-        to_addr_lcase: impl Into<String>,
     ) -> Box<Message> {
-        let mut message = Box::new(Message {
+        Box::new(Message {
             id: 0,
             path: PathBuf::new(),
             created: SystemTime::now()
@@ -110,14 +109,7 @@ impl QueueCore {
             return_path: return_path.into(),
             return_path_lcase: return_path_lcase.into(),
             return_path_domain: return_path_domain.into(),
-            recipients: vec![Recipient {
-                domain_idx: 0,
-                address: to_addr.into(),
-                address_lcase: to_addr_lcase.into(),
-                status: Status::Scheduled,
-                flags: 0,
-                orcpt: None,
-            }],
+            recipients: Vec::with_capacity(1),
             domains: Vec::with_capacity(1),
             flags: 0,
             env_id: None,
@@ -125,28 +117,46 @@ impl QueueCore {
             size: 0,
             size_headers: 0,
             queue_refs: vec![],
-        });
-
-        let to_domain = to_domain.into();
-        let expires = *self
-            .config
-            .expire
-            .eval(&SimpleEnvelope::new(message.as_ref(), &to_domain))
-            .await;
-        message.domains.push(Domain {
-            domain: to_domain,
-            retry: Schedule::now(),
-            notify: Schedule::later(expires + Duration::from_secs(10)),
-            expires: Instant::now() + expires,
-            status: Status::Scheduled,
-            changed: false,
-        });
-
-        message
+        })
     }
-}
 
-impl Message {
+    pub async fn add_recipient(
+        &mut self,
+        rcpt: impl Into<String>,
+        rcpt_lcase: impl Into<String>,
+        rcpt_domain: impl Into<String>,
+        config: &QueueConfig,
+    ) {
+        let rcpt_domain = rcpt_domain.into();
+        let domain_idx =
+            if let Some(idx) = self.domains.iter().position(|d| d.domain == rcpt_domain) {
+                idx
+            } else {
+                let idx = self.domains.len();
+                let expires = *config
+                    .expire
+                    .eval(&SimpleEnvelope::new(self, &rcpt_domain))
+                    .await;
+                self.domains.push(Domain {
+                    domain: rcpt_domain,
+                    retry: Schedule::now(),
+                    notify: Schedule::later(expires + Duration::from_secs(10)),
+                    expires: Instant::now() + expires,
+                    status: Status::Scheduled,
+                    changed: false,
+                });
+                idx
+            };
+        self.recipients.push(Recipient {
+            domain_idx,
+            address: rcpt.into(),
+            address_lcase: rcpt_lcase.into(),
+            status: Status::Scheduled,
+            flags: 0,
+            orcpt: None,
+        });
+    }
+
     fn serialize(&self) -> Vec<u8> {
         let mut buf = String::with_capacity(
             self.return_path.len()

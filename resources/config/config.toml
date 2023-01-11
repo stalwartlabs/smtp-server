@@ -263,39 +263,39 @@ host = "lmtp"
 from-name = "Mail Delivery Subsystem"
 from-address = "MAILER-DAEMON@domain.org"
 subject = "Delivery Status Notification"
-sign-with = []
+sign = []
 
 [report.dkim]
 from-name = "Autentication Report"
 from-address = "noreply-auth-failure"
 subject = "SPF Authentication Failure Report"
-send-rate = "1/20d"
+send = "1/20d"
 analyze = true
 
 [report.spf]
 from-name = "Autentication Report"
 from-address = "noreply-auth-failure"
 subject = "SPF Authentication Failure Report"
-sign-with = []
-send-rate = "1/20d"
+sign = []
+send = "1/20d"
 analyze = true
 
 [report.dmarc]
 from-name = "DMARC report"
 from-address = "noreply-dmarc"
 subject = "DMARC aggregate report for $1"
-send-rate = "1/20d"
-sign-with = []
-aggregate-frequency = never
+send = "1/20d"
+sign = []
+aggregate = never
 analyze = true
 
 [report.tls]
 from-name = "Autentication Report"
 from-address = "noreply-auth-failure"
 subject = "TLS Failure Report"
-send-rate = "1/30d"
 analyze = true
-sign-with = []
+aggregate = never
+sign = []
 
 [servers."relay".dmarc]
 send-reports = true

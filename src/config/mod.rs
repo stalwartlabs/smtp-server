@@ -361,6 +361,7 @@ pub struct ReportConfig {
     pub dmarc: Report,
     pub dmarc_aggregate: IfBlock<Option<Duration>>,
     pub tls: Report,
+    pub tls_aggregate: IfBlock<Option<Duration>>,
 }
 
 pub struct Dsn {

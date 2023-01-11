@@ -18,7 +18,7 @@ pub struct Queue {
 }
 
 impl SpawnQueue for mpsc::Receiver<Event> {
-    fn spawn(mut self, core: Arc<Core>, mut queue: Queue) -> Result<(), String> {
+    fn spawn(mut self, core: Arc<Core>, mut queue: Queue) {
         tokio::spawn(async move {
             loop {
                 let result = tokio::time::timeout(queue.wake_up_time(), self.recv()).await;
@@ -72,8 +72,6 @@ impl SpawnQueue for mpsc::Receiver<Event> {
                 }
             }
         });
-
-        Ok(())
     }
 }
 
@@ -312,5 +310,5 @@ impl Default for Queue {
 }
 
 pub trait SpawnQueue {
-    fn spawn(self, core: Arc<Core>, queue: Queue) -> Result<(), String>;
+    fn spawn(self, core: Arc<Core>, queue: Queue);
 }

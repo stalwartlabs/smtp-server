@@ -6,9 +6,10 @@ use smtp_server::{
     config::{Config, ConfigContext},
     core::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
-        Core, QueueCore, SessionCore, TlsConnectors,
+        Core, QueueCore, ReportCore, SessionCore, TlsConnectors,
     },
     queue::{self, manager::SpawnQueue},
+    reporting::manager::SpawnReport,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -44,6 +45,7 @@ async fn main() -> std::io::Result<()> {
 
     // Build core
     let (queue_tx, queue_rx) = mpsc::channel(1024);
+    let (report_tx, report_rx) = mpsc::channel(1024);
     let core = Arc::new(Core {
         resolvers: config.build_resolvers().failed("Failed to build resolvers"),
         session: SessionCore {
@@ -97,8 +99,11 @@ async fn main() -> std::io::Result<()> {
                 dummy_verify: build_tls_connector(true),
             },
         },
+        report: ReportCore {
+            tx: report_tx,
+            config: report_config,
+        },
         mail_auth: mail_auth_config,
-        report: report_config,
     });
 
     // Enable logging
@@ -119,9 +124,10 @@ async fn main() -> std::io::Result<()> {
     );
 
     // Spawn queue manager
-    queue_rx
-        .spawn(core.clone(), core.queue.read_queue().await)
-        .failed("Failed to spawn queue manager");
+    queue_rx.spawn(core.clone(), core.queue.read_queue().await);
+
+    // Spawn report manager
+    report_rx.spawn(core.clone());
 
     // Spawn listeners
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

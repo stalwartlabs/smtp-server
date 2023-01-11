@@ -29,6 +29,7 @@ use crate::{
         mta_sts,
     },
     queue::{self, QuotaLimiter},
+    reporting,
 };
 
 use self::throttle::{
@@ -44,7 +45,7 @@ pub struct Core {
     pub queue: QueueCore,
     pub resolvers: Resolvers,
     pub mail_auth: MailAuthConfig,
-    pub report: ReportConfig,
+    pub report: ReportCore,
 }
 
 pub struct Resolvers {
@@ -71,6 +72,11 @@ pub struct QueueCore {
     pub tx: mpsc::Sender<queue::Event>,
     pub id_seq: AtomicU32,
     pub connectors: TlsConnectors,
+}
+
+pub struct ReportCore {
+    pub config: ReportConfig,
+    pub tx: mpsc::Sender<reporting::Event>,
 }
 
 pub struct TlsConnectors {

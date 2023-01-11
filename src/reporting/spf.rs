@@ -1,14 +1,7 @@
-use std::time::SystemTime;
-
-use mail_auth::{
-    report::{AuthFailureType, DeliveryResult, Feedback, FeedbackType},
-    AuthenticationResults, SpfOutput,
-};
+use mail_auth::{report::AuthFailureType, AuthenticationResults, SpfOutput};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{config::Rate, core::Session, USER_AGENT};
-
-use super::sign_local_message;
+use crate::{config::Rate, core::Session};
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     pub async fn send_spf_report(
@@ -18,27 +11,16 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         rejected: bool,
         output: &SpfOutput,
     ) {
+        // Throttle recipient
         if !self.throttle_rcpt(rcpt, rate, "spf") {
             return;
         }
-        let config = &self.core.report.spf;
+
+        // Generate report
+        let config = &self.core.report.config.spf;
         let from_addr = config.address.eval(self).await;
-        let mut feedback = Vec::with_capacity(128);
-        Feedback::new(FeedbackType::AuthFailure)
-            .with_auth_failure(AuthFailureType::Spf)
-            .with_arrival_date(
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs()) as i64,
-            )
-            .with_source_ip(self.data.remote_ip)
-            .with_reporting_mta(&self.instance.hostname)
-            .with_user_agent(USER_AGENT)
-            .with_delivery_result(if rejected {
-                DeliveryResult::Reject
-            } else {
-                DeliveryResult::Unspecified
-            })
+        let mut report = Vec::with_capacity(128);
+        self.new_auth_failure(AuthFailureType::Spf, rejected)
             .with_authentication_results(
                 if let Some(mail_from) = &self.data.mail_from {
                     AuthenticationResults::new(&self.instance.hostname).with_spf_mailfrom_result(
@@ -62,37 +44,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 from_addr,
                 rcpt,
                 config.subject.eval(self).await,
-                &mut feedback,
+                &mut report,
             )
             .ok();
 
-        let from_addr_lcase = from_addr.to_lowercase();
-        let from_addr_domain = from_addr_lcase
-            .rsplit_once('@')
-            .map(|(_, d)| d.to_string())
-            .unwrap_or_default();
-        let rcpt_lcase = rcpt.to_lowercase();
-        let rcpt_domain = rcpt_lcase
-            .rsplit_once('@')
-            .map(|(_, d)| d.to_string())
-            .unwrap_or_default();
-        let mut message = self
-            .core
-            .queue
-            .new_message(
-                from_addr,
-                from_addr_lcase,
-                from_addr_domain,
-                rcpt_domain,
-                rcpt,
-                rcpt_lcase,
-            )
+        // Send report
+        self.send_report(from_addr, [rcpt].into_iter(), report, &config.sign)
             .await;
-
-        // Sign message
-        let message_bytes = message.sign(&config.sign, feedback).await;
-
-        // Queue message
-        self.core.queue.queue_message(message, message_bytes).await;
     }
 }

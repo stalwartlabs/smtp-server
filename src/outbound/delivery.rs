@@ -5,7 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use mail_auth::mta_sts::TlsRpt;
+use mail_auth::{
+    mta_sts::TlsRpt,
+    report::tlsrpt::{FailureDetails, PolicyDetails, PolicyType},
+};
 use mail_send::{Credentials, SmtpClient};
 use rand::{seq::SliceRandom, Rng};
 use smtp_proto::MAIL_REQUIRETLS;
@@ -13,10 +16,12 @@ use smtp_proto::MAIL_REQUIRETLS;
 use crate::{
     config::{RelayHost, ServerProtocol, TlsStrategy},
     core::Core,
+    reporting::{self, tls::TlsRptOptions, TlsEvent},
 };
 
-use super::session::{
-    into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult,
+use super::{
+    mta_sts,
+    session::{into_tls, read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult},
 };
 use crate::queue::{
     manager::Queue, throttle, DeliveryAttempt, Domain, Error, Event, Message, OnHold,
@@ -136,6 +141,27 @@ impl DeliveryAttempt {
                     ..Default::default()
                 };
 
+                // Obtain TLS reporting
+                let tls_report = if let Some(interval) =
+                    core.report.config.tls_aggregate.eval(&envelope).await
+                {
+                    match core
+                        .resolvers
+                        .dns
+                        .txt_lookup::<TlsRpt>(format!("_smtp._tls.{}.", envelope.domain))
+                        .await
+                    {
+                        Ok(record) => TlsRptOptions {
+                            record,
+                            interval: *interval,
+                        }
+                        .into(),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+
                 // Obtain MTA-STS policy for domain
                 let mta_sts_policy = if tls_strategy.try_mta_sts() {
                     match core
@@ -148,26 +174,40 @@ impl DeliveryAttempt {
                     {
                         Ok(mta_sts_policy) => mta_sts_policy.into(),
                         Err(err) => {
+                            // Log MTA-STS error
+                            if let Some(tls_report) = &tls_report {
+                                if !matches!(
+                                    &err,
+                                    mta_sts::Error::Dns(mail_auth::Error::DnsError(_))
+                                ) {
+                                    let _ = core
+                                        .report
+                                        .tx
+                                        .send(reporting::Event::Tls(Box::new(TlsEvent {
+                                            policy: PolicyDetails::new(
+                                                PolicyType::Sts,
+                                                envelope.domain,
+                                            ),
+                                            failure: FailureDetails::new(&err)
+                                                .with_failure_reason_code(err.to_string())
+                                                .into(),
+                                            tls_record: tls_report.record.clone(),
+                                            interval: tls_report.interval,
+                                        })))
+                                        .await;
+                                }
+                            }
+
                             if tls_strategy.is_mta_sts_required() {
                                 domain.set_status(err, queue_config.retry.eval(&envelope).await);
                                 continue 'next_domain;
                             }
+
                             None
                         }
                     }
                 } else {
                     None
-                };
-
-                // Obtain TLS reporting
-                let tls_report = match core
-                    .resolvers
-                    .dns
-                    .txt_lookup::<TlsRpt>(format!("_smtp._tls.{}.", envelope.domain))
-                    .await
-                {
-                    Ok(tls_report) => tls_report.into(),
-                    Err(_) => None,
                 };
 
                 // Obtain remote hosts list

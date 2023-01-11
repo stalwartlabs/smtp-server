@@ -363,6 +363,24 @@ pub fn instant_to_timestamp(now: Instant, time: Instant) -> u64 {
         + time.checked_duration_since(now).map_or(0, |d| d.as_secs())
 }
 
+pub trait DomainPart {
+    fn domain_part(&self) -> &str;
+}
+
+impl DomainPart for &str {
+    #[inline(always)]
+    fn domain_part(&self) -> &str {
+        self.rsplit_once('@').map(|(_, d)| d).unwrap_or_default()
+    }
+}
+
+impl DomainPart for String {
+    #[inline(always)]
+    fn domain_part(&self) -> &str {
+        self.rsplit_once('@').map(|(_, d)| d).unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 impl Default for crate::config::QueueConfig {
     fn default() -> Self {
