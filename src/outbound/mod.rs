@@ -11,6 +11,7 @@ impl Status<(), Error> {
     pub fn from_smtp_error(hostname: &str, command: &str, err: mail_send::Error) -> Self {
         match err {
             mail_send::Error::Io(_)
+            | mail_send::Error::Tls(_)
             | mail_send::Error::Base64(_)
             | mail_send::Error::UnparseableReply
             | mail_send::Error::AuthenticationFailed(_)
@@ -54,7 +55,7 @@ impl Status<(), Error> {
         }
     }
 
-    pub fn from_tls_error(hostname: &str, response: Option<Response<String>>) -> Self {
+    pub fn from_starttls_error(hostname: &str, response: Option<Response<String>>) -> Self {
         let entity = hostname.to_string();
         if let Some(response) = response {
             let hostname = ErrorDetails {
@@ -78,6 +79,33 @@ impl Status<(), Error> {
                 entity,
                 details: "STARTTLS not advertised by host.".to_string(),
             }))
+        }
+    }
+
+    pub fn from_tls_error(hostname: &str, err: mail_send::Error) -> Self {
+        match err {
+            mail_send::Error::InvalidTLSName => {
+                Status::PermanentFailure(Error::TlsError(ErrorDetails {
+                    entity: hostname.to_string(),
+                    details: "Invalid hostname".to_string(),
+                }))
+            }
+            mail_send::Error::Timeout => Status::TemporaryFailure(Error::TlsError(ErrorDetails {
+                entity: hostname.to_string(),
+                details: "TLS handshake timed out".to_string(),
+            })),
+            mail_send::Error::Tls(err) => Status::TemporaryFailure(Error::TlsError(ErrorDetails {
+                entity: hostname.to_string(),
+                details: format!("Handshake failed: {}", err),
+            })),
+            mail_send::Error::Io(err) => Status::TemporaryFailure(Error::TlsError(ErrorDetails {
+                entity: hostname.to_string(),
+                details: format!("I/O error: {}", err),
+            })),
+            _ => Status::PermanentFailure(Error::TlsError(ErrorDetails {
+                entity: hostname.to_string(),
+                details: "Other TLS error".to_string(),
+            })),
         }
     }
 

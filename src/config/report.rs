@@ -1,4 +1,7 @@
-use super::{utils::AsKey, Config, ConfigContext, EnvelopeKey, IfBlock, Report, ReportConfig};
+use super::{
+    utils::AsKey, AggregateReport, Config, ConfigContext, EnvelopeKey, IfBlock, Report,
+    ReportConfig,
+};
 
 impl Config {
     pub fn parse_reports(&self, ctx: &ConfigContext) -> super::Result<ReportConfig> {
@@ -25,13 +28,26 @@ impl Config {
             dkim: self.parse_report(ctx, "dkim", default_hostname, &sender_envelope_keys)?,
             spf: self.parse_report(ctx, "spf", default_hostname, &sender_envelope_keys)?,
             dmarc: self.parse_report(ctx, "dmarc", default_hostname, &sender_envelope_keys)?,
-            dmarc_aggregate: self
-                .parse_if_block("report.dmarc.aggregate", ctx, &sender_envelope_keys)?
-                .unwrap_or_default(),
-            tls: self.parse_report(ctx, "tls", default_hostname, &rcpt_envelope_keys)?,
-            tls_aggregate: self
-                .parse_if_block("report.tls.aggregate", ctx, &rcpt_envelope_keys)?
-                .unwrap_or_default(),
+            dmarc_aggregate: self.parse_aggregate_report(
+                ctx,
+                "dmarc",
+                default_hostname,
+                &sender_envelope_keys,
+            )?,
+            tls: self.parse_aggregate_report(ctx, "tls", default_hostname, &rcpt_envelope_keys)?,
+            path: self
+                .parse_if_block("report.path", ctx, &sender_envelope_keys)?
+                .ok_or("Missing \"report.path\" property.")?,
+            submitter: self
+                .parse_if_block("report.submitter", ctx, &[EnvelopeKey::RecipientDomain])?
+                .unwrap_or_else(|| IfBlock::new(default_hostname.to_string())),
+            hash: self
+                .parse_if_block("report.hash", ctx, &sender_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(32)),
+            analyze: self
+                .values("report.analyze")
+                .map(|(_, v)| v.to_string())
+                .collect(),
         })
     }
 
@@ -59,9 +75,80 @@ impl Config {
             send: self
                 .parse_if_block(("report", id, "send"), ctx, available_keys)?
                 .unwrap_or_default(),
-            analyze: self
-                .parse_if_block(("report", id, "analyze"), ctx, available_keys)?
-                .unwrap_or_else(|| IfBlock::new(true)),
+        })
+    }
+
+    fn parse_aggregate_report(
+        &self,
+        ctx: &ConfigContext,
+        id: &str,
+        default_hostname: &str,
+        available_keys: &[EnvelopeKey],
+    ) -> super::Result<AggregateReport> {
+        let rcpt_envelope_keys = [EnvelopeKey::RecipientDomain];
+
+        Ok(AggregateReport {
+            name: self
+                .parse_if_block(
+                    ("report", id, "aggregate.from-name"),
+                    ctx,
+                    &rcpt_envelope_keys,
+                )?
+                .unwrap_or_else(|| {
+                    IfBlock::new(format!("{} Aggregate Report", id.to_ascii_uppercase()))
+                }),
+            address: self
+                .parse_if_block(
+                    ("report", id, "aggregate.from-address"),
+                    ctx,
+                    &rcpt_envelope_keys,
+                )?
+                .unwrap_or_else(|| IfBlock::new(format!("noreply-{}@{}", id, default_hostname))),
+            subject: self
+                .parse_if_block(
+                    ("report", id, "aggregate.subject"),
+                    ctx,
+                    &rcpt_envelope_keys,
+                )?
+                .unwrap_or_else(|| {
+                    IfBlock::new(format!("{} Aggregage Report", id.to_ascii_uppercase()))
+                }),
+            org_name: self
+                .parse_if_block(
+                    ("report", id, "aggregate.org-name"),
+                    ctx,
+                    &rcpt_envelope_keys,
+                )?
+                .unwrap_or_default(),
+            contact_info: self
+                .parse_if_block(
+                    ("report", id, "aggregate.contact-info"),
+                    ctx,
+                    &rcpt_envelope_keys,
+                )?
+                .unwrap_or_default(),
+            send: self
+                .parse_if_block(("report", id, "aggregate.send"), ctx, available_keys)?
+                .unwrap_or_default(),
+            sign: self
+                .parse_if_block::<Vec<String>>(
+                    ("report", id, "aggregate.sign"),
+                    ctx,
+                    &rcpt_envelope_keys,
+                )?
+                .unwrap_or_default()
+                .map_if_block(
+                    &ctx.signers,
+                    &("report", id, "aggregate.sign").as_key(),
+                    "signature",
+                )?,
+            max_size: self
+                .parse_if_block(
+                    ("report", id, "aggregate.max-size"),
+                    ctx,
+                    &rcpt_envelope_keys,
+                )?
+                .unwrap_or_else(|| IfBlock::new(25 * 1024 * 1024)),
         })
     }
 }

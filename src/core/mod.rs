@@ -55,7 +55,7 @@ pub struct Resolvers {
 }
 
 pub struct DnsCache {
-    pub tlsa: LruCache<String, Arc<Vec<Tlsa>>>,
+    pub tlsa: LruCache<String, Arc<Tlsa>>,
     pub mta_sts: LruCache<String, Arc<mta_sts::Policy>>,
 }
 

@@ -356,12 +356,16 @@ pub struct QueueOutboundSourceIp {
 }
 
 pub struct ReportConfig {
+    pub path: IfBlock<PathBuf>,
+    pub hash: IfBlock<u64>,
+    pub submitter: IfBlock<String>,
+    pub analyze: Vec<String>,
+
     pub dkim: Report,
     pub spf: Report,
     pub dmarc: Report,
-    pub dmarc_aggregate: IfBlock<Option<Duration>>,
-    pub tls: Report,
-    pub tls_aggregate: IfBlock<Option<Duration>>,
+    pub dmarc_aggregate: AggregateReport,
+    pub tls: AggregateReport,
 }
 
 pub struct Dsn {
@@ -370,13 +374,23 @@ pub struct Dsn {
     pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
 }
 
+pub struct AggregateReport {
+    pub name: IfBlock<String>,
+    pub address: IfBlock<String>,
+    pub subject: IfBlock<String>,
+    pub org_name: IfBlock<Option<String>>,
+    pub contact_info: IfBlock<Option<String>>,
+    pub send: IfBlock<Option<Duration>>,
+    pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
+    pub max_size: IfBlock<usize>,
+}
+
 pub struct Report {
     pub name: IfBlock<String>,
     pub address: IfBlock<String>,
     pub subject: IfBlock<String>,
     pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
     pub send: IfBlock<Option<Rate>>,
-    pub analyze: IfBlock<bool>,
 }
 
 pub struct QueueOutboundTls {

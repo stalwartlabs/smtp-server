@@ -7,10 +7,17 @@ pub struct DnssecResolver {
     pub resolver: TokioAsyncResolver,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
+pub struct TlsaEntry {
+    pub is_end_entity: bool,
+    pub is_sha256: bool,
+    pub is_spki: bool,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Hash)]
 pub struct Tlsa {
-    is_end_entity: bool,
-    is_sha256: bool,
-    is_spki: bool,
-    data: Vec<u8>,
+    pub entries: Vec<TlsaEntry>,
+    pub has_end_entities: bool,
+    pub has_intermediates: bool,
 }

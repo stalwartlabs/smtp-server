@@ -1,17 +1,17 @@
-use std::{fmt::Display, sync::Arc, time::Duration};
-
-use mail_auth::{
-    common::lru::DnsCache,
-    mta_sts::MtaSts,
-    report::tlsrpt::{FailureDetails, ResultType},
+use std::{
+    fmt::Display,
+    sync::Arc,
+    time::{Duration, Instant},
 };
+
+use mail_auth::{common::lru::DnsCache, mta_sts::MtaSts, report::tlsrpt::ResultType};
 use reqwest::redirect;
 
-use crate::{core::Resolvers, USER_AGENT};
+use crate::{core::Core, USER_AGENT};
 
 use super::{Error, Policy};
 
-impl Resolvers {
+impl Core {
     pub async fn lookup_mta_sts_policy<'x>(
         &self,
         domain: &str,
@@ -19,6 +19,7 @@ impl Resolvers {
     ) -> Result<Arc<Policy>, Error> {
         // Lookup MTA-STS TXT record
         let record = match self
+            .resolvers
             .dns
             .txt_lookup::<MtaSts>(format!("_mta-sts.{}.", domain))
             .await
@@ -26,7 +27,7 @@ impl Resolvers {
             Ok(record) => record,
             Err(err) => {
                 // Return the cached policy in case of failure
-                return if let Some(value) = self.cache.mta_sts.get(domain) {
+                return if let Some(value) = self.resolvers.cache.mta_sts.get(domain) {
                     Ok(value)
                 } else {
                     Err(err.into())
@@ -35,7 +36,7 @@ impl Resolvers {
         };
 
         // Check if the policy has been cached
-        if let Some(value) = self.cache.mta_sts.get(domain) {
+        if let Some(value) = self.resolvers.cache.mta_sts.get(domain) {
             if value.id == record.id {
                 return Ok(value);
             }
@@ -57,12 +58,19 @@ impl Resolvers {
             .await?;
 
         // Parse policy
-        let (policy, valid_until) = Policy::parse(
+        let policy = Policy::parse(
             std::str::from_utf8(&bytes).map_err(|err| Error::InvalidPolicy(err.to_string()))?,
             record.id.clone(),
         )?;
+        let valid_until = Instant::now()
+            + Duration::from_secs(if (3600..31557600).contains(&policy.max_age) {
+                policy.max_age
+            } else {
+                86400
+            });
 
         Ok(self
+            .resolvers
             .cache
             .mta_sts
             .insert(domain.to_string(), Arc::new(policy), valid_until))
@@ -75,9 +83,11 @@ impl Resolvers {
         value: Policy,
         valid_until: std::time::Instant,
     ) {
-        self.cache
-            .mta_sts
-            .insert(key.into_fqdn().into_owned(), Arc::new(value), valid_until);
+        self.resolvers.cache.mta_sts.insert(
+            key.into_fqdn().into_owned(),
+            Arc::new(value),
+            valid_until,
+        );
     }
 }
 

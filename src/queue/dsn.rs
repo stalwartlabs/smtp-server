@@ -1,6 +1,6 @@
 use mail_builder::headers::content_type::ContentType;
 use mail_builder::headers::HeaderType;
-use mail_builder::mime::{BodyPart, MimePart};
+use mail_builder::mime::{make_boundary, BodyPart, MimePart};
 use mail_builder::MessageBuilder;
 use mail_parser::DateTime;
 use smtp_proto::{
@@ -250,6 +250,7 @@ impl Message {
             .from((from_name.as_str(), from_addr.as_str()))
             .header("To", HeaderType::Text(self.return_path.as_str().into()))
             .header("Auto-Submitted", HeaderType::Text("auto-generated".into()))
+            .message_id(format!("<{}@{}>", make_boundary("."), reporting_mta))
             .subject(subject)
             .body(MimePart::new(
                 ContentType::new("multipart/report").attribute("report-type", "delivery-status"),
@@ -604,8 +605,7 @@ mod test {
             path,
             created: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+                .map_or(0, |d| d.as_secs()),
             return_path: "sender@foobar.org".to_string(),
             return_path_lcase: "".to_string(),
             return_path_domain: "foobar.org".to_string(),

@@ -1,11 +1,9 @@
-use std::time::{Duration, Instant};
-
 use super::{Mode, MxPattern, Policy};
 
 impl Policy {
-    pub fn parse(mut data: &str, id: String) -> Result<(Policy, Instant), String> {
+    pub fn parse(mut data: &str, id: String) -> Result<Policy, String> {
         let mut mode = Mode::None;
-        let mut expires_in: u64 = 86400;
+        let mut max_age: u64 = 86400;
         let mut mx = Vec::new();
 
         while !data.is_empty() {
@@ -29,9 +27,7 @@ impl Policy {
                     }
                     "max_age" => {
                         if let Ok(value) = value.parse() {
-                            if (3600..31557600).contains(&value) {
-                                expires_in = value;
-                            }
+                            max_age = value;
                         }
                     }
                     "mode" => {
@@ -55,10 +51,12 @@ impl Policy {
         }
 
         if !mx.is_empty() {
-            Ok((
-                Policy { id, mode, mx },
-                Instant::now() + Duration::from_secs(expires_in),
-            ))
+            Ok(Policy {
+                id,
+                mode,
+                mx,
+                max_age,
+            })
         } else {
             Err("No 'mx' entries found.".to_string())
         }
@@ -67,13 +65,11 @@ impl Policy {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use crate::outbound::mta_sts::{Mode, MxPattern, Policy};
 
     #[test]
     fn parse_policy() {
-        for (policy, expected_policy, max_age) in [
+        for (policy, expected_policy) in [
             (
                 r"version: STSv1
 mode: enforce
@@ -89,8 +85,8 @@ max_age: 604800",
                         MxPattern::StartsWith(".example.net".to_string()),
                         MxPattern::Equals("backupmx.example.com".to_string()),
                     ],
+                    max_age: 604800,
                 },
-                604800,
             ),
             (
                 r"version: STSv1
@@ -106,17 +102,14 @@ max_age: 86400
                         MxPattern::Equals("gmail-smtp-in.l.google.com".to_string()),
                         MxPattern::StartsWith(".gmail-smtp-in.l.google.com".to_string()),
                     ],
+                    max_age: 86400,
                 },
-                86400,
             ),
         ] {
-            let (policy, expires_in) =
-                Policy::parse(policy, expected_policy.id.to_string()).unwrap();
             assert_eq!(
-                expires_in.duration_since(Instant::now()).as_secs() + 1,
-                max_age
+                Policy::parse(policy, expected_policy.id.to_string()).unwrap(),
+                expected_policy
             );
-            assert_eq!(policy, expected_policy);
         }
     }
 }

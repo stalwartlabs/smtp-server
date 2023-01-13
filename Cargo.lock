@@ -1788,6 +1788,8 @@ dependencies = [
  "reqwest",
  "rustls",
  "rustls-pemfile",
+ "serde",
+ "serde_json",
  "smtp-proto",
  "tokio",
  "tokio-rustls",

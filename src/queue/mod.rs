@@ -355,6 +355,52 @@ impl Envelope for Message {
     }
 }
 
+impl Envelope for &str {
+    fn local_ip(&self) -> &IpAddr {
+        unreachable!()
+    }
+
+    fn remote_ip(&self) -> &IpAddr {
+        unreachable!()
+    }
+
+    fn sender_domain(&self) -> &str {
+        ""
+    }
+
+    fn sender(&self) -> &str {
+        ""
+    }
+
+    fn rcpt_domain(&self) -> &str {
+        self
+    }
+
+    fn rcpt(&self) -> &str {
+        ""
+    }
+
+    fn helo_domain(&self) -> &str {
+        ""
+    }
+
+    fn authenticated_as(&self) -> &str {
+        ""
+    }
+
+    fn mx(&self) -> &str {
+        ""
+    }
+
+    fn listener_id(&self) -> u16 {
+        0
+    }
+
+    fn priority(&self) -> i16 {
+        0
+    }
+}
+
 #[inline(always)]
 pub fn instant_to_timestamp(now: Instant, time: Instant) -> u64 {
     SystemTime::now()

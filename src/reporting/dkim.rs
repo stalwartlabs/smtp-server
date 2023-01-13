@@ -48,7 +48,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             .ok();
 
         // Send report
-        self.send_report(from_addr, [rcpt].into_iter(), report, &config.sign)
+        self.core
+            .send_report(from_addr, [rcpt].into_iter(), report, &config.sign)
             .await;
     }
 }

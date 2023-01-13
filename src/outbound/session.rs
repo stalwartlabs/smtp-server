@@ -294,40 +294,12 @@ impl Recipient {
     }
 }
 
-pub async fn into_tls(
-    smtp_client: SmtpClient<TcpStream>,
-    tls_connector: &TlsConnector,
-    hostname: &str,
-) -> Result<SmtpClient<TlsStream<TcpStream>>, Status<(), Error>> {
-    smtp_client
-        .into_tls(tls_connector, hostname)
-        .await
-        .map_err(|err| match err {
-            mail_send::Error::InvalidTLSName => {
-                Status::PermanentFailure(Error::TlsError(ErrorDetails {
-                    entity: hostname.to_string(),
-                    details: "Invalid hostname".to_string(),
-                }))
-            }
-            mail_send::Error::Timeout => Status::TemporaryFailure(Error::TlsError(ErrorDetails {
-                entity: hostname.to_string(),
-                details: "TLS handshake timed out".to_string(),
-            })),
-
-            mail_send::Error::Io(err) => Status::TemporaryFailure(Error::TlsError(ErrorDetails {
-                entity: hostname.to_string(),
-                details: format!("Handshake failed: {}", err),
-            })),
-            _ => Status::PermanentFailure(Error::TlsError(ErrorDetails {
-                entity: hostname.to_string(),
-                details: "Other TLS error".to_string(),
-            })),
-        })
-}
-
 pub enum StartTlsResult {
     Success {
         smtp_client: SmtpClient<TlsStream<TcpStream>>,
+    },
+    Error {
+        error: mail_send::Error,
     },
     Unavailable {
         response: Option<Response<String>>,
@@ -340,27 +312,29 @@ pub async fn try_start_tls(
     tls_connector: &TlsConnector,
     hostname: &str,
     capabilities: &EhloResponse<String>,
-) -> Result<StartTlsResult, Status<(), Error>> {
+) -> StartTlsResult {
     if capabilities.has_capability(EXT_START_TLS) {
-        let response = smtp_client
-            .cmd("STARTTLS\r\n")
-            .await
-            .map_err(|err| Status::from_smtp_error(hostname, "STARTTLS", err))?;
-        if response.code() == 220 {
-            return into_tls(smtp_client, tls_connector, hostname)
-                .await
-                .map(|smtp_client| StartTlsResult::Success { smtp_client });
-        } else {
-            Ok(StartTlsResult::Unavailable {
-                response: response.into(),
-                smtp_client,
-            })
+        match smtp_client.cmd("STARTTLS\r\n").await {
+            Ok(response) => {
+                if response.code() == 220 {
+                    match smtp_client.into_tls(tls_connector, hostname).await {
+                        Ok(smtp_client) => StartTlsResult::Success { smtp_client },
+                        Err(error) => StartTlsResult::Error { error },
+                    }
+                } else {
+                    StartTlsResult::Unavailable {
+                        response: response.into(),
+                        smtp_client,
+                    }
+                }
+            }
+            Err(error) => StartTlsResult::Error { error },
         }
     } else {
-        Ok(StartTlsResult::Unavailable {
+        StartTlsResult::Unavailable {
             smtp_client,
             response: None,
-        })
+        }
     }
 }
 

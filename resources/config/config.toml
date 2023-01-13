@@ -259,6 +259,12 @@ host = "lmtp"
 #type = "file"
 #path = "/tmp/file.txt"
 
+[report]
+path = "/var/spool/report"
+hash = 16
+submitter = "mx.domain.org"
+analyze = ["dmarc@*", "abuse@*"]
+
 [report.dsn]
 from-name = "Mail Delivery Subsystem"
 from-address = "MAILER-DAEMON@domain.org"
@@ -270,7 +276,6 @@ from-name = "Autentication Report"
 from-address = "noreply-auth-failure"
 subject = "SPF Authentication Failure Report"
 send = "1/20d"
-analyze = true
 
 [report.spf]
 from-name = "Autentication Report"
@@ -278,23 +283,32 @@ from-address = "noreply-auth-failure"
 subject = "SPF Authentication Failure Report"
 sign = []
 send = "1/20d"
-analyze = true
 
 [report.dmarc]
 from-name = "DMARC report"
 from-address = "noreply-dmarc"
-subject = "DMARC aggregate report for $1"
+subject = "DMARC Failure Report"
 send = "1/20d"
 sign = []
-aggregate = never
-analyze = true
 
-[report.tls]
+[report.dmarc.aggregate]
+from-name = "DMARC report"
+from-address = "noreply-dmarc"
+subject = "DMARC aggregate report for $1"
+org-name = "Mycorp"
+contact-info = ""
+send = never
+max-size = 10000
+sign = []
+
+[report.tls.aggregate]
 from-name = "Autentication Report"
 from-address = "noreply-auth-failure"
 subject = "TLS Failure Report"
-analyze = true
-aggregate = never
+org-name = "Mycorp"
+contact-info = ""
+send = never
+max-size = 10000
 sign = []
 
 [servers."relay".dmarc]

@@ -5,210 +5,135 @@ use mail_auth::{
 use rustls::Certificate;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use crate::{
-    core::Resolvers,
-    queue::{Error, ErrorDetails, Status},
-};
+use crate::queue::{Error, ErrorDetails, Status};
 
-impl Resolvers {
-    pub async fn verify_dane(
+use super::Tlsa;
+
+impl Tlsa {
+    pub fn verify(
         &self,
         span: &tracing::Span,
         hostname: &str,
-        require_dane: bool,
         certificates: Option<&[Certificate]>,
     ) -> Result<(), Status<(), Error>> {
-        let tlsa_records = match self.tlsa_lookup(format!("_25._tcp.{}.", hostname)).await {
-            Ok(tlsa_records) => tlsa_records,
-            Err(err) => {
-                return if require_dane {
-                    Err(if matches!(&err, mail_auth::Error::DnsRecordNotFound(_)) {
-                        Status::PermanentFailure(Error::DaneError(ErrorDetails {
-                            entity: hostname.to_string(),
-                            details: "No TLSA records found".to_string(),
-                        }))
-                    } else {
-                        err.into()
-                    })
-                } else {
-                    Ok(())
-                };
-            }
+        let certificates = if let Some(certificates) = certificates {
+            certificates
+        } else {
+            tracing::info!(
+                parent: span,
+                module = "dane",
+                event = "no-server-certs-found",
+                hostname = hostname,
+                "No certificates were provided."
+            );
+            return Err(Status::TemporaryFailure(Error::DaneError(ErrorDetails {
+                entity: hostname.to_string(),
+                details: "No certificates were provided by host".to_string(),
+            })));
         };
 
-        match (certificates, tlsa_records) {
-            (Some(certificates), Some(tlsa_records)) => {
-                let mut has_end_entities = false;
-                let mut has_intermediates = false;
-
-                for record in tlsa_records.iter() {
-                    if record.is_end_entity {
-                        has_end_entities = true;
-                    } else {
-                        has_intermediates = true;
-                    }
+        let mut matched_end_entity = false;
+        let mut matched_intermediate = false;
+        'outer: for (pos, der_certificate) in certificates.iter().enumerate() {
+            // Parse certificate
+            let certificate = match X509Certificate::from_der(der_certificate.as_ref()) {
+                Ok((_, certificate)) => certificate,
+                Err(err) => {
+                    tracing::debug!(
+                        parent: span,
+                        module = "dane",
+                        event = "cert-parse-error",
+                        "Failed to parse X.509 certificate for host {}: {}",
+                        hostname,
+                        err
+                    );
+                    return Err(Status::TemporaryFailure(Error::DaneError(ErrorDetails {
+                        entity: hostname.to_string(),
+                        details: "Failed to parse X.509 certificate".to_string(),
+                    })));
                 }
+            };
 
-                if !has_end_entities {
-                    return if require_dane {
+            // Match against TLSA records
+            let is_end_entity = pos == 0;
+            let mut sha256 = [None, None];
+            let mut sha512 = [None, None];
+            for record in self.entries.iter() {
+                if record.is_end_entity == is_end_entity {
+                    let hash: &[u8] = if record.is_sha256 {
+                        &sha256[usize::from(record.is_spki)].get_or_insert_with(|| {
+                            let mut hasher = Sha256::new();
+                            hasher.update(if record.is_spki {
+                                certificate.public_key().raw
+                            } else {
+                                der_certificate.as_ref()
+                            });
+                            hasher.finalize()
+                        })[..]
+                    } else {
+                        &sha512[usize::from(record.is_spki)].get_or_insert_with(|| {
+                            let mut hasher = Sha512::new();
+                            hasher.update(if record.is_spki {
+                                certificate.public_key().raw
+                            } else {
+                                der_certificate.as_ref()
+                            });
+                            hasher.finalize()
+                        })[..]
+                    };
+
+                    if hash == record.data {
                         tracing::debug!(
                             parent: span,
                             module = "dane",
-                            event = "no-tlsa-records",
-                            "No valid TLSA records were found for host {}.",
-                            hostname,
+                            event = "info",
+                            hostname = hostname,
+                            certificate = if is_end_entity {
+                                "end-entity"
+                            } else {
+                                "intermediate"
+                            },
+                            "Matched TLSA record with hash {:x?}.",
+                            hash
                         );
-                        Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
-                            entity: hostname.to_string(),
-                            details: "No valid TLSA records were found".to_string(),
-                        })))
-                    } else {
-                        Ok(())
-                    };
-                }
 
-                let mut matched_end_entity = false;
-                let mut matched_intermediate = false;
-                'outer: for (pos, der_certificate) in certificates.iter().enumerate() {
-                    // Parse certificate
-                    let certificate = match X509Certificate::from_der(der_certificate.as_ref()) {
-                        Ok((_, certificate)) => certificate,
-                        Err(err) => {
-                            tracing::debug!(
-                                parent: span,
-                                module = "dane",
-                                event = "cert-parse-error",
-                                "Failed to parse X.509 certificate for host {}: {}",
-                                hostname,
-                                err
-                            );
-                            return if require_dane {
-                                Err(Status::TemporaryFailure(Error::DaneError(ErrorDetails {
-                                    entity: hostname.to_string(),
-                                    details: "Failed to parse X.509 certificate".to_string(),
-                                })))
-                            } else {
-                                Ok(())
-                            };
-                        }
-                    };
-
-                    // Match against TLSA records
-                    let is_end_entity = pos == 0;
-                    let mut sha256 = [None, None];
-                    let mut sha512 = [None, None];
-                    for record in tlsa_records.iter() {
-                        if record.is_end_entity == is_end_entity {
-                            let hash: &[u8] = if record.is_sha256 {
-                                &sha256[usize::from(record.is_spki)].get_or_insert_with(|| {
-                                    let mut hasher = Sha256::new();
-                                    hasher.update(if record.is_spki {
-                                        certificate.public_key().raw
-                                    } else {
-                                        der_certificate.as_ref()
-                                    });
-                                    hasher.finalize()
-                                })[..]
-                            } else {
-                                &sha512[usize::from(record.is_spki)].get_or_insert_with(|| {
-                                    let mut hasher = Sha512::new();
-                                    hasher.update(if record.is_spki {
-                                        certificate.public_key().raw
-                                    } else {
-                                        der_certificate.as_ref()
-                                    });
-                                    hasher.finalize()
-                                })[..]
-                            };
-
-                            if hash == record.data {
-                                tracing::debug!(
-                                    parent: span,
-                                    module = "dane",
-                                    event = "info",
-                                    hostname = hostname,
-                                    certificate = if is_end_entity {
-                                        "end-entity"
-                                    } else {
-                                        "intermediate"
-                                    },
-                                    "Matched TLSA record with hash {:x?}.",
-                                    hash
-                                );
-
-                                if is_end_entity {
-                                    matched_end_entity = true;
-                                    if !has_intermediates {
-                                        break 'outer;
-                                    }
-                                } else {
-                                    matched_intermediate = true;
-                                    break 'outer;
-                                }
+                        if is_end_entity {
+                            matched_end_entity = true;
+                            if !self.has_intermediates {
+                                break 'outer;
                             }
+                        } else {
+                            matched_intermediate = true;
+                            break 'outer;
                         }
                     }
                 }
+            }
+        }
 
-                if (has_end_entities == matched_end_entity)
-                    && (has_intermediates == matched_intermediate)
-                {
-                    tracing::info!(
-                        parent: span,
-                        module = "dane",
-                        event = "success",
-                        hostname = hostname,
-                        "DANE authentication successful.",
-                    );
-                    Ok(())
-                } else {
-                    tracing::info!(
-                        parent: span,
-                        module = "dane",
-                        event = "failure",
-                        hostname = hostname,
-                        "No matching certificates found in TLSA records.",
-                    );
-                    Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
-                        entity: hostname.to_string(),
-                        details: "No matching certificates found in TLSA records".to_string(),
-                    })))
-                }
-            }
-            (_, None) => {
-                if require_dane {
-                    tracing::info!(
-                        parent: span,
-                        module = "dane",
-                        event = "tlsa-dnssec-missing",
-                        hostname = hostname,
-                        "No TLSA DNSSEC records found."
-                    );
-                    Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
-                        entity: hostname.to_string(),
-                        details: "No TLSA DNSSEC records found".to_string(),
-                    })))
-                } else {
-                    Ok(())
-                }
-            }
-            (None, _) => {
-                if require_dane {
-                    tracing::info!(
-                        parent: span,
-                        module = "dane",
-                        event = "no-server-certs-found",
-                        hostname = hostname,
-                        "No certificates were provided."
-                    );
-                    Err(Status::TemporaryFailure(Error::DaneError(ErrorDetails {
-                        entity: hostname.to_string(),
-                        details: "No certificates were provided by host".to_string(),
-                    })))
-                } else {
-                    Ok(())
-                }
-            }
+        if (self.has_end_entities == matched_end_entity)
+            && (self.has_intermediates == matched_intermediate)
+        {
+            tracing::info!(
+                parent: span,
+                module = "dane",
+                event = "success",
+                hostname = hostname,
+                "DANE authentication successful.",
+            );
+            Ok(())
+        } else {
+            tracing::info!(
+                parent: span,
+                module = "dane",
+                event = "failure",
+                hostname = hostname,
+                "No matching certificates found in TLSA records.",
+            );
+            Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
+                entity: hostname.to_string(),
+                details: "No matching certificates found in TLSA records".to_string(),
+            })))
         }
     }
 }
@@ -236,7 +161,7 @@ mod test {
 
     use crate::{
         core::Resolvers,
-        outbound::dane::{DnssecResolver, Tlsa},
+        outbound::dane::{DnssecResolver, Tlsa, TlsaEntry},
         queue::{Error, ErrorDetails, Status},
     };
 
@@ -267,7 +192,11 @@ mod test {
         file.push("dns.txt");
 
         let mut hosts = BTreeSet::new();
-        let mut tlsa = Vec::new();
+        let mut tlsa = Tlsa {
+            entries: Vec::new(),
+            has_end_entities: false,
+            has_intermediates: false,
+        };
         let mut hostname = String::new();
 
         for line in BufReader::new(File::open(file).unwrap()).lines() {
@@ -278,7 +207,11 @@ mod test {
                     0 => {
                         if hostname != item && !hostname.is_empty() {
                             r.tlsa_add(hostname, tlsa, Instant::now() + Duration::from_secs(30));
-                            tlsa = Vec::new();
+                            tlsa = Tlsa {
+                                entries: Vec::new(),
+                                has_end_entities: false,
+                                has_intermediates: false,
+                            };
                         }
                         hosts.insert(item.strip_prefix("_25._tcp.").unwrap().to_string());
                         hostname = item.to_string();
@@ -287,7 +220,12 @@ mod test {
                         is_end_entity = item == "3";
                     }
                     4 => {
-                        tlsa.push(Tlsa {
+                        if is_end_entity {
+                            tlsa.has_end_entities = true;
+                        } else {
+                            tlsa.has_intermediates = true;
+                        }
+                        tlsa.entries.push(TlsaEntry {
                             is_end_entity,
                             is_sha256: true,
                             is_spki: true,
@@ -317,17 +255,17 @@ mod test {
             }
 
             // Successful DANE verification
+            let tlsa = r.tlsa_lookup(&host).await.unwrap().unwrap();
+
             assert_eq!(
-                r.verify_dane(&tracing::info_span!("test_span"), &host, true, Some(&certs))
-                    .await,
+                tlsa.verify(&tracing::info_span!("test_span"), &host, Some(&certs)),
                 Ok(())
             );
 
             // Failed DANE verification
             certs.remove(0);
             assert_eq!(
-                r.verify_dane(&tracing::info_span!("test_span"), &host, true, Some(&certs))
-                    .await,
+                tlsa.verify(&tracing::info_span!("test_span"), &host, Some(&certs)),
                 Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
                     entity: host.to_string(),
                     details: "No matching certificates found in TLSA records".to_string()

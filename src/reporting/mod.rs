@@ -8,22 +8,22 @@ use mail_auth::{
     dmarc::Dmarc,
     mta_sts::TlsRpt,
     report::{
-        tlsrpt::{FailureDetails, PolicyDetails},
-        AuthFailureType, DeliveryResult, Feedback, FeedbackType, PolicyPublished, Record,
+        tlsrpt::FailureDetails, AuthFailureType, DeliveryResult, Feedback, FeedbackType, Record,
     },
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     config::{DkimSigner, IfBlock},
-    core::Session,
+    core::{Core, Session},
+    outbound::{dane::Tlsa, mta_sts::Policy},
     queue::{DomainPart, Message},
     USER_AGENT,
 };
 
 pub mod dkim;
 pub mod dmarc;
-pub mod manager;
+pub mod scheduler;
 pub mod spf;
 pub mod tls;
 
@@ -34,17 +34,25 @@ pub enum Event {
 }
 
 pub struct DmarcEvent {
-    pub policy: PolicyPublished,
+    pub domain: String,
     pub report_record: Record,
     pub dmarc_record: Arc<Dmarc>,
     pub interval: Duration,
 }
 
 pub struct TlsEvent {
-    pub policy: PolicyDetails,
+    pub domain: String,
+    pub policy: PolicyType,
     pub failure: Option<FailureDetails>,
     pub tls_record: Arc<TlsRpt>,
     pub interval: Duration,
+}
+
+#[derive(Hash)]
+pub enum PolicyType {
+    Tlsa(Option<Arc<Tlsa>>),
+    Sts(Option<Arc<Policy>>),
+    None,
 }
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
@@ -65,11 +73,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 DeliveryResult::Unspecified
             })
     }
+}
 
+impl Core {
     pub async fn send_report(
         &self,
         from_addr: &str,
-        rcpts: impl Iterator<Item = &str>,
+        rcpts: impl Iterator<Item = impl AsRef<str>>,
         report: Vec<u8>,
         sign_config: &IfBlock<Vec<Arc<DkimSigner>>>,
     ) {
@@ -77,12 +87,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         let from_addr_lcase = from_addr.to_lowercase();
         let from_addr_domain = from_addr_lcase.domain_part().to_string();
         let mut message = Message::new_boxed(from_addr, from_addr_lcase, from_addr_domain);
-        for rcpt in rcpts {
+        for rcpt_ in rcpts {
+            let rcpt = rcpt_.as_ref();
             let rcpt_lcase = rcpt.to_lowercase();
             let rcpt_domain = rcpt_lcase.domain_part().to_string();
 
             message
-                .add_recipient(rcpt, rcpt_lcase, rcpt_domain, &self.core.queue.config)
+                .add_recipient(rcpt, rcpt_lcase, rcpt_domain, &self.queue.config)
                 .await;
         }
 
@@ -90,7 +101,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         let message_bytes = message.sign(sign_config, report).await;
 
         // Queue message
-        self.core.queue.queue_message(message, message_bytes).await;
+        self.queue.queue_message(message, message_bytes).await;
+    }
+
+    pub async fn schedule_report(&self, report: impl Into<Event>) {
+        if let Err(err) = self.report.tx.send(report.into()).await {
+            let coco = "log";
+        }
     }
 }
 
@@ -111,7 +128,9 @@ impl Message {
                     Ok(signature) => {
                         signature.write_header(&mut headers);
                     }
-                    Err(err) => {}
+                    Err(err) => {
+                        let coco = "log";
+                    }
                 }
             }
             if !headers.is_empty() {
@@ -122,5 +141,51 @@ impl Message {
             }
         }
         vec![bytes]
+    }
+}
+
+impl From<DmarcEvent> for Event {
+    fn from(value: DmarcEvent) -> Self {
+        Event::Dmarc(Box::new(value))
+    }
+}
+
+impl From<TlsEvent> for Event {
+    fn from(value: TlsEvent) -> Self {
+        Event::Tls(Box::new(value))
+    }
+}
+
+impl From<Arc<Tlsa>> for PolicyType {
+    fn from(value: Arc<Tlsa>) -> Self {
+        PolicyType::Tlsa(Some(value))
+    }
+}
+
+impl From<Arc<Policy>> for PolicyType {
+    fn from(value: Arc<Policy>) -> Self {
+        PolicyType::Sts(Some(value))
+    }
+}
+
+impl From<&Arc<Tlsa>> for PolicyType {
+    fn from(value: &Arc<Tlsa>) -> Self {
+        PolicyType::Tlsa(Some(value.clone()))
+    }
+}
+
+impl From<&Arc<Policy>> for PolicyType {
+    fn from(value: &Arc<Policy>) -> Self {
+        PolicyType::Sts(Some(value.clone()))
+    }
+}
+
+impl From<(&Option<Arc<Policy>>, &Option<Arc<Tlsa>>)> for PolicyType {
+    fn from(value: (&Option<Arc<Policy>>, &Option<Arc<Tlsa>>)) -> Self {
+        match value {
+            (Some(value), _) => PolicyType::Sts(Some(value.clone())),
+            (_, Some(value)) => PolicyType::Tlsa(Some(value.clone())),
+            _ => PolicyType::None,
+        }
     }
 }
