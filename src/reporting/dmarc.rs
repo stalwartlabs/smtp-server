@@ -173,8 +173,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         IdentityAlignment::Spf
                     })
                     .write_rfc5322(
-                        config.name.eval(self).await,
-                        from_addr,
+                        (config.name.eval(self).await.as_str(), from_addr.as_str()),
                         &rcpts.join(", "),
                         config.subject.eval(self).await,
                         &mut report,
@@ -245,6 +244,7 @@ impl GenerateDmarcReport for Arc<Core> {
     fn generate_dmarc_report(&self, domain: ReportPolicy<String>, path: ReportPath<PathBuf>) {
         let core = self.clone();
         tokio::spawn(async move {
+            // Deserialize report
             let dmarc = if let Some(dmarc) = json_read::<DmarcFormat>(&path.path).await {
                 dmarc
             } else {
@@ -317,8 +317,10 @@ impl GenerateDmarcReport for Arc<Core> {
                     .submitter
                     .eval(&domain.inner.as_str())
                     .await,
-                config.name.eval(&domain.inner.as_str()).await,
-                from_addr,
+                (
+                    config.name.eval(&domain.inner.as_str()).await.as_str(),
+                    from_addr.as_str(),
+                ),
                 rua.iter().map(|a| a.as_str()),
                 &mut message,
             );
@@ -368,7 +370,12 @@ impl Scheduler {
                     .map_or(0, |d| d.as_secs());
                 let deliver_at = created + event.interval.as_secs();
                 let path = core
-                    .build_report_path(&domain, policy, deliver_at, "dmarc")
+                    .build_report_path(
+                        ReportType::Dmarc(&domain),
+                        policy,
+                        deliver_at,
+                        event.interval.as_secs(),
+                    )
                     .await;
                 let v = e.insert(ReportType::Dmarc(ReportPath {
                     path,
@@ -383,7 +390,7 @@ impl Scheduler {
         if let Some(domain) = create {
             // Serialize report
             let entry = DmarcFormat {
-                rua: event.dmarc_record.rua().iter().cloned().collect(),
+                rua: event.dmarc_record.rua().to_vec(),
                 policy: PolicyPublished::from_record(domain, &event.dmarc_record),
                 records: vec![event.report_record],
             };

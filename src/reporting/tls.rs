@@ -5,21 +5,32 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use ahash::AHashMap;
 use mail_auth::{
+    flate2::{write::GzEncoder, Compression},
     mta_sts::{ReportUri, TlsRpt},
-    report::tlsrpt::{FailureDetails, PolicyDetails, PolicyType},
+    report::tlsrpt::{
+        DateRange, FailureDetails, Policy, PolicyDetails, PolicyType, Summary, TlsReport,
+    },
 };
+
+use mail_parser::DateTime;
+use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
+use tokio::fs;
 
 use crate::{
     core::Core,
     outbound::mta_sts::{Mode, MxPattern},
     queue::Schedule,
+    USER_AGENT,
 };
 
 use super::{
-    scheduler::{json_append, json_write, ReportPath, ReportPolicy, ReportType, Scheduler, ToHash},
+    scheduler::{
+        json_append, json_read, json_write, ReportPath, ReportPolicy, ReportType, Scheduler, ToHash,
+    },
     TlsEvent,
 };
 
@@ -43,8 +54,150 @@ pub trait GenerateTlsReport {
 impl GenerateTlsReport for Arc<Core> {
     fn generate_tls_report(&self, domain: String, path: ReportPath<Vec<ReportPolicy<PathBuf>>>) {
         let core = self.clone();
-        tokio::spawn(async {
-            //TODO
+        tokio::spawn(async move {
+            // Deserialize report
+            let config = &core.report.config.tls;
+            let mut report = TlsReport {
+                organization_name: config.org_name.eval(&domain.as_str()).await.clone(),
+                date_range: DateRange {
+                    start_datetime: DateTime::from_timestamp(path.created as i64),
+                    end_datetime: DateTime::from_timestamp(path.deliver_at as i64),
+                },
+                contact_info: config.contact_info.eval(&domain.as_str()).await.clone(),
+                report_id: format!(
+                    "{}_{}",
+                    path.created,
+                    path.path.first().map_or(0, |p| p.policy)
+                ),
+                policies: Vec::with_capacity(path.path.len()),
+            };
+            let mut rua = Vec::new();
+            for path in &path.path {
+                if let Some(tls) = json_read::<TlsFormat>(&path.inner).await {
+                    // Group duplicates
+                    let mut total_success = 0;
+                    let mut total_failure = 0;
+                    let mut record_map = AHashMap::with_capacity(tls.records.len());
+                    for record in tls.records {
+                        if let Some(record) = record {
+                            match record_map.entry(record) {
+                                Entry::Occupied(mut e) => {
+                                    *e.get_mut() += 1;
+                                }
+                                Entry::Vacant(e) => {
+                                    e.insert(1u32);
+                                }
+                            }
+                            total_failure += 1;
+                        } else {
+                            total_success += 1;
+                        }
+                    }
+                    report.policies.push(Policy {
+                        policy: tls.policy,
+                        summary: Summary {
+                            total_success,
+                            total_failure,
+                        },
+                        failure_details: record_map
+                            .into_iter()
+                            .map(|(mut r, count)| {
+                                r.failed_session_count = count;
+                                r
+                            })
+                            .collect(),
+                    });
+
+                    rua = tls.rua;
+                }
+            }
+
+            if report.policies.is_empty() {
+                return;
+            }
+
+            // Compress and serialize report
+            let json = report.to_json();
+            let mut e = GzEncoder::new(Vec::with_capacity(json.len()), Compression::default());
+            let json =
+                match std::io::Write::write_all(&mut e, json.as_bytes()).and_then(|_| e.finish()) {
+                    Ok(report) => report,
+                    Err(err) => {
+                        tracing::error!(
+                            module = "report",
+                            event = "error",
+                            "Failed to compress report: {}",
+                            err
+                        );
+                        return;
+                    }
+                };
+
+            // Try delivering report over HTTP
+            let mut rcpts = Vec::with_capacity(rua.len());
+            for uri in &rua {
+                match uri {
+                    ReportUri::Http(uri) => {
+                        if let Ok(client) = reqwest::Client::builder()
+                            .user_agent(USER_AGENT)
+                            .timeout(Duration::from_secs(2 * 60))
+                            .build()
+                        {
+                            match client
+                                .post(uri)
+                                .header(CONTENT_TYPE, "application/tlsrpt+gzip")
+                                .body(json.to_vec())
+                                .send()
+                                .await
+                            {
+                                Ok(response) => {
+                                    if response.status().is_success() {
+                                        let log = "fd";
+                                        path.cleanup().await;
+                                        return;
+                                    }
+                                }
+                                Err(err) => {
+                                    tracing::debug!(
+                                        module = "report",
+                                        event = "error",
+                                        "Failed to submit TLS report to {}: {}",
+                                        uri,
+                                        err
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    ReportUri::Mail(mailto) => {
+                        rcpts.push(mailto.as_str());
+                    }
+                }
+            }
+
+            // Deliver report over SMTP
+            if !rcpts.is_empty() {
+                let from_addr = config.address.eval(&domain.as_str()).await;
+                let mut message = Vec::with_capacity(path.size);
+                let _ = report.write_rfc5322_from_bytes(
+                    &domain,
+                    core.report.config.submitter.eval(&domain.as_str()).await,
+                    (
+                        config.name.eval(&domain.as_str()).await.as_str(),
+                        from_addr.as_str(),
+                    ),
+                    rcpts.iter().copied(),
+                    &json,
+                    &mut message,
+                );
+
+                // Send report
+                core.send_report(from_addr, rcpts.iter(), message, &config.sign)
+                    .await;
+            } else {
+                let log = "fd";
+            }
+            path.cleanup().await;
         });
     }
 }
@@ -71,7 +224,12 @@ impl Scheduler {
                         let path = e.into_mut().tls_path();
                         path.path.push(ReportPolicy {
                             inner: core
-                                .build_report_path(&domain, policy_hash, path.deliver_at, "tls")
+                                .build_report_path(
+                                    ReportType::Tls(&domain),
+                                    policy_hash,
+                                    path.deliver_at,
+                                    path.deliver_at - path.created,
+                                )
                                 .await,
                             policy: policy_hash,
                         });
@@ -92,7 +250,12 @@ impl Scheduler {
                     .map_or(0, |d| d.as_secs());
                 let deliver_at = created + event.interval.as_secs();
                 let path = core
-                    .build_report_path(&domain, policy_hash, deliver_at, "tls")
+                    .build_report_path(
+                        ReportType::Tls(&domain),
+                        policy_hash,
+                        deliver_at,
+                        event.interval.as_secs(),
+                    )
                     .await;
                 let v = e.insert(ReportType::Tls(ReportPath {
                     path: vec![ReportPolicy {
@@ -191,6 +354,22 @@ impl Scheduler {
         } else if path.size < *max_size {
             // Append to existing report
             path.size += json_append(&path.path[pos].inner, &event.failure).await;
+        }
+    }
+}
+
+impl ReportPath<Vec<ReportPolicy<PathBuf>>> {
+    async fn cleanup(&self) {
+        for path in &self.path {
+            if let Err(err) = fs::remove_file(&path.inner).await {
+                tracing::error!(
+                    module = "report",
+                    event = "error",
+                    "Failed to delete file {}: {}",
+                    path.inner.display(),
+                    err
+                );
+            }
         }
     }
 }

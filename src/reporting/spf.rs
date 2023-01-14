@@ -40,8 +40,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             )
             .with_spf_dns(format!("txt : {} : v=SPF1", output.domain())) // TODO use DNS record
             .write_rfc5322(
-                config.name.eval(self).await,
-                from_addr,
+                (config.name.eval(self).await.as_str(), from_addr.as_str()),
                 rcpt,
                 config.subject.eval(self).await,
                 &mut report,

@@ -9,7 +9,7 @@ use smtp_server::{
         Core, QueueCore, ReportCore, SessionCore, TlsConnectors,
     },
     queue::{self, manager::SpawnQueue},
-    reporting::scheduler::SpawnReport,
+    reporting::{self, scheduler::SpawnReport},
 };
 use tokio::sync::{mpsc, watch};
 
@@ -127,7 +127,7 @@ async fn main() -> std::io::Result<()> {
     queue_rx.spawn(core.clone(), core.queue.read_queue().await);
 
     // Spawn report manager
-    //report_rx.spawn(core.clone());
+    report_rx.spawn(core.clone(), core.report.read_reports().await);
 
     // Spawn listeners
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -170,6 +170,7 @@ async fn main() -> std::io::Result<()> {
     // Stop services
     shutdown_tx.send(true).ok();
     core.queue.tx.send(queue::Event::Stop).await.ok();
+    core.report.tx.send(reporting::Event::Stop).await.ok();
 
     // Wait for services to finish
     tokio::time::sleep(Duration::from_secs(1)).await;

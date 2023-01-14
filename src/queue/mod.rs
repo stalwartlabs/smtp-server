@@ -409,6 +409,24 @@ pub fn instant_to_timestamp(now: Instant, time: Instant) -> u64 {
         + time.checked_duration_since(now).map_or(0, |d| d.as_secs())
 }
 
+pub trait InstantFromTimestamp {
+    fn to_instant(&self) -> Instant;
+}
+
+impl InstantFromTimestamp for u64 {
+    fn to_instant(&self) -> Instant {
+        let timestamp = *self;
+        let current_timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        if timestamp > current_timestamp {
+            Instant::now() + Duration::from_secs(timestamp - current_timestamp)
+        } else {
+            Instant::now()
+        }
+    }
+}
+
 pub trait DomainPart {
     fn domain_part(&self) -> &str;
 }

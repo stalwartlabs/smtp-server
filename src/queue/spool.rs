@@ -13,8 +13,8 @@ use crate::config::QueueConfig;
 use crate::core::QueueCore;
 
 use super::{
-    instant_to_timestamp, Domain, Error, ErrorDetails, Event, HostResponse, Message, Recipient,
-    Schedule, SimpleEnvelope, Status, RCPT_STATUS_CHANGED,
+    instant_to_timestamp, Domain, Error, ErrorDetails, Event, HostResponse, InstantFromTimestamp,
+    Message, Recipient, Schedule, SimpleEnvelope, Status, RCPT_STATUS_CHANGED,
 };
 
 impl QueueCore {
@@ -612,16 +612,7 @@ impl QueueSerializer for Instant {
     }
 
     fn deserialize(bytes: &mut Iter<'_, u8>) -> Option<Self> {
-        let timestamp = usize::deserialize(bytes)? as u64;
-        let current_timestamp = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        if timestamp > current_timestamp {
-            Instant::now() + Duration::from_secs(timestamp - current_timestamp)
-        } else {
-            Instant::now()
-        }
-        .into()
+        (usize::deserialize(bytes)? as u64).to_instant().into()
     }
 }
 

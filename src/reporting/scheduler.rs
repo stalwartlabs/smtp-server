@@ -1,12 +1,15 @@
 use ahash::{AHashMap, AHasher};
 use mail_auth::{
-    common::{base32::Base32Writer, headers::Writer},
+    common::{
+        base32::{Base32Reader, Base32Writer},
+        headers::Writer,
+    },
     dmarc::Dmarc,
 };
 
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    collections::BinaryHeap,
+    collections::{hash_map::Entry, BinaryHeap},
     hash::{Hash, Hasher},
     path::PathBuf,
     sync::Arc,
@@ -18,7 +21,10 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{core::Core, queue::Schedule};
+use crate::{
+    core::{Core, ReportCore},
+    queue::{InstantFromTimestamp, Schedule},
+};
 
 use super::{dmarc::GenerateDmarcReport, tls::GenerateTlsReport, Event};
 
@@ -88,24 +94,110 @@ impl SpawnReport for mpsc::Receiver<Event> {
 impl Core {
     pub async fn build_report_path(
         &self,
-        domain: &str,
+        domain: ReportType<&str, &str>,
         policy: u64,
         deliver_at: u64,
-        rtype: &str,
+        interval: u64,
     ) -> PathBuf {
+        let (ext, domain) = match domain {
+            ReportType::Dmarc(domain) => ("t", domain),
+            ReportType::Tls(domain) => ("d", domain),
+        };
+
         // Build base path
         let mut path = self.report.config.path.eval(&domain).await.clone();
         path.push((policy % *self.report.config.hash.eval(&domain).await).to_string());
         let _ = fs::create_dir(&path).await;
 
         // Build filename
-        use std::fmt::Write;
         let mut w = Base32Writer::with_capacity(domain.len() + 16);
+        w.write(&policy.to_le_bytes()[..]);
+        w.write(&(deliver_at.saturating_sub(946684800) as u32).to_le_bytes()[..]);
+        w.write(&(interval as u32).to_le_bytes()[..]);
         w.write(domain.as_bytes());
         let mut file = w.finalize();
-        let _ = write!(file, "_{}_{}_{}.rpt", rtype, policy, deliver_at);
+        file.push('.');
+        file.push_str(ext);
         path.push(file);
         path
+    }
+}
+
+impl ReportCore {
+    pub async fn read_reports(&self) -> Scheduler {
+        let mut scheduler = Scheduler::default();
+
+        for path in self
+            .config
+            .path
+            .if_then
+            .iter()
+            .map(|t| &t.then)
+            .chain([&self.config.path.default])
+        {
+            let mut dir = match tokio::fs::read_dir(path).await {
+                Ok(dir) => dir,
+                Err(_) => continue,
+            };
+            loop {
+                match dir.next_entry().await {
+                    Ok(Some(file)) => {
+                        let file = file.path();
+                        if file.is_dir() {
+                            match tokio::fs::read_dir(path).await {
+                                Ok(mut dir) => {
+                                    let file_ = file;
+                                    loop {
+                                        match dir.next_entry().await {
+                                            Ok(Some(file)) => {
+                                                let file = file.path();
+                                                if file
+                                                    .extension()
+                                                    .map_or(false, |e| e == "t" || e == "d")
+                                                {
+                                                    scheduler.add_path(file);
+                                                }
+                                            }
+                                            Ok(None) => break,
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    "Failed to read report directory {}: {}",
+                                                    file_.display(),
+                                                    err
+                                                );
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "Failed to read report directory {}: {}",
+                                        file.display(),
+                                        err
+                                    )
+                                }
+                            };
+                        } else if file.extension().map_or(false, |e| e == "t" || e == "d") {
+                            scheduler.add_path(file);
+                        }
+                    }
+                    Ok(None) => {
+                        break;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to read report directory {}: {}",
+                            path.display(),
+                            err
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+
+        scheduler
     }
 }
 
@@ -131,6 +223,122 @@ impl Scheduler {
                     .unwrap_or(self.short_wait)
             })
             .unwrap_or(self.long_wait)
+    }
+
+    pub async fn add_path(&mut self, path: PathBuf) -> Result<(), String> {
+        let (file, ext) = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .and_then(|f| f.rsplit_once('.'))
+            .ok_or_else(|| format!("Invalid queue file name {}", path.display()))?;
+        let file_size = fs::metadata(&path)
+            .await
+            .map_err(|err| {
+                format!(
+                    "Failed to obtain file metadata for {}: {}",
+                    path.display(),
+                    err
+                )
+            })?
+            .len();
+        if file_size == 0 {
+            let _ = fs::remove_file(&path).await;
+            return Err(format!(
+                "Removed zero length report file {}",
+                path.display()
+            ));
+        }
+
+        // Decode domain name
+        let mut policy = [0u8; std::mem::size_of::<u64>()];
+        let mut deliver_at = [0u8; std::mem::size_of::<u32>()];
+        let mut interval = [0u8; std::mem::size_of::<u32>()];
+        let mut domain = Vec::new();
+        for (pos, byte) in Base32Reader::new(file.as_bytes()).enumerate() {
+            match pos {
+                0..=7 => {
+                    policy[pos] = byte;
+                }
+                8..=11 => {
+                    deliver_at[pos - 8] = byte;
+                }
+                12..=15 => {
+                    interval[pos - 12] = byte;
+                }
+                _ => {
+                    domain.push(byte);
+                }
+            }
+        }
+        if domain.is_empty() {
+            return Err(format!(
+                "Failed to base32 decode report file {}",
+                path.display()
+            ));
+        }
+        let domain = String::from_utf8(domain).map_err(|err| {
+            format!(
+                "Failed to base32 decode report file {}: {}",
+                path.display(),
+                err
+            )
+        })?;
+
+        // Rebuild parts
+        let policy = u64::from_le_bytes(policy);
+        let deliver_at = u32::from_le_bytes(deliver_at) as u64 + 946684800;
+        let created = deliver_at - (u32::from_le_bytes(interval) as u64);
+
+        match ext {
+            "d" => {
+                let key = ReportType::Dmarc(ReportPolicy {
+                    inner: domain,
+                    policy,
+                });
+                self.reports.insert(
+                    key.clone(),
+                    ReportType::Dmarc(ReportPath {
+                        path,
+                        size: file_size as usize,
+                        created,
+                        deliver_at,
+                    }),
+                );
+                self.main.push(Schedule {
+                    due: deliver_at.to_instant(),
+                    inner: key,
+                });
+            }
+            "t" => match self.reports.entry(ReportType::Tls(domain)) {
+                Entry::Occupied(mut e) => {
+                    if let ReportType::Tls(tls) = e.get_mut() {
+                        tls.size += file_size as usize;
+                        tls.path.push(ReportPolicy {
+                            inner: path,
+                            policy,
+                        });
+                    }
+                }
+                Entry::Vacant(e) => {
+                    self.main.push(Schedule {
+                        due: deliver_at.to_instant(),
+                        inner: e.key().clone(),
+                    });
+                    e.insert(ReportType::Tls(ReportPath {
+                        path: vec![ReportPolicy {
+                            inner: path,
+                            policy,
+                        }],
+                        size: file_size as usize,
+                        created,
+                        deliver_at,
+                    }));
+                }
+            },
+            _ => unreachable!(),
+        }
+
+        Ok(())
     }
 }
 
@@ -217,6 +425,17 @@ pub async fn json_read<T: DeserializeOwned>(path: &PathBuf) -> Option<T> {
                 err
             );
             None
+        }
+    }
+}
+
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self {
+            short_wait: Duration::from_millis(1),
+            long_wait: Duration::from_secs(86400 * 365),
+            main: BinaryHeap::with_capacity(128),
+            reports: AHashMap::with_capacity(128),
         }
     }
 }

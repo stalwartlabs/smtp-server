@@ -77,7 +77,7 @@ impl Core {
     }
 
     #[cfg(test)]
-    pub(crate) fn policy_add<'x>(
+    pub fn policy_add<'x>(
         &self,
         key: impl mail_auth::common::resolver::IntoFqdn<'x>,
         value: Policy,
