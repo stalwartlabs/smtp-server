@@ -43,6 +43,13 @@ impl Message {
         let mut capabilities = match say_helo(&mut smtp_client, &params).await {
             Ok(capabilities) => capabilities,
             Err(status) => {
+                tracing::info!(
+                    parent: params.span,
+                    context = "ehlo",
+                    event = "rejected",
+                    mx = &params.hostname,
+                    reason = %status,
+                );
                 quit(smtp_client).await;
                 return status;
             }
@@ -51,6 +58,13 @@ impl Message {
         // Authenticate
         if let Some(credentials) = params.credentials {
             if let Err(err) = smtp_client.authenticate(credentials, &capabilities).await {
+                tracing::info!(
+                    parent: params.span,
+                    context = "auth",
+                    event = "failed",
+                    mx = &params.hostname,
+                    reason = %err,
+                );
                 quit(smtp_client).await;
                 return Status::from_smtp_error(params.hostname, "AUTH ...", err);
             }
@@ -59,6 +73,13 @@ impl Message {
             capabilities = match say_helo(&mut smtp_client, &params).await {
                 Ok(capabilities) => capabilities,
                 Err(status) => {
+                    tracing::info!(
+                        parent: params.span,
+                        context = "ehlo",
+                        event = "rejected",
+                        mx = &params.hostname,
+                        reason = %status,
+                    );
                     quit(smtp_client).await;
                     return status;
                 }
@@ -73,6 +94,13 @@ impl Message {
             .await
             .and_then(|r| r.assert_positive_completion())
         {
+            tracing::info!(
+                parent: params.span,
+                context = "sender",
+                event = "rejected",
+                mx = &params.hostname,
+                reason = %err,
+            );
             quit(smtp_client).await;
             return Status::from_smtp_error(params.hostname, &cmd, err);
         }
@@ -105,6 +133,15 @@ impl Message {
                         ));
                     }
                     severity => {
+                        tracing::info!(
+                            parent: params.span,
+                            context = "rcpt",
+                            event = "rejected",
+                            rcpt = rcpt.address,
+                            mx = &params.hostname,
+                            reason = %response,
+                        );
+
                         let response = HostResponse {
                             hostname: ErrorDetails {
                                 entity: params.hostname.to_string(),
@@ -122,6 +159,15 @@ impl Message {
                     }
                 },
                 Err(err) => {
+                    tracing::info!(
+                        parent: params.span,
+                        context = "rcpt",
+                        event = "failed",
+                        mx = &params.hostname,
+                        rcpt = rcpt.address,
+                        reason = %err,
+                    );
+
                     // Something went wrong, abort.
                     quit(smtp_client).await;
                     return Status::from_smtp_error(params.hostname, "", err);
@@ -138,6 +184,14 @@ impl Message {
             };
 
             if let Err(status) = send_message(&mut smtp_client, self, &bdat_cmd, &params).await {
+                tracing::info!(
+                    parent: params.span,
+                    context = "message",
+                    event = "rejected",
+                    mx = &params.hostname,
+                    reason = %status,
+                );
+
                 quit(smtp_client).await;
                 return status;
             }
@@ -149,11 +203,28 @@ impl Message {
                         // Mark recipients as delivered
                         if response.code() == 250 {
                             for (rcpt, status) in accepted_rcpts {
+                                tracing::info!(
+                                    parent: params.span,
+                                    context = "rcpt",
+                                    event = "delivered",
+                                    rcpt = rcpt.address,
+                                    mx = &params.hostname,
+                                    response = %status,
+                                );
+
                                 rcpt.status = status;
                                 rcpt.flags |= RCPT_STATUS_CHANGED;
                                 total_completed += 1;
                             }
                         } else {
+                            tracing::info!(
+                                parent: params.span,
+                                context = "message",
+                                event = "rejected",
+                                mx = &params.hostname,
+                                reason = %response,
+                            );
+
                             quit(smtp_client).await;
                             return Status::from_smtp_error(
                                 params.hostname,
@@ -163,6 +234,14 @@ impl Message {
                         }
                     }
                     Err(status) => {
+                        tracing::info!(
+                            parent: params.span,
+                            context = "message",
+                            event = "failed",
+                            mx = &params.hostname,
+                            reason = %status,
+                        );
+
                         quit(smtp_client).await;
                         return status;
                     }
@@ -177,6 +256,15 @@ impl Message {
                             rcpt.flags |= RCPT_STATUS_CHANGED;
                             rcpt.status = match response.severity() {
                                 Severity::PositiveCompletion => {
+                                    tracing::info!(
+                                        parent: params.span,
+                                        context = "rcpt",
+                                        event = "delivered",
+                                        rcpt = rcpt.address,
+                                        mx = &params.hostname,
+                                        response = %response,
+                                    );
+
                                     total_completed += 1;
                                     Status::Completed(HostResponse {
                                         hostname: params.hostname.to_string(),
@@ -184,6 +272,15 @@ impl Message {
                                     })
                                 }
                                 severity => {
+                                    tracing::info!(
+                                        parent: params.span,
+                                        context = "rcpt",
+                                        event = "rejected",
+                                        rcpt = rcpt.address,
+                                        mx = &params.hostname,
+                                        reason = %response,
+                                    );
+
                                     let response = HostResponse {
                                         hostname: ErrorDetails {
                                             entity: params.hostname.to_string(),
@@ -205,6 +302,14 @@ impl Message {
                         }
                     }
                     Err(status) => {
+                        tracing::info!(
+                            parent: params.span,
+                            context = "message",
+                            event = "rejected",
+                            mx = &params.hostname,
+                            reason = %status,
+                        );
+
                         quit(smtp_client).await;
                         return status;
                     }
@@ -387,7 +492,7 @@ pub async fn send_message<T: AsyncRead + AsyncWrite + Unpin>(
 ) -> Result<(), Status<(), Error>> {
     let raw_message = fs::read(&message.path).await.map_err(|err| {
         tracing::error!(parent: params.span,
-                            module = "queue", 
+                            context = "queue", 
                             event = "error", 
                             "Failed to read message file {} from disk: {}", 
                             message.path.display(),

@@ -35,28 +35,59 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     if let Some(is_local_address) = address_lookup.exists(&rcpt.address_lcase).await
                     {
                         if !is_local_address {
+                            tracing::debug!(parent: &self.span,
+                                            event = "error",
+                                            context = "rcpt", 
+                                            address = &rcpt.address_lcase,
+                                            "Mailbox does not exist.");
                             return self
                                 .rcpt_error(b"550 5.1.2 Mailbox does not exist.\r\n")
                                 .await;
                         }
                     } else {
+                        tracing::debug!(parent: &self.span,
+                            event = "error",
+                            context = "rcpt", 
+                            address = &rcpt.address_lcase,
+                            "Temporary address verification failure.");
                         return self
                             .write(b"451 4.4.3 Unable to verify address at this time.\r\n")
                             .await;
                     }
                 } else if !self.params.rcpt_relay {
+                    tracing::debug!(parent: &self.span,
+                        event = "error",
+                        context = "rcpt", 
+                        address = &rcpt.address_lcase,
+                        "Relay not allowed.");
                     return self.rcpt_error(b"550 5.1.2 Relay not allowed.\r\n").await;
                 }
             } else {
+                tracing::debug!(parent: &self.span,
+                    event = "error",
+                    context = "rcpt", 
+                    address = &rcpt.address_lcase,
+                    "Temporary address verification failure.");
+
                 return self
                     .write(b"451 4.4.3 Unable to verify address at this time.\r\n")
                     .await;
             }
         } else if !self.params.rcpt_relay {
+            tracing::debug!(parent: &self.span,
+                event = "error",
+                context = "rcpt", 
+                address = &rcpt.address_lcase,
+                "Relay not allowed.");
             return self.rcpt_error(b"550 5.1.2 Relay not allowed.\r\n").await;
         }
 
         if !self.data.rcpt_to.contains(&rcpt) {
+            tracing::debug!(parent: &self.span,
+            event = "success",
+            context = "rcpt",
+            address = &rcpt.address_lcase);
+
             self.data.rcpt_to.push(rcpt);
             if !self.is_allowed().await {
                 self.data.rcpt_to.pop();
@@ -80,8 +111,9 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 .await?;
             tracing::debug!(
                 parent: &self.span,
+                context = "rcpt",
                 event = "disconnect",
-                reason = "rcpt-errors",
+                reason = "too-many-errors",
                 "Too many invalid RCPT commands."
             );
             Err(())

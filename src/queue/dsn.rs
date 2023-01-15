@@ -15,35 +15,39 @@ use crate::config::QueueConfig;
 use crate::core::QueueCore;
 
 use super::{
-    instant_to_timestamp, Domain, Error, ErrorDetails, HostResponse, Message, Recipient,
-    SimpleEnvelope, Status, RCPT_DSN_SENT, RCPT_STATUS_CHANGED,
+    instant_to_timestamp, DeliveryAttempt, Domain, Error, ErrorDetails, HostResponse, Message,
+    Recipient, SimpleEnvelope, Status, RCPT_DSN_SENT, RCPT_STATUS_CHANGED,
 };
 
 impl QueueCore {
-    pub async fn send_dsn(&self, message: &mut Message) {
-        if !message.return_path.is_empty() {
-            if let Some(dsn) = message.build_dsn(&self.config).await {
+    pub async fn send_dsn(&self, attempt: &mut DeliveryAttempt) {
+        if !attempt.message.return_path.is_empty() {
+            if let Some(dsn) = attempt.build_dsn(&self.config).await {
                 let mut dsn_message = Message::new_boxed("", "", "");
                 dsn_message
                     .add_recipient(
-                        &message.return_path,
-                        &message.return_path_lcase,
-                        &message.return_path_domain,
+                        &attempt.message.return_path,
+                        &attempt.message.return_path_lcase,
+                        &attempt.message.return_path_domain,
                         &self.config,
                     )
                     .await;
 
                 // Sign message
-                let message_bytes = message.sign(&self.config.dsn.sign, dsn).await;
-                self.queue_message(dsn_message, message_bytes).await;
+                let message_bytes = attempt
+                    .message
+                    .sign(&self.config.dsn.sign, dsn, &attempt.span)
+                    .await;
+                self.queue_message(dsn_message, message_bytes, &attempt.span)
+                    .await;
             }
         } else {
-            message.handle_double_bounce();
+            attempt.handle_double_bounce();
         }
     }
 }
 
-impl Message {
+impl DeliveryAttempt {
     async fn build_dsn(&mut self, config: &QueueConfig) -> Option<Vec<u8>> {
         let now = Instant::now();
 
@@ -52,11 +56,11 @@ impl Message {
         let mut txt_failed = String::new();
         let mut dsn = String::new();
 
-        for rcpt in &mut self.recipients {
+        for rcpt in &mut self.message.recipients {
             if rcpt.has_flag(RCPT_DSN_SENT | RCPT_NOTIFY_NEVER) {
                 continue;
             }
-            let domain = &self.domains[rcpt.domain_idx];
+            let domain = &self.message.domains[rcpt.domain_idx];
             match &rcpt.status {
                 Status::Completed(response) => {
                     rcpt.flags |= RCPT_DSN_SENT | RCPT_STATUS_CHANGED;
@@ -196,10 +200,10 @@ impl Message {
 
         // Update next delay notification time
         if has_delay {
-            let mut domains = std::mem::take(&mut self.domains);
+            let mut domains = std::mem::take(&mut self.message.domains);
             for domain in &mut domains {
                 if domain.notify.due <= now {
-                    let envelope = SimpleEnvelope::new(self, &domain.domain);
+                    let envelope = SimpleEnvelope::new(&self.message, &domain.domain);
 
                     if let Some(next_notify) = config
                         .notify
@@ -215,32 +219,48 @@ impl Message {
                     domain.changed = true;
                 }
             }
-            self.domains = domains;
+            self.message.domains = domains;
         }
 
         // Obtain hostname and sender addresses
-        let from_name = config.dsn.name.eval(self).await;
-        let from_addr = config.dsn.address.eval(self).await;
-        let reporting_mta = config.hostname.eval(self).await;
+        let from_name = config.dsn.name.eval(self.message.as_ref()).await;
+        let from_addr = config.dsn.address.eval(self.message.as_ref()).await;
+        let reporting_mta = config.hostname.eval(self.message.as_ref()).await;
 
         // Prepare DSN
         let mut dsn_header = String::with_capacity(dsn.len() + 128);
-        self.write_dsn_headers(&mut dsn_header, reporting_mta);
+        self.message
+            .write_dsn_headers(&mut dsn_header, reporting_mta);
         let dsn = dsn_header + &dsn;
 
         // Fetch message headers
-        let headers = match File::open(&self.path).await {
+        let headers = match File::open(&self.message.path).await {
             Ok(mut file) => {
-                let mut buf = vec![0u8; self.size_headers];
+                let mut buf = vec![0u8; self.message.size_headers];
                 if let Err(err) = file.read_exact(&mut buf).await {
-                    let log = "fsdf";
+                    tracing::error!(
+                        parent: &self.span,
+                        context = "queue",
+                        event = "error",
+                        "Failed to read {} bytes from {}: {}",
+                        self.message.size_headers,
+                        self.message.path.display(),
+                        err
+                    );
                     String::new()
                 } else {
                     String::from_utf8(buf).unwrap_or_default()
                 }
             }
             Err(err) => {
-                let log = "fsdf";
+                tracing::error!(
+                    parent: &self.span,
+                    context = "queue",
+                    event = "error",
+                    "Failed to open file {}: {}",
+                    self.message.path.display(),
+                    err
+                );
                 String::new()
             }
         };
@@ -248,7 +268,10 @@ impl Message {
         // Build message
         MessageBuilder::new()
             .from((from_name.as_str(), from_addr.as_str()))
-            .header("To", HeaderType::Text(self.return_path.as_str().into()))
+            .header(
+                "To",
+                HeaderType::Text(self.message.return_path.as_str().into()),
+            )
             .header("Auto-Submitted", HeaderType::Text("auto-generated".into()))
             .message_id(format!("<{}@{}>", make_boundary("."), reporting_mta))
             .subject(subject)
@@ -272,26 +295,48 @@ impl Message {
     }
 
     fn handle_double_bounce(&mut self) {
-        let mut is_double_bounce = false;
-        for rcpt in &mut self.recipients {
+        let mut is_double_bounce = Vec::with_capacity(0);
+        let message = &mut self.message;
+
+        for rcpt in &mut message.recipients {
             if !rcpt.has_flag(RCPT_DSN_SENT | RCPT_NOTIFY_NEVER) {
-                if let Status::PermanentFailure(_) = &rcpt.status {
-                    rcpt.flags |= RCPT_DSN_SENT;
-                    is_double_bounce = true;
+                match &rcpt.status {
+                    Status::PermanentFailure(err) => {
+                        rcpt.flags |= RCPT_DSN_SENT;
+                        let mut dsn = String::new();
+                        err.write_dsn_text(&rcpt.address, &mut dsn);
+                        is_double_bounce.push(dsn);
+                    }
+                    Status::Scheduled => {
+                        let domain = &message.domains[rcpt.domain_idx];
+                        if let Status::PermanentFailure(err) = &domain.status {
+                            rcpt.flags |= RCPT_DSN_SENT;
+                            let mut dsn = String::new();
+                            err.write_dsn_text(&rcpt.address, &domain.domain, &mut dsn);
+                            is_double_bounce.push(dsn);
+                        }
+                    }
+                    _ => (),
                 }
             }
         }
 
         let now = Instant::now();
-        for domain in &mut self.domains {
+        for domain in &mut message.domains {
             if domain.notify.due <= now {
                 domain.notify.due = domain.expires + Duration::from_secs(10);
             }
         }
 
-        if is_double_bounce {
-            // TODO log
-            let coco = "fsdf";
+        if !is_double_bounce.is_empty() {
+            tracing::info!(
+                parent: &self.span,
+                context = "queue",
+                event = "double-bounce",
+                id = self.message.id,
+                failures = ?is_double_bounce,
+                "Failed delivery of message with null return path.",
+            );
         }
     }
 }
@@ -585,7 +630,10 @@ mod test {
 
     use crate::{
         config::QueueConfig,
-        queue::{Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule, Status},
+        queue::{
+            DeliveryAttempt, Domain, Error, ErrorDetails, HostResponse, Message, Recipient,
+            Schedule, Status,
+        },
     };
 
     #[tokio::test]
@@ -598,7 +646,7 @@ mod test {
         let size = fs::metadata(&path).unwrap().len() as usize;
 
         let flags = RCPT_NOTIFY_FAILURE | RCPT_NOTIFY_DELAY | RCPT_NOTIFY_SUCCESS;
-        let mut message = Message {
+        let message = Box::new(Message {
             size_headers: size,
             size,
             id: 0,
@@ -643,18 +691,23 @@ mod test {
             priority: 0,
 
             queue_refs: vec![],
+        });
+        let mut attempt = DeliveryAttempt {
+            span: tracing::span!(tracing::Level::INFO, "hi"),
+            message,
+            in_flight: vec![],
         };
         let config = QueueConfig::default();
 
         // Disabled DSN
-        assert!(message.build_dsn(&config).await.is_none());
+        assert!(attempt.build_dsn(&config).await.is_none());
 
         // Failure DSN
-        message.recipients[0].flags = flags;
-        compare_dsn(&mut message, &config, "failure.eml").await;
+        attempt.message.recipients[0].flags = flags;
+        compare_dsn(&mut attempt, &config, "failure.eml").await;
 
         // Success DSN
-        message.recipients.push(Recipient {
+        attempt.message.recipients.push(Recipient {
             domain_idx: 0,
             address: "jane@example.org".to_string(),
             address_lcase: "jane@example.org".to_string(),
@@ -669,10 +722,10 @@ mod test {
             flags,
             orcpt: None,
         });
-        compare_dsn(&mut message, &config, "success.eml").await;
+        compare_dsn(&mut attempt, &config, "success.eml").await;
 
         // Delay DSN
-        message.recipients.push(Recipient {
+        attempt.message.recipients.push(Recipient {
             domain_idx: 0,
             address: "john.doe@example.org".to_string(),
             address_lcase: "john.doe@example.org".to_string(),
@@ -680,24 +733,24 @@ mod test {
             flags,
             orcpt: "jdoe@example.org".to_string().into(),
         });
-        compare_dsn(&mut message, &config, "delay.eml").await;
+        compare_dsn(&mut attempt, &config, "delay.eml").await;
 
         // Mixed DSN
-        for rcpt in &mut message.recipients {
+        for rcpt in &mut attempt.message.recipients {
             rcpt.flags = flags;
         }
-        message.domains[0].notify.due = Instant::now();
-        compare_dsn(&mut message, &config, "mixed.eml").await;
+        attempt.message.domains[0].notify.due = Instant::now();
+        compare_dsn(&mut attempt, &config, "mixed.eml").await;
     }
 
-    async fn compare_dsn(message: &mut Message, config: &QueueConfig, test: &str) {
+    async fn compare_dsn(attempt: &mut DeliveryAttempt, config: &QueueConfig, test: &str) {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("resources");
         path.push("tests");
         path.push("dsn");
         path.push(test);
 
-        let dsn = remove_ids(message.build_dsn(config).await.unwrap());
+        let dsn = remove_ids(attempt.build_dsn(config).await.unwrap());
         let dsn_expected = fs::read_to_string(&path).unwrap();
 
         //fs::write(&path, dsn.as_bytes()).unwrap();

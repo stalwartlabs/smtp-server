@@ -1,9 +1,4 @@
-use std::{
-    collections::hash_map::Entry,
-    path::PathBuf,
-    sync::Arc,
-    time::{Instant, SystemTime},
-};
+use std::{collections::hash_map::Entry, path::PathBuf, sync::Arc};
 
 use ahash::AHashMap;
 use mail_auth::{
@@ -20,8 +15,9 @@ use tokio::{
 };
 
 use crate::{
+    config::AggregateFrequency,
     core::{Core, Session},
-    queue::{DomainPart, Schedule},
+    queue::{DomainPart, InstantFromTimestamp, Schedule},
 };
 
 use super::{
@@ -78,15 +74,27 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                             .collect()
                     } else {
                         if !dmarc_record.ruf().is_empty() {
-                            let log = "df";
-                            tracing::warn!("log");
+                            tracing::debug!(
+                                parent: &self.span,
+                                context = "report",
+                                report = "dkim",
+                                event = "unauthorized-ruf",
+                                ruf = ?dmarc_record.ruf(),
+                                "Unauthorized external reporting addresses"
+                            );
                         }
                         vec![]
                     }
                 }
                 None => {
-                    let log = "df";
-                    tracing::warn!("log");
+                    tracing::debug!(
+                        parent: &self.span,
+                        context = "report",
+                        report = "dmarc",
+                        event = "dns-failure",
+                        ruf = ?dmarc_record.ruf(),
+                        "Failed to validate external report addresses",
+                    );
                     vec![]
                 }
             };
@@ -180,26 +188,49 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     )
                     .ok();
 
+                tracing::info!(
+                    parent: &self.span,
+                    context = "report",
+                    report = "dmarc",
+                    event = "queue",
+                    rcpt = ?rcpts,
+                    "Queueing DMARC authentication failure report."
+                );
+
                 // Send report
                 self.core
-                    .send_report(from_addr, rcpts.into_iter(), report, &config.sign)
+                    .send_report(
+                        from_addr,
+                        rcpts.into_iter(),
+                        report,
+                        &config.sign,
+                        &self.span,
+                    )
                     .await;
+            } else {
+                tracing::debug!(
+                    parent: &self.span,
+                    context = "report",
+                    report = "dmarc",
+                    event = "throttle",
+                    ruf = ?dmarc_record.ruf(),
+                );
             }
         }
 
         // Send agregate reports
-        let interval = match self
+        let interval = self
             .core
             .report
             .config
             .dmarc_aggregate
             .send
             .eval(self)
-            .await
-        {
-            Some(interval) if !dmarc_record.rua().is_empty() => interval,
-            _ => return,
-        };
+            .await;
+
+        if matches!(interval, AggregateFrequency::Never) || dmarc_record.rua().is_empty() {
+            return;
+        }
 
         // Create DMARC report record
         let mut report_record = Record::new()
@@ -244,8 +275,17 @@ impl GenerateDmarcReport for Arc<Core> {
     fn generate_dmarc_report(&self, domain: ReportPolicy<String>, path: ReportPath<PathBuf>) {
         let core = self.clone();
         tokio::spawn(async move {
+            let deliver_at = path.created + path.deliver_at.as_secs();
+            let span = tracing::info_span!(
+                "dmarc-report",
+                domain = domain.inner,
+                range_from = path.created,
+                range_to = deliver_at,
+                size = path.size,
+            );
+
             // Deserialize report
-            let dmarc = if let Some(dmarc) = json_read::<DmarcFormat>(&path.path).await {
+            let dmarc = if let Some(dmarc) = json_read::<DmarcFormat>(&path.path, &span).await {
                 dmarc
             } else {
                 return;
@@ -265,15 +305,25 @@ impl GenerateDmarcReport for Arc<Core> {
                             .map(|u| u.uri().to_string())
                             .collect::<Vec<_>>()
                     } else {
-                        let log = "df";
-                        tracing::warn!("log");
+                        tracing::info!(
+                            parent: &span,
+                            event = "failed",
+                            reason = "unauthorized-rua",
+                            rua = ?dmarc.rua,
+                            "Unauthorized external reporting addresses"
+                        );
                         let _ = fs::remove_file(&path.path).await;
                         return;
                     }
                 }
                 None => {
-                    let log = "df";
-                    tracing::warn!("log");
+                    tracing::info!(
+                        parent: &span,
+                        event = "failed",
+                        reason = "dns-failure",
+                        rua = ?dmarc.rua,
+                        "Failed to validate external report addresses",
+                    );
                     let _ = fs::remove_file(&path.path).await;
                     return;
                 }
@@ -297,7 +347,7 @@ impl GenerateDmarcReport for Arc<Core> {
             let mut report = Report::new()
                 .with_policy_published(dmarc.policy)
                 .with_date_range_begin(path.created)
-                .with_date_range_end(path.deliver_at)
+                .with_date_range_end(deliver_at)
                 .with_report_id(format!("{}_{}", domain.policy, path.created))
                 .with_email(config.address.eval(&domain.inner.as_str()).await);
             if let Some(org_name) = config.org_name.eval(&domain.inner.as_str()).await {
@@ -326,12 +376,12 @@ impl GenerateDmarcReport for Arc<Core> {
             );
 
             // Send report
-            core.send_report(from_addr, rua.iter(), message, &config.sign)
+            core.send_report(from_addr, rua.iter(), message, &config.sign, &span)
                 .await;
 
             if let Err(err) = fs::remove_file(&path.path).await {
                 tracing::warn!(
-                    module = "report",
+                    context = "report",
                     event = "error",
                     "Failed to remove report file {}: {}",
                     path.path.display(),
@@ -359,27 +409,20 @@ impl Scheduler {
         })) {
             Entry::Occupied(e) => (None, e.into_mut().dmarc_path()),
             Entry::Vacant(e) => {
-                // Verify that any external reporting addresses are authorized
                 let domain = e.key().domain_name().to_string();
+                let created = event.interval.from_timestamp();
+                let deliver_at = created + event.interval.as_secs();
+
                 self.main.push(Schedule {
-                    due: Instant::now() + event.interval,
+                    due: deliver_at.to_instant(),
                     inner: e.key().clone(),
                 });
-                let created = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs());
-                let deliver_at = created + event.interval.as_secs();
                 let path = core
-                    .build_report_path(
-                        ReportType::Dmarc(&domain),
-                        policy,
-                        deliver_at,
-                        event.interval.as_secs(),
-                    )
+                    .build_report_path(ReportType::Dmarc(&domain), policy, created, event.interval)
                     .await;
                 let v = e.insert(ReportType::Dmarc(ReportPath {
                     path,
-                    deliver_at,
+                    deliver_at: event.interval,
                     created,
                     size: 0,
                 }));

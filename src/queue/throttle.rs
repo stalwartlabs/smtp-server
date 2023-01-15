@@ -35,7 +35,7 @@ impl QueueCore {
                         } else {
                             tracing::info!(
                                 parent: span,
-                                module = "throttle",
+                                context = "throttle",
                                 event = "too-many-requests",
                                 max_concurrent = limiter.max_concurrent,
                                 "Queue concurrency limit exceeded."
@@ -49,7 +49,7 @@ impl QueueCore {
                         if !limiter.is_allowed() {
                             tracing::info!(
                                 parent: span,
-                                module = "throttle",
+                                context = "throttle",
                                 event = "rate-limit-exceeded",
                                 max_requests = limiter.max_requests as u64,
                                 max_interval = limiter.max_interval as u64,

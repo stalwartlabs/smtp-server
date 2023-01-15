@@ -21,9 +21,9 @@ impl Tlsa {
         } else {
             tracing::info!(
                 parent: span,
-                module = "dane",
+                context = "dane",
                 event = "no-server-certs-found",
-                hostname = hostname,
+                mx = hostname,
                 "No certificates were provided."
             );
             return Err(Status::TemporaryFailure(Error::DaneError(ErrorDetails {
@@ -41,7 +41,7 @@ impl Tlsa {
                 Err(err) => {
                     tracing::debug!(
                         parent: span,
-                        module = "dane",
+                        context = "dane",
                         event = "cert-parse-error",
                         "Failed to parse X.509 certificate for host {}: {}",
                         hostname,
@@ -85,9 +85,9 @@ impl Tlsa {
                     if hash == record.data {
                         tracing::debug!(
                             parent: span,
-                            module = "dane",
+                            context = "dane",
                             event = "info",
-                            hostname = hostname,
+                            mx = hostname,
                             certificate = if is_end_entity {
                                 "end-entity"
                             } else {
@@ -116,18 +116,18 @@ impl Tlsa {
         {
             tracing::info!(
                 parent: span,
-                module = "dane",
-                event = "success",
-                hostname = hostname,
+                context = "dane",
+                event = "authenticated",
+                mx = hostname,
                 "DANE authentication successful.",
             );
             Ok(())
         } else {
-            tracing::info!(
+            tracing::warn!(
                 parent: span,
-                module = "dane",
-                event = "failure",
-                hostname = hostname,
+                context = "dane",
+                event = "auth-failure",
+                mx = hostname,
                 "No matching certificates found in TLSA records.",
             );
             Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {

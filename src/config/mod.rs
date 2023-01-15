@@ -380,7 +380,7 @@ pub struct AggregateReport {
     pub subject: IfBlock<String>,
     pub org_name: IfBlock<Option<String>>,
     pub contact_info: IfBlock<Option<String>>,
-    pub send: IfBlock<Option<Duration>>,
+    pub send: IfBlock<AggregateFrequency>,
     pub sign: IfBlock<Vec<Arc<DkimSigner>>>,
     pub max_size: IfBlock<usize>,
 }
@@ -427,6 +427,15 @@ pub struct QueueQuota {
     pub keys: u16,
     pub size: Option<usize>,
     pub messages: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AggregateFrequency {
+    Hourly,
+    Daily,
+    Weekly,
+    #[default]
+    Never,
 }
 
 #[derive(Debug, Clone, Copy, Default)]

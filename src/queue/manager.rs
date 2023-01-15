@@ -270,7 +270,7 @@ impl QueueCore {
                     queue.main.push(Schedule {
                         due: message.next_event().unwrap_or_else(|| {
                             tracing::warn!(
-                                module = "queue",
+                                context = "queue",
                                 event = "warn",
                                 "No due events found for message {}",
                                 message.path.display()
@@ -282,7 +282,7 @@ impl QueueCore {
                 }
                 Ok(Err(err)) => {
                     tracing::warn!(
-                        module = "queue",
+                        context = "queue",
                         event = "error",
                         "Queue startup error: {}",
                         err

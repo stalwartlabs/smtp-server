@@ -81,7 +81,7 @@ impl Server {
                                     } else {
                                         tracing::info!(
                                             parent: &span,
-                                            module = "throttle",
+                                            context = "throttle",
                                             event = "too-many-requests",
                                             max_concurrent = core.session.concurrency.max_concurrent,
                                             "Too many concurrent connections."
@@ -127,8 +127,8 @@ impl Server {
                                 }
                                 Err(err) => {
                                     tracing::debug!(parent: &listener_span,
-                                                    module = "smtp-listener",
-                                                    event = "io-error",
+                                                    context = "io",
+                                                    event = "error",
                                                     "Failed to accept TCP connection: {}", err);
                                 }
                             }
@@ -156,12 +156,21 @@ impl Session<TcpStream> {
         let span = self.span;
         Ok(Session {
             stream: match acceptor.accept(self.stream).await {
-                Ok(stream) => stream,
+                Ok(stream) => {
+                    tracing::info!(
+                        parent: &span,
+                        context = "tls",
+                        event = "handshake",
+                        version = ?stream.get_ref().1.protocol_version().unwrap_or(rustls::ProtocolVersion::TLSv1_3),
+                        cipher = ?stream.get_ref().1.negotiated_cipher_suite().unwrap_or(rustls::cipher_suite::TLS13_AES_128_GCM_SHA256),
+                    );
+                    stream
+                }
                 Err(err) => {
                     tracing::debug!(
                         parent: &span,
+                        context = "tls",
                         event = "error",
-                        module = "tls",
                         "Failed to accept TLS connection: {}",
                         err
                     );

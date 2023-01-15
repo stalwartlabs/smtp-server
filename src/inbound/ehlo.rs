@@ -26,6 +26,14 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     )
                     .await;
 
+                tracing::debug!(parent: &self.span,
+                        context = "spf",
+                        event = "lookup",
+                        identity = "ehlo",
+                        domain = self.data.helo_domain,
+                        result = %spf_output.result(),
+                );
+
                 if self
                     .handle_spf(&spf_output, self.params.spf_ehlo.is_strict())
                     .await?
@@ -37,6 +45,12 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     return Ok(());
                 }
             }
+
+            tracing::debug!(parent: &self.span,
+                context = "ehlo",
+                event = "ehlo",
+                domain = self.data.helo_domain,
+            );
         }
 
         // Reset

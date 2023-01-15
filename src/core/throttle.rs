@@ -293,9 +293,9 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
                             if let Some(inflight) = limiter.is_allowed() {
                                 self.in_flight.push(inflight);
                             } else {
-                                tracing::info!(
+                                tracing::debug!(
                                     parent: &self.span,
-                                    module = "throttle",
+                                    context = "throttle",
                                     event = "too-many-requests",
                                     max_concurrent = limiter.max_concurrent,
                                     "Too many concurrent requests."
@@ -305,9 +305,9 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
                         }
                         if let Some(limiter) = &mut limiter.rate {
                             if !limiter.is_allowed() {
-                                tracing::info!(
+                                tracing::debug!(
                                     parent: &self.span,
-                                    module = "throttle",
+                                    context = "throttle",
                                     event = "rate-limit-exceeded",
                                     max_requests = limiter.max_requests as u64,
                                     max_interval = limiter.max_interval as u64,

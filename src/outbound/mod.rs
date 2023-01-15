@@ -176,10 +176,14 @@ impl From<Box<Message>> for DeliveryAttempt {
         DeliveryAttempt {
             span: tracing::info_span!(
                 "delivery",
-                "queue-id" = message.id,
-                "from" = message.return_path_lcase,
-                "size" = message.size,
-                "nrcpt" = message.recipients.len()
+                "id" = message.id,
+                "return_path" = if !message.return_path.is_empty() {
+                    message.return_path.as_ref()
+                } else {
+                    "<>"
+                },
+                "nrcpt" = message.recipients.len(),
+                "size" = message.size
             ),
             in_flight: Vec::new(),
             message,

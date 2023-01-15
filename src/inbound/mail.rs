@@ -19,13 +19,21 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 .write(b"503 5.5.1 Multiple MAIL commands not allowed.\r\n")
                 .await;
         } else if self.data.iprev.is_none() && self.params.iprev.verify() {
-            self.data.iprev = self
+            let iprev = self
                 .core
                 .resolvers
                 .dns
                 .verify_iprev(self.data.remote_ip)
-                .await
-                .into();
+                .await;
+
+            tracing::debug!(parent: &self.span,
+                    context = "iprev",
+                    event = "lookup",
+                    result = %iprev.result,
+                    ptr = iprev.ptr.as_ref().and_then(|p| p.first()).map(|p| p.as_str()).unwrap_or_default()
+            );
+
+            self.data.iprev = iprev.into();
         }
 
         // In strict mode reject messages from hosts that fail the reverse DNS lookup check
@@ -104,6 +112,15 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         .await
                 };
 
+                tracing::debug!(parent: &self.span,
+                        context = "spf",
+                        event = "lookup",
+                        identity = "mail-from",
+                        domain = self.data.helo_domain,
+                        sender = if !mail_from.address.is_empty() {mail_from.address.as_str()} else {"<>"},
+                        result = %spf_output.result(),
+                );
+
                 if self
                     .handle_spf(&spf_output, self.params.spf_mail_from.is_strict())
                     .await?
@@ -114,6 +131,11 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     return Ok(());
                 }
             }
+
+            tracing::debug!(parent: &self.span,
+                event = "success",
+                context = "mail-from",
+                address = &self.data.mail_from.as_ref().unwrap().address);
 
             self.eval_rcpt_params().await;
             self.write(b"250 2.1.0 OK\r\n").await

@@ -14,7 +14,7 @@ use rand::{seq::SliceRandom, Rng};
 use smtp_proto::MAIL_REQUIRETLS;
 
 use crate::{
-    config::{RelayHost, ServerProtocol, TlsStrategy},
+    config::{AggregateFrequency, RelayHost, ServerProtocol, TlsStrategy},
     core::Core,
     queue::ErrorDetails,
     reporting::{tls::TlsRptOptions, PolicyType, TlsEvent},
@@ -25,17 +25,17 @@ use super::{
     session::{read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult},
 };
 use crate::queue::{
-    manager::Queue, throttle, DeliveryAttempt, Domain, Error, Event, Message, OnHold,
-    QueueEnvelope, Schedule, Status, WorkerResult,
+    manager::Queue, throttle, DeliveryAttempt, Domain, Error, Event, OnHold, QueueEnvelope,
+    Schedule, Status, WorkerResult,
 };
 
 impl DeliveryAttempt {
     pub async fn try_deliver(mut self, core: Arc<Core>, queue: &mut Queue) {
         // Check that the message still has recipients to be delivered
-        let has_pending_delivery = self.message.has_pending_delivery();
+        let has_pending_delivery = self.has_pending_delivery();
 
         // Send any due Delivery Status Notifications
-        core.queue.send_dsn(&mut self.message).await;
+        core.queue.send_dsn(&mut self).await;
 
         if has_pending_delivery {
             // Re-queue the message if its not yet due for delivery
@@ -90,8 +90,6 @@ impl DeliveryAttempt {
             }
         }
 
-        let coco = "add logging";
-
         tokio::spawn(async move {
             let queue_config = &core.queue.config;
             let mut on_hold = Vec::new();
@@ -107,11 +105,12 @@ impl DeliveryAttempt {
                     continue;
                 }
 
-                // Create new span
+                // Create new span for domain
                 let span = tracing::info_span!(
                     parent: &self.span,
                     "attempt",
-                    "domain" = domain.domain,
+                    domain = domain.domain,
+                    attempt_number = domain.retry.inner,
                 );
 
                 // Build envelope
@@ -143,24 +142,41 @@ impl DeliveryAttempt {
                 };
 
                 // Obtain TLS reporting
-                let tls_report =
-                    if let Some(interval) = core.report.config.tls.send.eval(&envelope).await {
+                let tls_report = match core.report.config.tls.send.eval(&envelope).await {
+                    interval @ (AggregateFrequency::Hourly
+                    | AggregateFrequency::Daily
+                    | AggregateFrequency::Weekly) => {
                         match core
                             .resolvers
                             .dns
                             .txt_lookup::<TlsRpt>(format!("_smtp._tls.{}.", envelope.domain))
                             .await
                         {
-                            Ok(record) => TlsRptOptions {
-                                record,
-                                interval: *interval,
+                            Ok(record) => {
+                                tracing::debug!(parent: &span,
+                            context = "tlsrpt",
+                            event = "record-fetched",
+                            record = ?record);
+
+                                TlsRptOptions {
+                                    record,
+                                    interval: *interval,
+                                }
+                                .into()
                             }
-                            .into(),
-                            Err(_) => None,
+                            Err(err) => {
+                                tracing::debug!(
+                                    parent: &span,
+                                    context = "tlsrpt",
+                                    "Failed to retrieve TLSRPT record: {}",
+                                    err
+                                );
+                                None
+                            }
                         }
-                    } else {
-                        None
-                    };
+                    }
+                    AggregateFrequency::Never => None,
+                };
 
                 // Obtain MTA-STS policy for domain
                 let mta_sts_policy = if tls_strategy.try_mta_sts() {
@@ -171,7 +187,16 @@ impl DeliveryAttempt {
                         )
                         .await
                     {
-                        Ok(mta_sts_policy) => mta_sts_policy.into(),
+                        Ok(mta_sts_policy) => {
+                            tracing::debug!(
+                                parent: &span,
+                                context = "sts",
+                                event = "policy-fetched",
+                                policy = ?mta_sts_policy,
+                            );
+
+                            mta_sts_policy.into()
+                        }
                         Err(err) => {
                             // Report MTA-STS error
                             if let Some(tls_report) = &tls_report {
@@ -196,8 +221,23 @@ impl DeliveryAttempt {
                             }
 
                             if tls_strategy.is_mta_sts_required() {
+                                tracing::info!(
+                                    parent: &span,
+                                    context = "sts",
+                                    event = "policy-fetch-failure",
+                                    "Failed to retrieve MTA-STS policy: {}",
+                                    err
+                                );
                                 domain.set_status(err, queue_config.retry.eval(&envelope).await);
                                 continue 'next_domain;
+                            } else {
+                                tracing::debug!(
+                                    parent: &span,
+                                    context = "sts",
+                                    event = "policy-fetch-failure",
+                                    "Failed to retrieve MTA-STS policy: {}",
+                                    err
+                                );
                             }
 
                             None
@@ -217,6 +257,12 @@ impl DeliveryAttempt {
                         mx_list = match core.resolvers.dns.mx_lookup(&domain.domain).await {
                             Ok(mx) => mx,
                             Err(err) => {
+                                tracing::info!(
+                                    parent: &span,
+                                    context = "dns",
+                                    event = "mx-lookup-failed",
+                                    reason = %err,
+                                );
                                 domain.set_status(err, queue_config.retry.eval(&envelope).await);
                                 continue 'next_domain;
                             }
@@ -275,6 +321,14 @@ impl DeliveryAttempt {
                                 .await;
                             }
 
+                            tracing::warn!(
+                                parent: &span,
+                                context = "sts",
+                                event = "policy-error",
+                                mx = envelope.mx,
+                                "MX not authorized by policy."
+                            );
+
                             if mta_sts_policy.enforce() {
                                 last_status = Status::PermanentFailure(Error::MtaStsError(
                                     format!("MX {:?} not authorized by policy.", envelope.mx),
@@ -291,6 +345,14 @@ impl DeliveryAttempt {
                     {
                         Ok(result) => result,
                         Err(status) => {
+                            tracing::info!(
+                                parent: &span,
+                                context = "dns",
+                                event = "ip-lookup-failed",
+                                mx = envelope.mx,
+                                status = %status,
+                            );
+
                             last_status = status;
                             continue 'next_host;
                         }
@@ -305,14 +367,22 @@ impl DeliveryAttempt {
                         {
                             Ok(Some(tlsa)) => {
                                 if tlsa.has_end_entities {
-                                    tlsa.into()
-                                } else {
                                     tracing::debug!(
                                         parent: &span,
-                                        module = "dane",
+                                        context = "dane",
+                                        event = "record-fetched",
+                                        mx = envelope.mx,
+                                        record = ?tlsa,
+                                    );
+
+                                    tlsa.into()
+                                } else {
+                                    tracing::info!(
+                                        parent: &span,
+                                        context = "dane",
                                         event = "no-tlsa-records",
-                                        "No valid TLSA records were found for host {}.",
-                                        envelope.mx,
+                                        mx = envelope.mx,
+                                        "No valid TLSA records were found.",
                                     );
 
                                     // Report invalid TLSA record
@@ -362,11 +432,11 @@ impl DeliveryAttempt {
                                         .await;
                                     }
 
-                                    tracing::debug!(
+                                    tracing::info!(
                                         parent: &span,
-                                        module = "dane",
+                                        context = "dane",
                                         event = "tlsa-dnssec-missing",
-                                        hostname = envelope.mx,
+                                        mx = envelope.mx,
                                         "No TLSA DNSSEC records found."
                                     );
 
@@ -381,6 +451,14 @@ impl DeliveryAttempt {
                             }
                             Err(err) => {
                                 if tls_strategy.is_dane_required() {
+                                    tracing::info!(
+                                        parent: &span,
+                                        context = "dane",
+                                        event = "tlsa-missing",
+                                        mx = envelope.mx,
+                                        "No TLSA records found."
+                                    );
+
                                     last_status =
                                         if matches!(&err, mail_auth::Error::DnsRecordNotFound(_)) {
                                             Status::PermanentFailure(Error::DaneError(
@@ -433,8 +511,27 @@ impl DeliveryAttempt {
                             )
                             .await
                         } {
-                            Ok(smtp_client) => smtp_client,
+                            Ok(smtp_client) => {
+                                tracing::debug!(
+                                    parent: &span,
+                                    context = "connect",
+                                    event = "success",
+                                    mx = envelope.mx,
+                                    source_ip = %source_ip.unwrap_or(no_ip),
+                                    remote_ip = %remote_ip,
+                                    remote_port = remote_host.port(),
+                                );
+
+                                smtp_client
+                            }
                             Err(err) => {
+                                tracing::info!(
+                                    parent: &span,
+                                    context = "connect",
+                                    event = "failed",
+                                    mx = envelope.mx,
+                                    reason = %err,
+                                );
                                 last_status = Status::from_smtp_error(envelope.mx, "", err);
                                 continue 'next_ip;
                             }
@@ -468,6 +565,14 @@ impl DeliveryAttempt {
                                 *queue_config.timeout.greeting.eval(&envelope).await;
                             if let Err(status) = read_greeting(&mut smtp_client, envelope.mx).await
                             {
+                                tracing::info!(
+                                    parent: &span,
+                                    context = "greeting",
+                                    event = "invalid",
+                                    mx = envelope.mx,
+                                    status = %status,
+                                );
+
                                 last_status = status;
                                 continue 'next_host;
                             }
@@ -476,6 +581,14 @@ impl DeliveryAttempt {
                             let capabilties = match say_helo(&mut smtp_client, &params).await {
                                 Ok(capabilities) => capabilities,
                                 Err(status) => {
+                                    tracing::info!(
+                                        parent: &span,
+                                        context = "ehlo",
+                                        event = "rejected",
+                                        mx = envelope.mx,
+                                        status = %status,
+                                    );
+
                                     last_status = status;
                                     continue 'next_host;
                                 }
@@ -552,6 +665,19 @@ impl DeliveryAttempt {
                                     smtp_client,
                                 } => {
                                     // Report unavailable STARTTLS
+                                    let reason =
+                                        response.as_ref().map(|r| r.to_string()).unwrap_or_else(
+                                            || "STARTTLS was not advertised by host".to_string(),
+                                        );
+
+                                    tracing::info!(
+                                        parent: &span,
+                                        context = "tls",
+                                        event = "unavailable",
+                                        mx = envelope.mx,
+                                        reason = reason,
+                                    );
+
                                     if let Some(tls_report) = &tls_report {
                                         core.schedule_report(TlsEvent {
                                             policy: (&mta_sts_policy, &dane_policy).into(),
@@ -561,15 +687,7 @@ impl DeliveryAttempt {
                                             )
                                             .with_receiving_mx_hostname(envelope.mx)
                                             .with_receiving_ip(remote_ip)
-                                            .with_failure_reason_code(
-                                                response
-                                                    .as_ref()
-                                                    .map(|r| r.to_string())
-                                                    .unwrap_or_else(|| {
-                                                        "STARTTLS was not advertised by host"
-                                                            .to_string()
-                                                    }),
-                                            )
+                                            .with_failure_reason_code(reason)
                                             .into(),
                                             tls_record: tls_report.record.clone(),
                                             interval: tls_report.interval,
@@ -599,6 +717,14 @@ impl DeliveryAttempt {
                                     }
                                 }
                                 StartTlsResult::Error { error } => {
+                                    tracing::info!(
+                                        parent: &span,
+                                        context = "tls",
+                                        event = "failed",
+                                        mx = envelope.mx,
+                                        error = %error,
+                                    );
+
                                     // Report TLS failure
                                     if let (Some(tls_report), mail_send::Error::Tls(error)) =
                                         (&tls_report, &error)
@@ -629,6 +755,14 @@ impl DeliveryAttempt {
                                 match smtp_client.into_tls(tls_connector, envelope.mx).await {
                                     Ok(smtp_client) => smtp_client,
                                     Err(error) => {
+                                        tracing::info!(
+                                            parent: &span,
+                                            context = "tls",
+                                            event = "failed",
+                                            mx = envelope.mx,
+                                            error = %error,
+                                        );
+
                                         last_status = Status::from_tls_error(envelope.mx, error);
                                         continue 'next_host;
                                     }
@@ -639,6 +773,14 @@ impl DeliveryAttempt {
                                 *queue_config.timeout.greeting.eval(&envelope).await;
                             if let Err(status) = read_greeting(&mut smtp_client, envelope.mx).await
                             {
+                                tracing::info!(
+                                    parent: &span,
+                                    context = "greeting",
+                                    event = "invalid",
+                                    mx = envelope.mx,
+                                    status = %status,
+                                );
+
                                 last_status = status;
                                 continue 'next_host;
                             }
@@ -667,7 +809,7 @@ impl DeliveryAttempt {
             self.message.recipients = recipients;
 
             // Send Delivery Status Notifications
-            core.queue.send_dsn(&mut self.message).await;
+            core.queue.send_dsn(&mut self).await;
 
             // Notify queue manager
             let span = self.span;
@@ -677,6 +819,14 @@ impl DeliveryAttempt {
 
                 // Save changes to disk
                 self.message.save_changes().await;
+
+                tracing::info!(
+                    parent: &span,
+                    context = "queue",
+                    event = "requeue",
+                    reason = "concurrency-limited",
+                    "Too many outbound concurrenct connections, message moved to on-hold queue."
+                );
 
                 WorkerResult::OnHold(OnHold {
                     next_due: self.message.next_event_after(Instant::now()),
@@ -690,6 +840,14 @@ impl DeliveryAttempt {
                 // Save changes to disk
                 self.message.save_changes().await;
 
+                tracing::info!(
+                    parent: &span,
+                    context = "queue",
+                    event = "requeue",
+                    reason = "delivery-incomplete",
+                    "Delivery was not possible, message re-queued for delivery."
+                );
+
                 WorkerResult::Retry(Schedule {
                     due,
                     inner: self.message,
@@ -697,6 +855,13 @@ impl DeliveryAttempt {
             } else {
                 // Delete message from queue
                 self.message.remove().await;
+
+                tracing::info!(
+                    parent: &span,
+                    context = "queue",
+                    event = "completed",
+                    "Delivery completed."
+                );
 
                 WorkerResult::Done
             };
@@ -708,17 +873,23 @@ impl DeliveryAttempt {
             }
         });
     }
-}
 
-impl Message {
     /// Marks as failed all domains that reached their expiration time
     pub fn has_pending_delivery(&mut self) -> bool {
         let now = Instant::now();
         let mut has_pending_delivery = false;
+        let span = self.span.clone();
 
-        for domain in &mut self.domains {
+        for domain in &mut self.message.domains {
             match &domain.status {
-                Status::TemporaryFailure(_) if domain.expires <= now => {
+                Status::TemporaryFailure(err) if domain.expires <= now => {
+                    tracing::info!(
+                        parent: &span,
+                        event = "delivery-expired",
+                        domain = domain.domain,
+                        reason = %err,
+                    );
+
                     domain.status =
                         match std::mem::replace(&mut domain.status, Status::Completed(())) {
                             Status::TemporaryFailure(err) => Status::PermanentFailure(err),
@@ -727,6 +898,13 @@ impl Message {
                     domain.changed = true;
                 }
                 Status::Scheduled if domain.expires <= now => {
+                    tracing::info!(
+                        parent: &span,
+                        event = "delivery-expired",
+                        domain = domain.domain,
+                        reason = "Queue rate limit exceeded.",
+                    );
+
                     domain.status = Status::PermanentFailure(Error::Io(
                         "Queue rate limit exceeded.".to_string(),
                     ));

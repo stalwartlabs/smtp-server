@@ -1,5 +1,6 @@
 use super::{
-    utils::AsKey, AggregateReport, Config, ConfigContext, EnvelopeKey, IfBlock, Report,
+    utils::{AsKey, ParseValue},
+    AggregateFrequency, AggregateReport, Config, ConfigContext, EnvelopeKey, IfBlock, Report,
     ReportConfig,
 };
 
@@ -150,5 +151,21 @@ impl Config {
                 )?
                 .unwrap_or_else(|| IfBlock::new(25 * 1024 * 1024)),
         })
+    }
+}
+
+impl ParseValue for AggregateFrequency {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        match value {
+            "daily" | "day" => Ok(AggregateFrequency::Daily),
+            "hourly" | "hour" => Ok(AggregateFrequency::Hourly),
+            "weekly" | "week" => Ok(AggregateFrequency::Weekly),
+            "never" | "disable" | "false" => Ok(AggregateFrequency::Never),
+            _ => Err(format!(
+                "Invalid aggregate frequency value {:?} for key {:?}.",
+                value,
+                key.as_key()
+            )),
+        }
     }
 }

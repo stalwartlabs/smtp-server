@@ -14,17 +14,25 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         rejected: bool,
         output: &DkimOutput<'_>,
     ) {
-        // Throttle recipient
-        if !self.throttle_rcpt(rcpt, rate, "dkim") {
-            return;
-        }
-
         // Generate report
         let signature = if let Some(signature) = output.signature() {
             signature
         } else {
             return;
         };
+
+        // Throttle recipient
+        if !self.throttle_rcpt(rcpt, rate, "dkim") {
+            tracing::debug!(
+                parent: &self.span,
+                context = "report",
+                report = "dkim",
+                event = "throttle",
+                rcpt = rcpt,
+            );
+            return;
+        }
+
         let config = &self.core.report.config.dkim;
         let from_addr = config.address.eval(self).await;
         let mut report = Vec::with_capacity(128);
@@ -46,9 +54,24 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             )
             .ok();
 
+        tracing::info!(
+            parent: &self.span,
+            context = "report",
+            report = "dkim",
+            event = "queue",
+            rcpt = rcpt,
+            "Queueing DKIM authentication failure report."
+        );
+
         // Send report
         self.core
-            .send_report(from_addr, [rcpt].into_iter(), report, &config.sign)
+            .send_report(
+                from_addr,
+                [rcpt].into_iter(),
+                report,
+                &config.sign,
+                &self.span,
+            )
             .await;
     }
 }

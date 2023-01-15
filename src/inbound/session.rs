@@ -253,6 +253,13 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 }
                 State::DataTooLarge(receiver) => {
                     if receiver.ingest(&mut iter) {
+                        tracing::debug!(
+                            parent: &self.span,
+                            context = "data",
+                            event = "too-large",
+                            "Message is too large."
+                        );
+
                         self.data.message = Vec::with_capacity(0);
                         self.write(b"552 5.3.4 Message too big for system.\r\n")
                             .await?;
@@ -295,13 +302,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             Ok(_) => {
                 tracing::trace!(parent: &self.span,
                                 event = "write",
-                                data = std::str::from_utf8(bytes).unwrap_or_default(),
+                                data = std::str::from_utf8(bytes).unwrap_or_default() ,
                                 size = bytes.len());
                 Ok(())
             }
             Err(err) => {
                 tracing::debug!(parent: &self.span,
-                                event = "io-error",
+                                event = "error",
                                 "Failed to write to stream: {:?}", err);
                 Err(())
             }
@@ -314,10 +321,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             Ok(len) => {
                 tracing::trace!(parent: &self.span,
                                 event = "read",
-                                data =  bytes
-                                        .get(0..len)
-                                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                                        .unwrap_or_default(),
+                                data =  if matches!(self.state, State::Request(_)) {bytes
+                                    .get(0..len)
+                                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                                    .unwrap_or("[invalid UTF8]")} else {"[DATA]"},
                                 size = len);
                 Ok(len)
             }
@@ -325,7 +332,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 tracing::debug!(
                     parent: &self.span,
                     event = "error",
-                    module = "io",
                     "Failed to read from stream: {:?}", err
                 );
                 Err(())

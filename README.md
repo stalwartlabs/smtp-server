@@ -2,9 +2,11 @@
 Stalwart SMTP Server
 
 # TODO
+- Analyze reports
+- Null MX
 - RBL
-- Logging
 - Sieve
 - Spam filter
 - Antivirus
 - OpenTelemetry
+

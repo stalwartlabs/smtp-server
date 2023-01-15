@@ -29,12 +29,23 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             if let Some(auth_message) = AuthenticatedMessage::parse(&self.data.message) {
                 auth_message
             } else {
+                tracing::info!(parent: &self.span,
+                    event = "parse-failed",
+                    context = "data",
+                    size = self.data.message.len());
+
                 self.reset();
                 return self.write(b"550 5.7.7 Failed to parse message.\r\n").await;
             };
 
         // Loop detection
         if auth_message.received_headers_count() > *dc.max_received_headers.eval(self).await {
+            tracing::info!(parent: &self.span,
+                event = "loop-detected",
+                context = "data",
+                rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
+                rfc5322_from = auth_message.from(),
+                received_headers = auth_message.received_headers_count());
             self.reset();
             return self
                 .write(b"450 4.4.6 Too many Received headers. Possible loop detected.\r\n")
@@ -67,12 +78,28 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     .iter()
                     .any(|d| matches!(d.result(), DkimResult::TempError(_)))
                 {
-                    &b"451 4.7.20 No passing DKIM signature found.\r\n"[..]
+                    &b"451 4.7.20 No passing DKIM signatures found.\r\n"[..]
                 } else {
-                    &b"550 5.7.20 No passing DKIM signature found.\r\n"[..]
+                    &b"550 5.7.20 No passing DKIM signatures found.\r\n"[..]
                 };
+
+                tracing::info!(parent: &self.span,
+                    event = "auth-failed",
+                    context = "dkim",
+                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
+                    rfc5322_from = auth_message.from(),
+                    result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>(),
+                    "No passing DKIM signatures found.");
+
                 self.reset();
                 return self.write(message).await;
+            } else {
+                tracing::debug!(parent: &self.span,
+                    event = "verify",
+                    context = "dkim",
+                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
+                    rfc5322_from = auth_message.from(),
+                    result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>());
             }
             dkim_output
         } else {
@@ -84,6 +111,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         let arc_sealer = ac.arc.seal.eval(self).await;
         let arc_output = if arc.verify() || arc_sealer.is_some() {
             let arc_output = self.core.resolvers.dns.verify_arc(&auth_message).await;
+
             if arc.is_strict()
                 && !matches!(arc_output.result(), DkimResult::Pass | DkimResult::None)
             {
@@ -92,8 +120,24 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 } else {
                     &b"550 5.7.29 ARC validation failed.\r\n"[..]
                 };
+
+                tracing::info!(parent: &self.span,
+                    event = "auth-failed",
+                    context = "arc",
+                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
+                    rfc5322_from = auth_message.from(),
+                    result = %arc_output.result(),
+                    "ARC validation failed.");
+
                 self.reset();
                 return self.write(message).await;
+            } else {
+                tracing::debug!(parent: &self.span,
+                    event = "verify",
+                    context = "arc",
+                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
+                    rfc5322_from = auth_message.from(),
+                    result = %arc_output.result());
             }
             arc_output.into()
         } else {
@@ -152,6 +196,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     spf_output,
                 )
                 .await;
+
             let rejected = dmarc.is_strict()
                 && dmarc_output.policy() == dmarc::Policy::Reject
                 && !matches!(
@@ -164,6 +209,24 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
             // Add to DMARC output to the Authentication-Results header
             auth_results = auth_results.with_dmarc_result(&dmarc_output);
+
+            if !rejected {
+                tracing::debug!(parent: &self.span,
+                    event = "verify",
+                    context = "dmarc",
+                    rfc5321_from = mail_from.address,
+                    rfc5322_from = auth_message.from(),
+                    dkim_result = %dmarc_output.dkim_result(),
+                    spf_result = %dmarc_output.spf_result());
+            } else {
+                tracing::info!(parent: &self.span,
+                    event = "auth-failed",
+                    context = "dmarc",
+                    rfc5321_from = mail_from.address,
+                    rfc5322_from = auth_message.from(),
+                    dkim_result = %dmarc_output.dkim_result(),
+                    spf_result = %dmarc_output.spf_result());
+            }
 
             // Send DMARC report
             if dmarc_output.requested_reports() {
@@ -236,7 +299,12 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                         set.write_header(&mut headers);
                     }
                     Err(err) => {
-                        //TODO log
+                        tracing::info!(parent: &self.span,
+                            event = "seal-failed",
+                            context = "arc",
+                            rfc5321_from = message.return_path,
+                            rfc5322_from = auth_message.from(),
+                            "Failed to seal message: {}", err);
                     }
                 }
             }
@@ -268,7 +336,12 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     signature.write_header(&mut headers);
                 }
                 Err(err) => {
-                    // TODO log
+                    tracing::info!(parent: &self.span,
+                        event = "sign-failed",
+                        context = "dkim",
+                        rfc5321_from = message.return_path,
+                        rfc5322_from = auth_message.from(),
+                        "Failed to sign message: {}", err);
                 }
             }
         }
@@ -280,15 +353,19 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         // Verify queue quota
         if self.core.queue.has_quota(&mut message).await {
             let id = message.id;
-            if self
-                .core
-                .queue
-                .queue_message(
-                    message,
-                    vec![headers, std::mem::take(&mut self.data.message)],
-                )
-                .await
-            {
+            let queue_success = {
+                let _span = self.span.enter();
+                self.core
+                    .queue
+                    .queue_message(
+                        message,
+                        vec![headers, std::mem::take(&mut self.data.message)],
+                        &self.span,
+                    )
+                    .await
+            };
+
+            if queue_success {
                 self.data.messages_sent += 1;
                 self.write(
                     format!(
@@ -305,8 +382,9 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         } else {
             tracing::warn!(
                 parent: &self.span,
-                module = "queue",
+                context = "queue",
                 event = "quota-exceeded",
+                from = message.return_path,
                 "Queue quota exceeded, rejecting message."
             );
             self.write(b"452 4.3.1 Mail system full, try again later.\r\n")
@@ -421,6 +499,12 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             {
                 Ok(true)
             } else {
+                tracing::debug!(
+                    parent: &self.span,
+                    context = "data",
+                    event = "too-many-messages",
+                    "Maximum number of messages per session exceeded."
+                );
                 self.write(b"451 4.4.5 Maximum number of messages per session exceeded.\r\n")
                     .await?;
                 Ok(false)

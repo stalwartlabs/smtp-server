@@ -158,6 +158,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 | Credentials::OAuthBearer { token: username } => username.to_string(),
             };
             if let Some(is_authenticated) = lookup.authenticate(credentials).await {
+                tracing::debug!(
+                    parent: &self.span,
+                    context = "auth",
+                    event = "authenticate",
+                    result = if is_authenticated {"success"} else {"failed"}
+                );
                 return if is_authenticated {
                     self.data.authenticated_as = authenticated_as;
                     self.write(b"235 2.7.0 Authentication succeeded.\r\n")
@@ -171,6 +177,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         } else {
             tracing::warn!(
                 parent: &self.span,
+                context = "auth",
+                event = "error",
                 "No lookup list configured for authentication."
             );
         }

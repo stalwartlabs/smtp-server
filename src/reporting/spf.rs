@@ -13,6 +13,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     ) {
         // Throttle recipient
         if !self.throttle_rcpt(rcpt, rate, "spf") {
+            tracing::debug!(
+                parent: &self.span,
+                context = "report",
+                report = "spf",
+                event = "throttle",
+                rcpt = rcpt,
+            );
             return;
         }
 
@@ -47,9 +54,24 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             )
             .ok();
 
+        tracing::info!(
+            parent: &self.span,
+            context = "report",
+            report = "spf",
+            event = "queue",
+            rcpt = rcpt,
+            "Queueing SPF authentication failure report."
+        );
+
         // Send report
         self.core
-            .send_report(from_addr, [rcpt].into_iter(), report, &config.sign)
+            .send_report(
+                from_addr,
+                [rcpt].into_iter(),
+                report,
+                &config.sign,
+                &self.span,
+            )
             .await;
     }
 }

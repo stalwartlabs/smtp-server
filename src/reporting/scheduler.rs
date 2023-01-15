@@ -22,6 +22,7 @@ use tokio::{
 };
 
 use crate::{
+    config::AggregateFrequency,
     core::{Core, ReportCore},
     queue::{InstantFromTimestamp, Schedule},
 };
@@ -48,7 +49,7 @@ pub struct ReportPath<T> {
     pub path: T,
     pub size: usize,
     pub created: u64,
-    pub deliver_at: u64,
+    pub deliver_at: AggregateFrequency,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -96,8 +97,8 @@ impl Core {
         &self,
         domain: ReportType<&str, &str>,
         policy: u64,
-        deliver_at: u64,
-        interval: u64,
+        created: u64,
+        interval: AggregateFrequency,
     ) -> PathBuf {
         let (ext, domain) = match domain {
             ReportType::Dmarc(domain) => ("t", domain),
@@ -110,10 +111,18 @@ impl Core {
         let _ = fs::create_dir(&path).await;
 
         // Build filename
-        let mut w = Base32Writer::with_capacity(domain.len() + 16);
+        let mut w = Base32Writer::with_capacity(domain.len() + 13);
         w.write(&policy.to_le_bytes()[..]);
-        w.write(&(deliver_at.saturating_sub(946684800) as u32).to_le_bytes()[..]);
-        w.write(&(interval as u32).to_le_bytes()[..]);
+        w.write(&(created.saturating_sub(946684800) as u32).to_le_bytes()[..]);
+        w.push_byte(
+            match interval {
+                AggregateFrequency::Hourly => 0,
+                AggregateFrequency::Daily => 1,
+                AggregateFrequency::Weekly => 2,
+                AggregateFrequency::Never => 3,
+            },
+            false,
+        );
         w.write(domain.as_bytes());
         let mut file = w.finalize();
         file.push('.');
@@ -155,7 +164,10 @@ impl ReportCore {
                                                     .extension()
                                                     .map_or(false, |e| e == "t" || e == "d")
                                                 {
-                                                    scheduler.add_path(file);
+                                                    if let Err(err) = scheduler.add_path(file).await
+                                                    {
+                                                        tracing::warn!("{}", err);
+                                                    }
                                                 }
                                             }
                                             Ok(None) => break,
@@ -179,7 +191,9 @@ impl ReportCore {
                                 }
                             };
                         } else if file.extension().map_or(false, |e| e == "t" || e == "d") {
-                            scheduler.add_path(file);
+                            if let Err(err) = scheduler.add_path(file).await {
+                                tracing::warn!("{}", err);
+                            }
                         }
                     }
                     Ok(None) => {
@@ -251,8 +265,8 @@ impl Scheduler {
 
         // Decode domain name
         let mut policy = [0u8; std::mem::size_of::<u64>()];
-        let mut deliver_at = [0u8; std::mem::size_of::<u32>()];
-        let mut interval = [0u8; std::mem::size_of::<u32>()];
+        let mut created = [0u8; std::mem::size_of::<u32>()];
+        let mut deliver_at = AggregateFrequency::Never;
         let mut domain = Vec::new();
         for (pos, byte) in Base32Reader::new(file.as_bytes()).enumerate() {
             match pos {
@@ -260,10 +274,20 @@ impl Scheduler {
                     policy[pos] = byte;
                 }
                 8..=11 => {
-                    deliver_at[pos - 8] = byte;
+                    created[pos - 8] = byte;
                 }
-                12..=15 => {
-                    interval[pos - 12] = byte;
+                12 => {
+                    deliver_at = match byte {
+                        0 => AggregateFrequency::Hourly,
+                        1 => AggregateFrequency::Daily,
+                        2 => AggregateFrequency::Weekly,
+                        _ => {
+                            return Err(format!(
+                                "Failed to base32 decode report file {}",
+                                path.display()
+                            ));
+                        }
+                    };
                 }
                 _ => {
                     domain.push(byte);
@@ -286,8 +310,7 @@ impl Scheduler {
 
         // Rebuild parts
         let policy = u64::from_le_bytes(policy);
-        let deliver_at = u32::from_le_bytes(deliver_at) as u64 + 946684800;
-        let created = deliver_at - (u32::from_le_bytes(interval) as u64);
+        let created = u32::from_le_bytes(created) as u64 + 946684800;
 
         match ext {
             "d" => {
@@ -305,7 +328,7 @@ impl Scheduler {
                     }),
                 );
                 self.main.push(Schedule {
-                    due: deliver_at.to_instant(),
+                    due: (created + deliver_at.as_secs()).to_instant(),
                     inner: key,
                 });
             }
@@ -321,7 +344,7 @@ impl Scheduler {
                 }
                 Entry::Vacant(e) => {
                     self.main.push(Schedule {
-                        due: deliver_at.to_instant(),
+                        due: (created + deliver_at.as_secs()).to_instant(),
                         inner: e.key().clone(),
                     });
                     e.insert(ReportType::Tls(ReportPath {
@@ -351,7 +374,7 @@ pub async fn json_write(path: &PathBuf, entry: &impl Serialize) -> usize {
                 Ok(_) => bytes_written,
                 Err(err) => {
                     tracing::error!(
-                        module = "report",
+                        context = "report",
                         event = "error",
                         "Failed to write to report file {}: {}",
                         path.display(),
@@ -362,7 +385,7 @@ pub async fn json_write(path: &PathBuf, entry: &impl Serialize) -> usize {
             },
             Err(err) => {
                 tracing::error!(
-                    module = "report",
+                    context = "report",
                     event = "error",
                     "Failed to create report file {}: {}",
                     path.display(),
@@ -388,7 +411,7 @@ pub async fn json_append(path: &PathBuf, entry: &impl Serialize) -> usize {
             Err(err) => err,
         };
         tracing::error!(
-            module = "report",
+            context = "report",
             event = "error",
             "Failed to append report to {}: {}",
             path.display(),
@@ -398,7 +421,7 @@ pub async fn json_append(path: &PathBuf, entry: &impl Serialize) -> usize {
     0
 }
 
-pub async fn json_read<T: DeserializeOwned>(path: &PathBuf) -> Option<T> {
+pub async fn json_read<T: DeserializeOwned>(path: &PathBuf, span: &tracing::Span) -> Option<T> {
     match fs::read_to_string(&path).await {
         Ok(mut json) => {
             json.push_str("]}");
@@ -406,7 +429,8 @@ pub async fn json_read<T: DeserializeOwned>(path: &PathBuf) -> Option<T> {
                 Ok(report) => Some(report),
                 Err(err) => {
                     tracing::error!(
-                        module = "report",
+                        parent: span,
+                        context = "deserialize",
                         event = "error",
                         "Failed to deserialize report file {}: {}",
                         path.display(),
@@ -418,7 +442,8 @@ pub async fn json_read<T: DeserializeOwned>(path: &PathBuf) -> Option<T> {
         }
         Err(err) => {
             tracing::error!(
-                module = "report",
+                parent: span,
+                context = "io",
                 event = "error",
                 "Failed to read report file {}: {}",
                 path.display(),

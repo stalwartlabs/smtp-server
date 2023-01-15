@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::SystemTime};
 
 use mail_auth::{
     common::headers::HeaderWriter,
@@ -11,10 +8,11 @@ use mail_auth::{
         tlsrpt::FailureDetails, AuthFailureType, DeliveryResult, Feedback, FeedbackType, Record,
     },
 };
+use mail_parser::DateTime;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    config::{DkimSigner, IfBlock},
+    config::{AggregateFrequency, DkimSigner, IfBlock},
     core::{Core, Session},
     outbound::{dane::Tlsa, mta_sts::Policy},
     queue::{DomainPart, Message},
@@ -37,7 +35,7 @@ pub struct DmarcEvent {
     pub domain: String,
     pub report_record: Record,
     pub dmarc_record: Arc<Dmarc>,
-    pub interval: Duration,
+    pub interval: AggregateFrequency,
 }
 
 pub struct TlsEvent {
@@ -45,7 +43,7 @@ pub struct TlsEvent {
     pub policy: PolicyType,
     pub failure: Option<FailureDetails>,
     pub tls_record: Arc<TlsRpt>,
-    pub interval: Duration,
+    pub interval: AggregateFrequency,
 }
 
 #[derive(Hash)]
@@ -82,6 +80,7 @@ impl Core {
         rcpts: impl Iterator<Item = impl AsRef<str>>,
         report: Vec<u8>,
         sign_config: &IfBlock<Vec<Arc<DkimSigner>>>,
+        span: &tracing::Span,
     ) {
         // Build message
         let from_addr_lcase = from_addr.to_lowercase();
@@ -98,15 +97,15 @@ impl Core {
         }
 
         // Sign message
-        let message_bytes = message.sign(sign_config, report).await;
+        let message_bytes = message.sign(sign_config, report, span).await;
 
         // Queue message
-        self.queue.queue_message(message, message_bytes).await;
+        self.queue.queue_message(message, message_bytes, span).await;
     }
 
     pub async fn schedule_report(&self, report: impl Into<Event>) {
-        if let Err(err) = self.report.tx.send(report.into()).await {
-            let coco = "log";
+        if self.report.tx.send(report.into()).await.is_err() {
+            tracing::warn!(contex = "report", "Channel send failed.");
         }
     }
 }
@@ -116,6 +115,7 @@ impl Message {
         &mut self,
         config: &IfBlock<Vec<Arc<DkimSigner>>>,
         bytes: Vec<u8>,
+        span: &tracing::Span,
     ) -> Vec<Vec<u8>> {
         self.size = bytes.len();
         self.size_headers = bytes.len();
@@ -129,7 +129,10 @@ impl Message {
                         signature.write_header(&mut headers);
                     }
                     Err(err) => {
-                        let coco = "log";
+                        tracing::warn!(parent: span,
+                        context = "dkim",
+                        event = "sign-failed",
+                        reason = %err);
                     }
                 }
             }
@@ -141,6 +144,46 @@ impl Message {
             }
         }
         vec![bytes]
+    }
+}
+
+impl AggregateFrequency {
+    pub fn from_timestamp(&self) -> u64 {
+        let mut dt = DateTime::from_timestamp(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()) as i64,
+        );
+        (match self {
+            AggregateFrequency::Hourly => {
+                dt.minute = 0;
+                dt.second = 0;
+                dt.to_timestamp()
+            }
+            AggregateFrequency::Daily => {
+                dt.hour = 0;
+                dt.minute = 0;
+                dt.second = 0;
+                dt.to_timestamp()
+            }
+            AggregateFrequency::Weekly => {
+                let dow = dt.day_of_week();
+                dt.hour = 0;
+                dt.minute = 0;
+                dt.second = 0;
+                dt.to_timestamp() - (86400 * 7 * dow as i64)
+            }
+            AggregateFrequency::Never => dt.to_timestamp(),
+        }) as u64
+    }
+
+    pub fn as_secs(&self) -> u64 {
+        match self {
+            AggregateFrequency::Hourly => 3600,
+            AggregateFrequency::Daily => 86400,
+            AggregateFrequency::Weekly => 7 * 86400,
+            AggregateFrequency::Never => 0,
+        }
     }
 }
 

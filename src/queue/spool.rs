@@ -1,3 +1,5 @@
+use mail_auth::common::base32::{Base32Reader, Base32Writer};
+use mail_auth::common::headers::Writer;
 use smtp_proto::Response;
 use std::io::SeekFrom;
 use std::path::PathBuf;
@@ -22,6 +24,7 @@ impl QueueCore {
         &self,
         mut message: Box<Message>,
         mut message_bytes: Vec<Vec<u8>>,
+        span: &tracing::Span,
     ) -> bool {
         // Generate id
         if message.id == 0 {
@@ -35,9 +38,14 @@ impl QueueCore {
             message.path.push((message.id % hash).to_string());
         }
         let _ = fs::create_dir(&message.path).await;
-        message
-            .path
-            .push(format!("{}_{}.msg", message.id, message.size));
+
+        // Encode file name
+        let mut encoder = Base32Writer::with_capacity(20);
+        encoder.write(&message.id.to_le_bytes()[..]);
+        encoder.write(&(message.size as u32).to_le_bytes()[..]);
+        let mut file = encoder.finalize();
+        file.push_str(".msg");
+        message.path.push(file);
 
         // Serialize metadata
         message_bytes.push(message.serialize());
@@ -46,13 +54,23 @@ impl QueueCore {
         let mut file = match fs::File::create(&message.path).await {
             Ok(file) => file,
             Err(err) => {
-                tracing::error!("Failed to create file {}: {}", message.path.display(), err);
+                tracing::error!(
+                    parent: span,
+                    context = "queue",
+                    event = "error",
+                    "Failed to create file {}: {}",
+                    message.path.display(),
+                    err
+                );
                 return false;
             }
         };
         for bytes in message_bytes {
             if let Err(err) = file.write_all(&bytes).await {
                 tracing::error!(
+                    parent: span,
+                    context = "queue",
+                    event = "error",
                     "Failed to write to file {}: {}",
                     message.path.display(),
                     err
@@ -61,9 +79,31 @@ impl QueueCore {
             }
         }
         if let Err(err) = file.flush().await {
-            tracing::error!("Failed to flush file {}: {}", message.path.display(), err);
+            tracing::error!(
+                parent: span,
+                context = "queue",
+                event = "error",
+                "Failed to flush file {}: {}",
+                message.path.display(),
+                err
+            );
             return false;
         }
+
+        tracing::info!(
+            parent: span,
+            event = "scheduled",
+            context = "queue",
+            id = message.id,
+            from = if !message.return_path.is_empty() {
+                message.return_path.as_str()
+            } else {
+                "<>"
+            },
+            nrcpts = message.recipients.len(),
+            size = message.size,
+            "Message queued for delivery."
+        );
 
         // Queue the message
         if self
@@ -76,6 +116,9 @@ impl QueueCore {
             .is_err()
         {
             tracing::warn!(
+                parent: span,
+                context = "queue",
+                event = "error",
                 "Queue channel closed: Message queued but won't be sent until next restart."
             );
         }
@@ -204,13 +247,35 @@ impl Message {
     }
 
     pub async fn from_path(path: PathBuf) -> Result<Self, String> {
-        let (id, size) = path
+        let filename = path
             .file_name()
             .and_then(|f| f.to_str())
             .and_then(|f| f.rsplit_once('.'))
-            .and_then(|(f, _)| f.rsplit_once('_'))
-            .and_then(|(id, size)| (id.parse::<u64>().ok()?, size.parse::<u64>().ok()?).into())
+            .map(|(f, _)| f)
             .ok_or_else(|| format!("Invalid queue file name {}", path.display()))?;
+
+        // Decode file name
+        let mut id = [0u8; std::mem::size_of::<u64>()];
+        let mut size = [0u8; std::mem::size_of::<u32>()];
+
+        for (pos, byte) in Base32Reader::new(filename.as_bytes()).enumerate() {
+            match pos {
+                0..=7 => {
+                    id[pos] = byte;
+                }
+                8..=11 => {
+                    size[pos - 8] = byte;
+                }
+                _ => {
+                    return Err(format!("Invalid queue file name {}", path.display()));
+                }
+            }
+        }
+
+        let id = u64::from_le_bytes(id);
+        let size = u32::from_le_bytes(size) as u64;
+
+        // Obtail file size
         let file_size = fs::metadata(&path)
             .await
             .map_err(|err| {
@@ -385,7 +450,7 @@ impl Message {
                 Err(err) => err,
             };
             tracing::error!(
-                module = "queue",
+                context = "queue",
                 event = "error",
                 "Failed to write to {}: {}",
                 self.path.display(),
@@ -397,7 +462,7 @@ impl Message {
     pub async fn remove(&self) {
         if let Err(err) = fs::remove_file(&self.path).await {
             tracing::error!(
-                module = "queue",
+                context = "queue",
                 event = "error",
                 "Failed to delete queued message {}: {}",
                 self.path.display(),
@@ -706,6 +771,7 @@ mod test {
         time::{Duration, Instant},
     };
 
+    use mail_auth::common::{base32::Base32Writer, headers::Writer};
     use smtp_proto::{Response, MAIL_REQUIRETLS, MAIL_SMTPUTF8, RCPT_CONNEG, RCPT_NOTIFY_FAILURE};
     use tokio::fs;
 
@@ -833,9 +899,15 @@ mod test {
         message.id = 12345;
         message.size = raw_message.len();
         message.path = std::env::temp_dir();
-        message
-            .path
-            .push(format!("{}_{}.msg", message.id, message.size));
+
+        // Encode file name
+        let mut encoder = Base32Writer::with_capacity(20);
+        encoder.write(&message.id.to_le_bytes()[..]);
+        encoder.write(&(message.size as u32).to_le_bytes()[..]);
+        let mut file = encoder.finalize();
+        file.push_str(".msg");
+        message.path.push(file);
+
         raw_message.extend_from_slice(&bytes);
         fs::write(&message.path, raw_message).await.unwrap();
         let message_check = Message::from_path(message.path.clone()).await.unwrap();

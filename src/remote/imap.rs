@@ -63,7 +63,7 @@ impl ImapAuthClientBuilder {
             Err(err) => err,
         };
         tracing::warn!(
-            module = "remote",
+            context = "remote",
             event = "error",
             remote.addr = &self.addr,
             remote.protocol = "imap",
@@ -103,7 +103,7 @@ impl RemoteLookup for Arc<ImapAuthClientBuilder> {
         tokio::spawn(async move {
             if let Err(err) = builder.lookup(lookup, &tx).await {
                 tracing::warn!(
-                    module = "remote",
+                    context = "remote",
                     event = "error",
                     remote.addr = &builder.addr,
                     remote.protocol = "imap",
@@ -141,11 +141,11 @@ impl ImapAuthClientBuilder {
                     }
                     _ => {
                         tracing::warn!(
-                            module = "remote",
+                            context = "remote",
                             event = "error",
                             remote.addr = &self.addr,
                             remote.protocol = "imap",
-                            "IMAP does not offer any supported auth mechanisms.",
+                            "IMAP server does not offer any supported auth mechanisms.",
                         );
                         tx.send(Event::WorkerFailed).await.logged_unwrap();
                         return Ok(());
@@ -170,7 +170,7 @@ impl ImapAuthClientBuilder {
             }
             _ => {
                 tracing::warn!(
-                    module = "remote",
+                    context = "remote",
                     event = "error",
                     remote.addr = &self.addr,
                     remote.protocol = "imap",

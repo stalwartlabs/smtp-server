@@ -1,9 +1,4 @@
-use std::{
-    collections::hash_map::Entry,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant, SystemTime},
-};
+use std::{collections::hash_map::Entry, path::PathBuf, sync::Arc, time::Duration};
 
 use ahash::AHashMap;
 use mail_auth::{
@@ -21,9 +16,10 @@ use std::fmt::Write;
 use tokio::fs;
 
 use crate::{
+    config::AggregateFrequency,
     core::Core,
     outbound::mta_sts::{Mode, MxPattern},
-    queue::Schedule,
+    queue::{InstantFromTimestamp, Schedule},
     USER_AGENT,
 };
 
@@ -37,7 +33,7 @@ use super::{
 #[derive(Clone)]
 pub struct TlsRptOptions {
     pub record: Arc<TlsRpt>,
-    pub interval: Duration,
+    pub interval: AggregateFrequency,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -55,13 +51,22 @@ impl GenerateTlsReport for Arc<Core> {
     fn generate_tls_report(&self, domain: String, path: ReportPath<Vec<ReportPolicy<PathBuf>>>) {
         let core = self.clone();
         tokio::spawn(async move {
+            let deliver_at = path.created + path.deliver_at.as_secs();
+            let span = tracing::info_span!(
+                "tls-report",
+                domain = domain,
+                range_from = path.created,
+                range_to = deliver_at,
+                size = path.size,
+            );
+
             // Deserialize report
             let config = &core.report.config.tls;
             let mut report = TlsReport {
                 organization_name: config.org_name.eval(&domain.as_str()).await.clone(),
                 date_range: DateRange {
                     start_datetime: DateTime::from_timestamp(path.created as i64),
-                    end_datetime: DateTime::from_timestamp(path.deliver_at as i64),
+                    end_datetime: DateTime::from_timestamp(deliver_at as i64),
                 },
                 contact_info: config.contact_info.eval(&domain.as_str()).await.clone(),
                 report_id: format!(
@@ -73,7 +78,7 @@ impl GenerateTlsReport for Arc<Core> {
             };
             let mut rua = Vec::new();
             for path in &path.path {
-                if let Some(tls) = json_read::<TlsFormat>(&path.inner).await {
+                if let Some(tls) = json_read::<TlsFormat>(&path.inner, &span).await {
                     // Group duplicates
                     let mut total_success = 0;
                     let mut total_failure = 0;
@@ -113,6 +118,12 @@ impl GenerateTlsReport for Arc<Core> {
             }
 
             if report.policies.is_empty() {
+                // This should not happen
+                tracing::warn!(
+                    parent: &span,
+                    event = "empty-report",
+                    "No policies found in report"
+                );
                 return;
             }
 
@@ -124,7 +135,7 @@ impl GenerateTlsReport for Arc<Core> {
                     Ok(report) => report,
                     Err(err) => {
                         tracing::error!(
-                            module = "report",
+                            parent: &span,
                             event = "error",
                             "Failed to compress report: {}",
                             err
@@ -152,18 +163,23 @@ impl GenerateTlsReport for Arc<Core> {
                             {
                                 Ok(response) => {
                                     if response.status().is_success() {
-                                        let log = "fd";
-                                        path.cleanup().await;
+                                        tracing::debug!(
+                                            parent: &span,
+                                            context = "http",
+                                            event = "invalid-response",
+                                            url = uri,
+                                            status = %response.status()
+                                        );
                                         return;
                                     }
                                 }
                                 Err(err) => {
                                     tracing::debug!(
-                                        module = "report",
+                                        parent: &span,
+                                        context = "http",
                                         event = "error",
-                                        "Failed to submit TLS report to {}: {}",
-                                        uri,
-                                        err
+                                        url = uri,
+                                        reason = %err
                                     );
                                 }
                             }
@@ -192,10 +208,14 @@ impl GenerateTlsReport for Arc<Core> {
                 );
 
                 // Send report
-                core.send_report(from_addr, rcpts.iter(), message, &config.sign)
+                core.send_report(from_addr, rcpts.iter(), message, &config.sign, &span)
                     .await;
             } else {
-                let log = "fd";
+                tracing::info!(
+                    parent: &span,
+                    event = "delivery-failed",
+                    "No valid recipients found to deliver report to."
+                );
             }
             path.cleanup().await;
         });
@@ -227,8 +247,8 @@ impl Scheduler {
                                 .build_report_path(
                                     ReportType::Tls(&domain),
                                     policy_hash,
+                                    path.created,
                                     path.deliver_at,
-                                    path.deliver_at - path.created,
                                 )
                                 .await,
                             policy: policy_hash,
@@ -240,21 +260,20 @@ impl Scheduler {
                 }
             }
             Entry::Vacant(e) => {
+                let created = event.interval.from_timestamp();
+                let deliver_at = created + event.interval.as_secs();
+
                 self.main.push(Schedule {
-                    due: Instant::now() + event.interval,
+                    due: deliver_at.to_instant(),
                     inner: e.key().clone(),
                 });
                 let domain = e.key().domain_name().to_string();
-                let created = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs());
-                let deliver_at = created + event.interval.as_secs();
                 let path = core
                     .build_report_path(
                         ReportType::Tls(&domain),
                         policy_hash,
-                        deliver_at,
-                        event.interval.as_secs(),
+                        created,
+                        event.interval,
                     )
                     .await;
                 let v = e.insert(ReportType::Tls(ReportPath {
@@ -264,7 +283,7 @@ impl Scheduler {
                     }],
                     size: 0,
                     created,
-                    deliver_at,
+                    deliver_at: event.interval,
                 }));
                 (v.tls_path(), 0, domain.into())
             }
@@ -363,7 +382,8 @@ impl ReportPath<Vec<ReportPolicy<PathBuf>>> {
         for path in &self.path {
             if let Err(err) = fs::remove_file(&path.inner).await {
                 tracing::error!(
-                    module = "report",
+                    context = "report",
+                    report = "tls",
                     event = "error",
                     "Failed to delete file {}: {}",
                     path.inner.display(),

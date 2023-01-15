@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     net::IpAddr,
     path::PathBuf,
     sync::{atomic::AtomicUsize, Arc},
@@ -442,6 +443,78 @@ impl DomainPart for String {
     #[inline(always)]
     fn domain_part(&self) -> &str {
         self.rsplit_once('@').map(|(_, d)| d).unwrap_or_default()
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::UnexpectedResponse(response) => {
+                write!(
+                    f,
+                    "Unexpected response from '{}': {}",
+                    response.hostname.entity, response.response
+                )
+            }
+            Error::DnsError(err) => {
+                write!(f, "DNS lookup failed: {}", err)
+            }
+            Error::ConnectionError(details) => {
+                write!(
+                    f,
+                    "Connection to '{}' failed: {}",
+                    details.entity, details.details
+                )
+            }
+            Error::TlsError(details) => {
+                write!(
+                    f,
+                    "TLS error from '{}': {}",
+                    details.entity, details.details
+                )
+            }
+            Error::DaneError(details) => {
+                write!(
+                    f,
+                    "DANE failed to authenticate '{}': {}",
+                    details.entity, details.details
+                )
+            }
+            Error::MtaStsError(details) => {
+                write!(f, "MTA-STS auth failed: {}", details)
+            }
+            Error::RateLimited => {
+                write!(f, "Rate limited")
+            }
+            Error::ConcurrencyLimited => {
+                write!(f, "Too many concurrent connections to remote server")
+            }
+            Error::Io(err) => {
+                write!(f, "Queue error: {}", err)
+            }
+        }
+    }
+}
+
+impl Display for Status<(), Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Status::Scheduled => write!(f, "Scheduled"),
+            Status::Completed(_) => write!(f, "Completed"),
+            Status::TemporaryFailure(err) => write!(f, "Temporary Failure: {}", err),
+            Status::PermanentFailure(err) => write!(f, "Permanent Failure: {}", err),
+        }
+    }
+}
+
+impl Display for Status<HostResponse<String>, HostResponse<ErrorDetails>> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Status::Scheduled => write!(f, "Scheduled"),
+            Status::Completed(response) => write!(f, "Delivered: {}", response.response),
+            Status::TemporaryFailure(err) => write!(f, "Temporary Failure: {}", err.response),
+            Status::PermanentFailure(err) => write!(f, "Permanent Failure: {}", err.response),
+        }
     }
 }
 
