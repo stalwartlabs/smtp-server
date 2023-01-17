@@ -324,10 +324,10 @@ impl ParseValue for Duration {
             (num, 60 * 60 * 1000)
         } else if let Some(num) = duration.strip_suffix('m') {
             (num, 60 * 1000)
-        } else if let Some(num) = duration.strip_suffix('s') {
-            (num, 1000)
         } else if let Some(num) = duration.strip_suffix("ms") {
             (num, 1)
+        } else if let Some(num) = duration.strip_suffix('s') {
+            (num, 1000)
         } else {
             (duration.as_str(), 1)
         };

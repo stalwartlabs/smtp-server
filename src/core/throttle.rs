@@ -227,7 +227,7 @@ impl Throttle {
             hasher.update(e.mx().as_bytes());
         }
         if (self.keys & THROTTLE_REMOTE_IP) != 0 {
-            match &e.local_ip() {
+            match &e.remote_ip() {
                 IpAddr::V4(ip) => {
                     hasher.update(&ip.octets()[..]);
                 }
@@ -237,7 +237,7 @@ impl Throttle {
             }
         }
         if (self.keys & THROTTLE_LOCAL_IP) != 0 {
-            match &e.remote_ip() {
+            match &e.local_ip() {
                 IpAddr::V4(ip) => {
                     hasher.update(&ip.octets()[..]);
                 }
@@ -325,10 +325,14 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
                             }
                             limiter
                         });
-                        let rate = t
-                            .rate
-                            .as_ref()
-                            .map(|rate| RateLimiter::new(rate.requests, rate.period.as_secs()));
+                        let rate = t.rate.as_ref().map(|rate| {
+                            let mut r = RateLimiter::new(
+                                rate.requests,
+                                std::cmp::min(rate.period.as_secs(), 1),
+                            );
+                            r.is_allowed();
+                            r
+                        });
 
                         e.insert(Limiter { rate, concurrency });
                     }

@@ -10,8 +10,8 @@ use mail_auth::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs,
     io::{AsyncRead, AsyncWrite},
+    runtime::Handle,
 };
 
 use crate::{
@@ -22,7 +22,8 @@ use crate::{
 
 use super::{
     scheduler::{
-        json_append, json_read, json_write, ReportPath, ReportPolicy, ReportType, Scheduler, ToHash,
+        json_append, json_read_blocking, json_write, ReportPath, ReportPolicy, ReportType,
+        Scheduler, ToHash,
     },
     DmarcEvent,
 };
@@ -274,7 +275,9 @@ pub trait GenerateDmarcReport {
 impl GenerateDmarcReport for Arc<Core> {
     fn generate_dmarc_report(&self, domain: ReportPolicy<String>, path: ReportPath<PathBuf>) {
         let core = self.clone();
-        tokio::spawn(async move {
+        let handle = Handle::current();
+
+        self.worker_pool.spawn(move || {
             let deliver_at = path.created + path.deliver_at.as_secs();
             let span = tracing::info_span!(
                 "dmarc-report",
@@ -285,19 +288,18 @@ impl GenerateDmarcReport for Arc<Core> {
             );
 
             // Deserialize report
-            let dmarc = if let Some(dmarc) = json_read::<DmarcFormat>(&path.path, &span).await {
+            let dmarc = if let Some(dmarc) = json_read_blocking::<DmarcFormat>(&path.path, &span) {
                 dmarc
             } else {
                 return;
             };
 
             // Verify external reporting addresses
-            let rua = match core
-                .resolvers
-                .dns
-                .verify_dmarc_report_address(&domain.inner, &dmarc.rua)
-                .await
-            {
+            let rua = match handle.block_on(
+                core.resolvers
+                    .dns
+                    .verify_dmarc_report_address(&domain.inner, &dmarc.rua),
+            ) {
                 Some(rcpts) => {
                     if !rcpts.is_empty() {
                         rcpts
@@ -312,7 +314,7 @@ impl GenerateDmarcReport for Arc<Core> {
                             rua = ?dmarc.rua,
                             "Unauthorized external reporting addresses"
                         );
-                        let _ = fs::remove_file(&path.path).await;
+                        let _ = std::fs::remove_file(&path.path);
                         return;
                     }
                 }
@@ -324,10 +326,12 @@ impl GenerateDmarcReport for Arc<Core> {
                         rua = ?dmarc.rua,
                         "Failed to validate external report addresses",
                     );
-                    let _ = fs::remove_file(&path.path).await;
+                    let _ = std::fs::remove_file(&path.path);
                     return;
                 }
             };
+
+            let config = &core.report.config.dmarc_aggregate;
 
             // Group duplicates
             let mut record_map = AHashMap::with_capacity(dmarc.records.len());
@@ -343,32 +347,31 @@ impl GenerateDmarcReport for Arc<Core> {
             }
 
             // Create report
-            let config = &core.report.config.dmarc_aggregate;
             let mut report = Report::new()
                 .with_policy_published(dmarc.policy)
                 .with_date_range_begin(path.created)
                 .with_date_range_end(deliver_at)
                 .with_report_id(format!("{}_{}", domain.policy, path.created))
-                .with_email(config.address.eval(&domain.inner.as_str()).await);
-            if let Some(org_name) = config.org_name.eval(&domain.inner.as_str()).await {
+                .with_email(handle.block_on(config.address.eval(&domain.inner.as_str())));
+            if let Some(org_name) = handle.block_on(config.org_name.eval(&domain.inner.as_str())) {
                 report = report.with_org_name(org_name);
             }
-            if let Some(contact_info) = config.contact_info.eval(&domain.inner.as_str()).await {
+            if let Some(contact_info) =
+                handle.block_on(config.contact_info.eval(&domain.inner.as_str()))
+            {
                 report = report.with_extra_contact_info(contact_info);
             }
             for (record, count) in record_map {
                 report.add_record(record.with_count(count));
             }
-            let from_addr = config.address.eval(&domain.inner.as_str()).await;
+            let from_addr = handle.block_on(config.address.eval(&domain.inner.as_str()));
             let mut message = Vec::with_capacity(path.size);
             let _ = report.write_rfc5322(
-                core.report
-                    .config
-                    .submitter
-                    .eval(&domain.inner.as_str())
-                    .await,
+                handle.block_on(core.report.config.submitter.eval(&domain.inner.as_str())),
                 (
-                    config.name.eval(&domain.inner.as_str()).await.as_str(),
+                    handle
+                        .block_on(config.name.eval(&domain.inner.as_str()))
+                        .as_str(),
                     from_addr.as_str(),
                 ),
                 rua.iter().map(|a| a.as_str()),
@@ -376,10 +379,9 @@ impl GenerateDmarcReport for Arc<Core> {
             );
 
             // Send report
-            core.send_report(from_addr, rua.iter(), message, &config.sign, &span)
-                .await;
+            handle.block_on(core.send_report(from_addr, rua.iter(), message, &config.sign, &span));
 
-            if let Err(err) = fs::remove_file(&path.path).await {
+            if let Err(err) = std::fs::remove_file(&path.path) {
                 tracing::warn!(
                     context = "report",
                     event = "error",

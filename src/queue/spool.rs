@@ -23,7 +23,8 @@ impl QueueCore {
     pub async fn queue_message(
         &self,
         mut message: Box<Message>,
-        mut message_bytes: Vec<Vec<u8>>,
+        raw_headers: Option<&[u8]>,
+        raw_message: &[u8],
         span: &tracing::Span,
     ) -> bool {
         // Generate id
@@ -48,7 +49,7 @@ impl QueueCore {
         message.path.push(file);
 
         // Serialize metadata
-        message_bytes.push(message.serialize());
+        let metadata = message.serialize();
 
         // Save message
         let mut file = match fs::File::create(&message.path).await {
@@ -65,17 +66,26 @@ impl QueueCore {
                 return false;
             }
         };
-        for bytes in message_bytes {
-            if let Err(err) = file.write_all(&bytes).await {
-                tracing::error!(
-                    parent: span,
-                    context = "queue",
-                    event = "error",
-                    "Failed to write to file {}: {}",
-                    message.path.display(),
-                    err
-                );
-                return false;
+
+        let iter = if let Some(raw_headers) = raw_headers {
+            [raw_headers, raw_message, &metadata].into_iter()
+        } else {
+            [raw_message, &metadata, b""].into_iter()
+        };
+
+        for bytes in iter {
+            if !bytes.is_empty() {
+                if let Err(err) = file.write_all(bytes).await {
+                    tracing::error!(
+                        parent: span,
+                        context = "queue",
+                        event = "error",
+                        "Failed to write to file {}: {}",
+                        message.path.display(),
+                        err
+                    );
+                    return false;
+                }
             }
         }
         if let Err(err) = file.flush().await {

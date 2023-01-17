@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::{atomic::AtomicUsize, Arc},
     time::{Duration, Instant, SystemTime},
@@ -211,12 +211,12 @@ impl<'x> SimpleEnvelope<'x> {
 }
 
 impl<'x> Envelope for SimpleEnvelope<'x> {
-    fn local_ip(&self) -> &std::net::IpAddr {
-        unreachable!()
+    fn local_ip(&self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     }
 
-    fn remote_ip(&self) -> &std::net::IpAddr {
-        unreachable!()
+    fn remote_ip(&self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     }
 
     fn sender_domain(&self) -> &str {
@@ -265,12 +265,12 @@ pub struct QueueEnvelope<'x> {
 }
 
 impl<'x> Envelope for QueueEnvelope<'x> {
-    fn local_ip(&self) -> &std::net::IpAddr {
-        &self.local_ip
+    fn local_ip(&self) -> IpAddr {
+        self.local_ip
     }
 
-    fn remote_ip(&self) -> &std::net::IpAddr {
-        &self.remote_ip
+    fn remote_ip(&self) -> IpAddr {
+        self.remote_ip
     }
 
     fn sender_domain(&self) -> &str {
@@ -311,12 +311,12 @@ impl<'x> Envelope for QueueEnvelope<'x> {
 }
 
 impl Envelope for Message {
-    fn local_ip(&self) -> &IpAddr {
-        unreachable!()
+    fn local_ip(&self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     }
 
-    fn remote_ip(&self) -> &IpAddr {
-        unreachable!()
+    fn remote_ip(&self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     }
 
     fn sender_domain(&self) -> &str {
@@ -357,12 +357,12 @@ impl Envelope for Message {
 }
 
 impl Envelope for &str {
-    fn local_ip(&self) -> &IpAddr {
-        unreachable!()
+    fn local_ip(&self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     }
 
-    fn remote_ip(&self) -> &IpAddr {
-        unreachable!()
+    fn remote_ip(&self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     }
 
     fn sender_domain(&self) -> &str {
@@ -514,62 +514,6 @@ impl Display for Status<HostResponse<String>, HostResponse<ErrorDetails>> {
             Status::Completed(response) => write!(f, "Delivered: {}", response.response),
             Status::TemporaryFailure(err) => write!(f, "Temporary Failure: {}", err.response),
             Status::PermanentFailure(err) => write!(f, "Permanent Failure: {}", err.response),
-        }
-    }
-}
-
-#[cfg(test)]
-impl Default for crate::config::QueueConfig {
-    fn default() -> Self {
-        use crate::config::{
-            Dsn, IfBlock, QueueOutboundSourceIp, QueueOutboundTimeout, QueueOutboundTls,
-            QueueQuotas, QueueThrottle,
-        };
-
-        Self {
-            path: Default::default(),
-            hash: Default::default(),
-            retry: IfBlock::new(vec![Duration::from_secs(10)]),
-            notify: IfBlock::new(vec![Duration::from_secs(20)]),
-            expire: IfBlock::new(Duration::from_secs(10)),
-            hostname: IfBlock::new("mx.example.org".to_string()),
-            next_hop: Default::default(),
-            max_mx: IfBlock::new(5),
-            max_multihomed: IfBlock::new(5),
-            source_ip: QueueOutboundSourceIp {
-                ipv4: IfBlock::new(vec![]),
-                ipv6: IfBlock::new(vec![]),
-            },
-            tls: QueueOutboundTls {
-                dane: IfBlock::new(crate::config::RequireOptional::Optional),
-                mta_sts: IfBlock::new(crate::config::RequireOptional::Optional),
-                start: IfBlock::new(crate::config::RequireOptional::Optional),
-            },
-            dsn: Dsn {
-                name: IfBlock::new("Mail Delivery Subsystem".to_string()),
-                address: IfBlock::new("MAILER-DAEMON@example.org".to_string()),
-                sign: IfBlock::default(),
-            },
-            timeout: QueueOutboundTimeout {
-                connect: IfBlock::new(Duration::from_secs(1)),
-                greeting: IfBlock::new(Duration::from_secs(1)),
-                tls: IfBlock::new(Duration::from_secs(1)),
-                ehlo: IfBlock::new(Duration::from_secs(1)),
-                mail: IfBlock::new(Duration::from_secs(1)),
-                rcpt: IfBlock::new(Duration::from_secs(1)),
-                data: IfBlock::new(Duration::from_secs(1)),
-                mta_sts: IfBlock::new(Duration::from_secs(1)),
-            },
-            throttle: QueueThrottle {
-                sender: vec![],
-                rcpt: vec![],
-                host: vec![],
-            },
-            quota: QueueQuotas {
-                sender: vec![],
-                rcpt: vec![],
-                rcpt_domain: vec![],
-            },
         }
     }
 }

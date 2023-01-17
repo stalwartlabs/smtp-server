@@ -205,7 +205,9 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 State::Data(receiver) => {
                     if self.data.message.len() + bytes.len() < self.params.max_message_size {
                         if receiver.ingest(&mut iter, &mut self.data.message) {
-                            self.queue_message().await?;
+                            let message = self.queue_message().await;
+                            self.write(message).await?;
+                            self.reset();
                             state = State::default();
                         } else {
                             break 'outer;
@@ -218,7 +220,9 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     if receiver.ingest(&mut iter, &mut self.data.message) {
                         if self.can_send_data().await? {
                             if receiver.is_last {
-                                self.queue_message().await?;
+                                let message = self.queue_message().await;
+                                self.write(message).await?;
+                                self.reset();
                             } else {
                                 self.write(b"250 2.6.0 Chunk accepted.\r\n").await?;
                             }
@@ -293,6 +297,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         self.data.message = Vec::with_capacity(0);
         self.data.priority = 0;
         self.data.delivery_by = 0;
+        self.data.notify_by = 0;
         self.data.future_release = 0;
     }
 
@@ -342,13 +347,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
 
 impl<T: AsyncRead + AsyncWrite> Envelope for Session<T> {
     #[inline(always)]
-    fn local_ip(&self) -> &IpAddr {
-        &self.data.local_ip
+    fn local_ip(&self) -> IpAddr {
+        self.data.local_ip
     }
 
     #[inline(always)]
-    fn remote_ip(&self) -> &IpAddr {
-        &self.data.remote_ip
+    fn remote_ip(&self) -> IpAddr {
+        self.data.remote_ip
     }
 
     #[inline(always)]

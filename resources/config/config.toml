@@ -263,7 +263,11 @@ host = "lmtp"
 path = "/var/spool/report"
 hash = 16
 submitter = "mx.domain.org"
-analyze = ["dmarc@*", "abuse@*"]
+
+[report.analysis]
+addresses = ["dmarc@*", "abuse@*"]
+forward = true
+store = "/var/spool/report"
 
 [report.dsn]
 from-name = "Mail Delivery Subsystem"

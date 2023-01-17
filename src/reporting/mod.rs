@@ -12,13 +12,14 @@ use mail_parser::DateTime;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    config::{AggregateFrequency, DkimSigner, IfBlock},
+    config::{AddressMatch, AggregateFrequency, DkimSigner, IfBlock},
     core::{Core, Session},
     outbound::{dane::Tlsa, mta_sts::Policy},
     queue::{DomainPart, Message},
     USER_AGENT,
 };
 
+pub mod analysis;
 pub mod dkim;
 pub mod dmarc;
 pub mod scheduler;
@@ -71,6 +72,25 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 DeliveryResult::Unspecified
             })
     }
+
+    pub fn is_report(&self) -> bool {
+        for addr_match in &self.core.report.config.analysis.addresses {
+            for addr in &self.data.rcpt_to {
+                match addr_match {
+                    AddressMatch::StartsWith(prefix) if addr.address_lcase.starts_with(prefix) => {
+                        return true
+                    }
+                    AddressMatch::EndsWith(suffix) if addr.address_lcase.ends_with(suffix) => {
+                        return true
+                    }
+                    AddressMatch::Equals(value) if addr.address_lcase.eq(value) => return true,
+                    _ => (),
+                }
+            }
+        }
+
+        false
+    }
 }
 
 impl Core {
@@ -97,10 +117,12 @@ impl Core {
         }
 
         // Sign message
-        let message_bytes = message.sign(sign_config, report, span).await;
+        let signature = message.sign(sign_config, &report, span).await;
 
         // Queue message
-        self.queue.queue_message(message, message_bytes, span).await;
+        self.queue
+            .queue_message(message, signature.as_deref(), &report, span)
+            .await;
     }
 
     pub async fn schedule_report(&self, report: impl Into<Event>) {
@@ -114,9 +136,9 @@ impl Message {
     pub async fn sign(
         &mut self,
         config: &IfBlock<Vec<Arc<DkimSigner>>>,
-        bytes: Vec<u8>,
+        bytes: &[u8],
         span: &tracing::Span,
-    ) -> Vec<Vec<u8>> {
+    ) -> Option<Vec<u8>> {
         self.size = bytes.len();
         self.size_headers = bytes.len();
 
@@ -124,7 +146,7 @@ impl Message {
         if !signers.is_empty() {
             let mut headers = Vec::with_capacity(64);
             for signer in signers.iter() {
-                match signer.sign(&bytes) {
+                match signer.sign(bytes) {
                     Ok(signature) => {
                         signature.write_header(&mut headers);
                     }
@@ -140,10 +162,10 @@ impl Message {
                 self.size += headers.len();
                 self.size_headers += headers.len();
 
-                return vec![headers, bytes];
+                return Some(headers);
             }
         }
-        vec![bytes]
+        None
     }
 }
 

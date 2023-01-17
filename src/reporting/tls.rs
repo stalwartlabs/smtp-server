@@ -13,7 +13,7 @@ use mail_parser::DateTime;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
-use tokio::fs;
+use tokio::runtime::Handle;
 
 use crate::{
     config::AggregateFrequency,
@@ -25,7 +25,8 @@ use crate::{
 
 use super::{
     scheduler::{
-        json_append, json_read, json_write, ReportPath, ReportPolicy, ReportType, Scheduler, ToHash,
+        json_append, json_read_blocking, json_write, ReportPath, ReportPolicy, ReportType,
+        Scheduler, ToHash,
     },
     TlsEvent,
 };
@@ -50,7 +51,9 @@ pub trait GenerateTlsReport {
 impl GenerateTlsReport for Arc<Core> {
     fn generate_tls_report(&self, domain: String, path: ReportPath<Vec<ReportPolicy<PathBuf>>>) {
         let core = self.clone();
-        tokio::spawn(async move {
+        let handle = Handle::current();
+
+        self.worker_pool.spawn(move || {
             let deliver_at = path.created + path.deliver_at.as_secs();
             let span = tracing::info_span!(
                 "tls-report",
@@ -63,12 +66,16 @@ impl GenerateTlsReport for Arc<Core> {
             // Deserialize report
             let config = &core.report.config.tls;
             let mut report = TlsReport {
-                organization_name: config.org_name.eval(&domain.as_str()).await.clone(),
+                organization_name: handle
+                    .block_on(config.org_name.eval(&domain.as_str()))
+                    .clone(),
                 date_range: DateRange {
                     start_datetime: DateTime::from_timestamp(path.created as i64),
                     end_datetime: DateTime::from_timestamp(deliver_at as i64),
                 },
-                contact_info: config.contact_info.eval(&domain.as_str()).await.clone(),
+                contact_info: handle
+                    .block_on(config.contact_info.eval(&domain.as_str()))
+                    .clone(),
                 report_id: format!(
                     "{}_{}",
                     path.created,
@@ -78,7 +85,7 @@ impl GenerateTlsReport for Arc<Core> {
             };
             let mut rua = Vec::new();
             for path in &path.path {
-                if let Some(tls) = json_read::<TlsFormat>(&path.inner, &span).await {
+                if let Some(tls) = json_read_blocking::<TlsFormat>(&path.inner, &span) {
                     // Group duplicates
                     let mut total_success = 0;
                     let mut total_failure = 0;
@@ -149,7 +156,7 @@ impl GenerateTlsReport for Arc<Core> {
             for uri in &rua {
                 match uri {
                     ReportUri::Http(uri) => {
-                        if let Ok(client) = reqwest::Client::builder()
+                        if let Ok(client) = reqwest::blocking::Client::builder()
                             .user_agent(USER_AGENT)
                             .timeout(Duration::from_secs(2 * 60))
                             .build()
@@ -159,7 +166,6 @@ impl GenerateTlsReport for Arc<Core> {
                                 .header(CONTENT_TYPE, "application/tlsrpt+gzip")
                                 .body(json.to_vec())
                                 .send()
-                                .await
                             {
                                 Ok(response) => {
                                     if response.status().is_success() {
@@ -193,13 +199,13 @@ impl GenerateTlsReport for Arc<Core> {
 
             // Deliver report over SMTP
             if !rcpts.is_empty() {
-                let from_addr = config.address.eval(&domain.as_str()).await;
+                let from_addr = handle.block_on(config.address.eval(&domain.as_str()));
                 let mut message = Vec::with_capacity(path.size);
                 let _ = report.write_rfc5322_from_bytes(
                     &domain,
-                    core.report.config.submitter.eval(&domain.as_str()).await,
+                    handle.block_on(core.report.config.submitter.eval(&domain.as_str())),
                     (
-                        config.name.eval(&domain.as_str()).await.as_str(),
+                        handle.block_on(config.name.eval(&domain.as_str())).as_str(),
                         from_addr.as_str(),
                     ),
                     rcpts.iter().copied(),
@@ -208,8 +214,13 @@ impl GenerateTlsReport for Arc<Core> {
                 );
 
                 // Send report
-                core.send_report(from_addr, rcpts.iter(), message, &config.sign, &span)
-                    .await;
+                handle.block_on(core.send_report(
+                    from_addr,
+                    rcpts.iter(),
+                    message,
+                    &config.sign,
+                    &span,
+                ));
             } else {
                 tracing::info!(
                     parent: &span,
@@ -217,7 +228,7 @@ impl GenerateTlsReport for Arc<Core> {
                     "No valid recipients found to deliver report to."
                 );
             }
-            path.cleanup().await;
+            path.cleanup_blocking();
         });
     }
 }
@@ -378,9 +389,9 @@ impl Scheduler {
 }
 
 impl ReportPath<Vec<ReportPolicy<PathBuf>>> {
-    async fn cleanup(&self) {
+    fn cleanup_blocking(&self) {
         for path in &self.path {
-            if let Err(err) = fs::remove_file(&path.inner).await {
+            if let Err(err) = std::fs::remove_file(&path.inner) {
                 tracing::error!(
                     context = "report",
                     report = "tls",

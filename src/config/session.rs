@@ -103,6 +103,7 @@ impl Config {
             mail: self.parse_session_mail(ctx)?,
             rcpt: self.parse_session_rcpt(ctx)?,
             data: self.parse_session_data(ctx)?,
+            extensions: self.parse_extensions(ctx)?,
         })
     }
 
@@ -120,21 +121,17 @@ impl Config {
         })
     }
 
-    fn parse_session_ehlo(&self, ctx: &ConfigContext) -> super::Result<Ehlo> {
+    fn parse_extensions(&self, ctx: &ConfigContext) -> super::Result<Extensions> {
         let available_keys = [
             EnvelopeKey::Listener,
             EnvelopeKey::RemoteIp,
             EnvelopeKey::LocalIp,
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::AuthenticatedAs,
         ];
 
-        Ok(Ehlo {
-            script: self
-                .parse_if_block::<Option<String>>("session.ehlo.script", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "session.ehlo.script", "script")?,
-            require: self
-                .parse_if_block("session.ehlo.require", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(true)),
+        Ok(Extensions {
             pipelining: self
                 .parse_if_block("session.extensions.pipelining", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
@@ -156,6 +153,24 @@ impl Config {
             mt_priority: self
                 .parse_if_block("session.extensions.mt-priority", ctx, &available_keys)?
                 .unwrap_or_default(),
+        })
+    }
+
+    fn parse_session_ehlo(&self, ctx: &ConfigContext) -> super::Result<Ehlo> {
+        let available_keys = [
+            EnvelopeKey::Listener,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+        ];
+
+        Ok(Ehlo {
+            script: self
+                .parse_if_block::<Option<String>>("session.ehlo.script", ctx, &available_keys)?
+                .unwrap_or_default()
+                .map_if_block(&ctx.scripts, "session.ehlo.script", "script")?,
+            require: self
+                .parse_if_block("session.ehlo.require", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(true)),
         })
     }
 

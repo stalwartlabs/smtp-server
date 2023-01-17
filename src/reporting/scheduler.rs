@@ -454,6 +454,39 @@ pub async fn json_read<T: DeserializeOwned>(path: &PathBuf, span: &tracing::Span
     }
 }
 
+pub fn json_read_blocking<T: DeserializeOwned>(path: &PathBuf, span: &tracing::Span) -> Option<T> {
+    match std::fs::read_to_string(path) {
+        Ok(mut json) => {
+            json.push_str("]}");
+            match serde_json::from_str(&json) {
+                Ok(report) => Some(report),
+                Err(err) => {
+                    tracing::error!(
+                        parent: span,
+                        context = "deserialize",
+                        event = "error",
+                        "Failed to deserialize report file {}: {}",
+                        path.display(),
+                        err
+                    );
+                    None
+                }
+            }
+        }
+        Err(err) => {
+            tracing::error!(
+                parent: span,
+                context = "io",
+                event = "error",
+                "Failed to read report file {}: {}",
+                path.display(),
+                err
+            );
+            None
+        }
+    }
+}
+
 impl Default for Scheduler {
     fn default() -> Self {
         Self {

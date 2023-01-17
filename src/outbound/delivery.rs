@@ -249,54 +249,71 @@ impl DeliveryAttempt {
 
                 // Obtain remote hosts list
                 let mx_list;
-                let remote_hosts =
-                    if let Some(next_hop) = queue_config.next_hop.eval(&envelope).await {
-                        vec![RemoteHost::Relay(next_hop)]
-                    } else {
-                        // Lookup MX
-                        mx_list = match core.resolvers.dns.mx_lookup(&domain.domain).await {
-                            Ok(mx) => mx,
-                            Err(err) => {
-                                tracing::info!(
-                                    parent: &span,
-                                    context = "dns",
-                                    event = "mx-lookup-failed",
-                                    reason = %err,
-                                );
-                                domain.set_status(err, queue_config.retry.eval(&envelope).await);
-                                continue 'next_domain;
-                            }
-                        };
+                let remote_hosts = if let Some(next_hop) =
+                    queue_config.next_hop.eval(&envelope).await
+                {
+                    vec![RemoteHost::Relay(next_hop)]
+                } else {
+                    // Lookup MX
+                    mx_list = match core.resolvers.dns.mx_lookup(&domain.domain).await {
+                        Ok(mx) => mx,
+                        Err(err) => {
+                            tracing::info!(
+                                parent: &span,
+                                context = "dns",
+                                event = "mx-lookup-failed",
+                                reason = %err,
+                            );
+                            domain.set_status(err, queue_config.retry.eval(&envelope).await);
+                            continue 'next_domain;
+                        }
+                    };
 
-                        if !mx_list.is_empty() {
-                            // Obtain max number of MX hosts to process
-                            let max_mx = *queue_config.max_mx.eval(&envelope).await;
-                            let mut remote_hosts = Vec::with_capacity(max_mx);
+                    if !mx_list.is_empty() {
+                        // Obtain max number of MX hosts to process
+                        let max_mx = *queue_config.max_mx.eval(&envelope).await;
+                        let mut remote_hosts = Vec::with_capacity(max_mx);
 
-                            for mx in mx_list.iter() {
-                                if mx.exchanges.len() > 1 {
-                                    let mut slice = mx.exchanges.iter().collect::<Vec<_>>();
-                                    slice.shuffle(&mut rand::thread_rng());
-                                    for remote_host in slice {
-                                        remote_hosts.push(RemoteHost::MX(remote_host.as_str()));
-                                        if remote_hosts.len() == max_mx {
-                                            break;
-                                        }
-                                    }
-                                } else if let Some(remote_host) = mx.exchanges.first() {
+                        for mx in mx_list.iter() {
+                            if mx.exchanges.len() > 1 {
+                                let mut slice = mx.exchanges.iter().collect::<Vec<_>>();
+                                slice.shuffle(&mut rand::thread_rng());
+                                for remote_host in slice {
                                     remote_hosts.push(RemoteHost::MX(remote_host.as_str()));
                                     if remote_hosts.len() == max_mx {
                                         break;
                                     }
                                 }
+                            } else if let Some(remote_host) = mx.exchanges.first() {
+                                // Check for Null MX
+                                if mx.preference == 0 && remote_host == "." {
+                                    tracing::info!(
+                                        parent: &span,
+                                        context = "dns",
+                                        event = "null-mx",
+                                        reason = "Domain does not accept messages (mull MX)",
+                                    );
+                                    domain.set_status(
+                                        Status::PermanentFailure(Error::DnsError(
+                                            "Domain does not accept messages (null MX)".to_string(),
+                                        )),
+                                        queue_config.retry.eval(&envelope).await,
+                                    );
+                                    continue 'next_domain;
+                                }
+                                remote_hosts.push(RemoteHost::MX(remote_host.as_str()));
+                                if remote_hosts.len() == max_mx {
+                                    break;
+                                }
                             }
-                            remote_hosts
-                        } else {
-                            // If an empty list of MXs is returned, the address is treated as if it was
-                            // associated with an implicit MX RR with a preference of 0, pointing to that host.
-                            vec![RemoteHost::MX(domain.domain.as_str())]
                         }
-                    };
+                        remote_hosts
+                    } else {
+                        // If an empty list of MXs is returned, the address is treated as if it was
+                        // associated with an implicit MX RR with a preference of 0, pointing to that host.
+                        vec![RemoteHost::MX(domain.domain.as_str())]
+                    }
+                };
 
                 // Try delivering message
                 let max_multihomed = *queue_config.max_multihomed.eval(&envelope).await;

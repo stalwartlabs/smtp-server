@@ -91,7 +91,22 @@ impl Config {
                                 err
                             )
                         })?;
-                        let (signer, sealer) = self.parse_signature(id, key.clone(), key)?;
+                        let key_clone = RsaKey::<Sha256>::from_pkcs1_pem(
+                            &String::from_utf8(self.file_contents((
+                                "signature",
+                                id,
+                                "public-key",
+                            ))?)
+                            .unwrap_or_default(),
+                        )
+                        .map_err(|err| {
+                            format!(
+                                "Failed to build RSA key for {}: {}",
+                                ("signature", id, "public-key",).as_key(),
+                                err
+                            )
+                        })?;
+                        let (signer, sealer) = self.parse_signature(id, key_clone, key)?;
                         (DkimSigner::RsaSha256(signer), ArcSealer::RsaSha256(sealer))
                     }
                     Algorithm::Ed25519Sha256 => {

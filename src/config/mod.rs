@@ -17,7 +17,7 @@ use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
 
@@ -239,8 +239,9 @@ pub struct Connect {
 pub struct Ehlo {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub require: IfBlock<bool>,
+}
 
-    // Capabilities
+pub struct Extensions {
     pub pipelining: IfBlock<bool>,
     pub chunking: IfBlock<bool>,
     pub requiretls: IfBlock<bool>,
@@ -307,6 +308,7 @@ pub struct SessionConfig {
     pub mail: Mail,
     pub rcpt: Rcpt,
     pub data: Data,
+    pub extensions: Extensions,
 }
 
 pub struct SessionThrottle {
@@ -359,13 +361,26 @@ pub struct ReportConfig {
     pub path: IfBlock<PathBuf>,
     pub hash: IfBlock<u64>,
     pub submitter: IfBlock<String>,
-    pub analyze: Vec<String>,
+    pub analysis: ReportAnalysis,
 
     pub dkim: Report,
     pub spf: Report,
     pub dmarc: Report,
     pub dmarc_aggregate: AggregateReport,
     pub tls: AggregateReport,
+}
+
+pub struct ReportAnalysis {
+    pub addresses: Vec<AddressMatch>,
+    pub forward: bool,
+    pub store: Option<PathBuf>,
+    pub report_id: AtomicU64,
+}
+
+pub enum AddressMatch {
+    StartsWith(String),
+    EndsWith(String),
+    Equals(String),
 }
 
 pub struct Dsn {

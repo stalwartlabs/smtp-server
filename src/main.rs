@@ -47,6 +47,16 @@ async fn main() -> std::io::Result<()> {
     let (queue_tx, queue_rx) = mpsc::channel(1024);
     let (report_tx, report_rx) = mpsc::channel(1024);
     let core = Arc::new(Core {
+        worker_pool: rayon::ThreadPoolBuilder::new()
+            .num_threads(
+                config
+                    .property::<usize>("global.thread-pool")
+                    .failed("Failed to parse thread pool size")
+                    .filter(|v| *v > 0)
+                    .unwrap_or_else(num_cpus::get),
+            )
+            .build()
+            .unwrap(),
         resolvers: config.build_resolvers().failed("Failed to build resolvers"),
         session: SessionCore {
             config: session_config,

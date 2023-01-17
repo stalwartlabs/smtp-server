@@ -1,5 +1,5 @@
 use mail_auth::{IprevOutput, IprevResult, SpfOutput, SpfResult};
-use smtp_proto::MailFrom;
+use smtp_proto::{MailFrom, MAIL_BY_NOTIFY, MAIL_BY_RETURN, MAIL_BY_TRACE, MAIL_REQUIRETLS};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::core::{Session, SessionAddress};
@@ -81,6 +81,32 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             dsn_info: from.env_id,
         }
         .into();
+
+        // Validate parameters
+        let config = &self.core.session.config.extensions;
+        if (from.flags & MAIL_REQUIRETLS) != 0 && !*config.requiretls.eval(self).await {
+            //todo
+        }
+        if (from.flags & (MAIL_BY_NOTIFY | MAIL_BY_RETURN | MAIL_BY_TRACE)) != 0 {
+            if let Some(duration) = config.deliver_by.eval(self).await {
+                if (from.flags & MAIL_BY_RETURN) != 0 {
+                    if from.by > 0 {
+                        let deliver_by = from.by as u64;
+                        if deliver_by <= duration.as_secs() {
+                            self.data.delivery_by = deliver_by;
+                        } else {
+                            // err
+                        }
+                    } else {
+                        // err
+                    }
+                } else {
+                    self.data.notify_by = from.by;
+                }
+            } else {
+                // err
+            }
+        }
 
         if self.is_allowed().await {
             // Verify SPF

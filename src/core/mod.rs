@@ -39,8 +39,10 @@ use self::throttle::{
 pub mod if_block;
 pub mod params;
 pub mod throttle;
+pub mod worker;
 
 pub struct Core {
+    pub worker_pool: rayon::ThreadPool,
     pub session: SessionCore,
     pub queue: QueueCore,
     pub resolvers: Resolvers,
@@ -128,6 +130,7 @@ pub struct SessionData {
 
     pub priority: i16,
     pub delivery_by: u64,
+    pub notify_by: i64,
     pub future_release: u64,
 
     pub valid_until: Instant,
@@ -197,6 +200,7 @@ impl SessionData {
             messages_sent: 0,
             bytes_left: 0,
             delivery_by: 0,
+            notify_by: 0,
             future_release: 0,
             iprev: None,
             spf_ehlo: None,
@@ -212,8 +216,8 @@ impl Default for State {
 }
 
 pub trait Envelope {
-    fn local_ip(&self) -> &IpAddr;
-    fn remote_ip(&self) -> &IpAddr;
+    fn local_ip(&self) -> IpAddr;
+    fn remote_ip(&self) -> IpAddr;
     fn sender_domain(&self) -> &str;
     fn sender(&self) -> &str;
     fn rcpt_domain(&self) -> &str;

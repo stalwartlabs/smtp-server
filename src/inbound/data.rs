@@ -1,5 +1,6 @@
 use std::{
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -14,42 +15,39 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::{
     core::{Session, SessionAddress},
     queue::{self, Message, SimpleEnvelope},
+    reporting::analysis::AnalyzeReport,
 };
 
 use super::IsTls;
 
 impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
-    pub async fn queue_message(&mut self) -> Result<(), ()> {
+    pub async fn queue_message(&mut self) -> &'static [u8] {
         // Authenticate message
         let dc = &self.core.session.config.data;
         let ac = &self.core.mail_auth;
         let rc = &self.core.report.config;
+        let raw_message = Arc::new(std::mem::take(&mut self.data.message));
 
-        let auth_message =
-            if let Some(auth_message) = AuthenticatedMessage::parse(&self.data.message) {
-                auth_message
-            } else {
-                tracing::info!(parent: &self.span,
+        let auth_message = if let Some(auth_message) = AuthenticatedMessage::parse(&raw_message) {
+            auth_message
+        } else {
+            tracing::info!(parent: &self.span,
                     event = "parse-failed",
                     context = "data",
-                    size = self.data.message.len());
+                    size = raw_message.len());
 
-                self.reset();
-                return self.write(b"550 5.7.7 Failed to parse message.\r\n").await;
-            };
+            return &b"550 5.7.7 Failed to parse message.\r\n"[..];
+        };
 
         // Loop detection
         if auth_message.received_headers_count() > *dc.max_received_headers.eval(self).await {
             tracing::info!(parent: &self.span,
                 event = "loop-detected",
                 context = "data",
-                rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
-                rfc5322_from = auth_message.from(),
+                return_path = self.data.mail_from.as_ref().unwrap().address,
+                from = auth_message.from(),
                 received_headers = auth_message.received_headers_count());
-            self.reset();
-            return self
-                .write(b"450 4.4.6 Too many Received headers. Possible loop detected.\r\n")
-                .await;
+            return b"450 4.4.6 Too many Received headers. Possible loop detected.\r\n";
         }
 
         // Verify DKIM
@@ -74,7 +72,15 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
             if rejected {
                 // This violates the advice of Section 6.1 of RFC6376
-                let message = if dkim_output
+                tracing::info!(parent: &self.span,
+                    event = "failed",
+                    context = "dkim",
+                    return_path = self.data.mail_from.as_ref().unwrap().address,
+                    from = auth_message.from(),
+                    result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>(),
+                    "No passing DKIM signatures found.");
+
+                return if dkim_output
                     .iter()
                     .any(|d| matches!(d.result(), DkimResult::TempError(_)))
                 {
@@ -82,23 +88,12 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 } else {
                     &b"550 5.7.20 No passing DKIM signatures found.\r\n"[..]
                 };
-
-                tracing::info!(parent: &self.span,
-                    event = "auth-failed",
-                    context = "dkim",
-                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
-                    rfc5322_from = auth_message.from(),
-                    result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>(),
-                    "No passing DKIM signatures found.");
-
-                self.reset();
-                return self.write(message).await;
             } else {
                 tracing::debug!(parent: &self.span,
                     event = "verify",
                     context = "dkim",
-                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
-                    rfc5322_from = auth_message.from(),
+                    return_path = self.data.mail_from.as_ref().unwrap().address,
+                    from = auth_message.from(),
                     result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>());
             }
             dkim_output
@@ -115,28 +110,25 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             if arc.is_strict()
                 && !matches!(arc_output.result(), DkimResult::Pass | DkimResult::None)
             {
-                let message = if matches!(arc_output.result(), DkimResult::TempError(_)) {
+                tracing::info!(parent: &self.span,
+                    event = "auth-failed",
+                    context = "arc",
+                    return_path = self.data.mail_from.as_ref().unwrap().address,
+                    from = auth_message.from(),
+                    result = %arc_output.result(),
+                    "ARC validation failed.");
+
+                return if matches!(arc_output.result(), DkimResult::TempError(_)) {
                     &b"451 4.7.29 ARC validation failed.\r\n"[..]
                 } else {
                     &b"550 5.7.29 ARC validation failed.\r\n"[..]
                 };
-
-                tracing::info!(parent: &self.span,
-                    event = "auth-failed",
-                    context = "arc",
-                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
-                    rfc5322_from = auth_message.from(),
-                    result = %arc_output.result(),
-                    "ARC validation failed.");
-
-                self.reset();
-                return self.write(message).await;
             } else {
                 tracing::debug!(parent: &self.span,
                     event = "verify",
                     context = "arc",
-                    rfc5321_from = self.data.mail_from.as_ref().unwrap().address,
-                    rfc5322_from = auth_message.from(),
+                    return_path = self.data.mail_from.as_ref().unwrap().address,
+                    from = auth_message.from(),
                     result = %arc_output.result());
             }
             arc_output.into()
@@ -214,16 +206,16 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 tracing::debug!(parent: &self.span,
                     event = "verify",
                     context = "dmarc",
-                    rfc5321_from = mail_from.address,
-                    rfc5322_from = auth_message.from(),
+                    return_path = mail_from.address,
+                    from = auth_message.from(),
                     dkim_result = %dmarc_output.dkim_result(),
                     spf_result = %dmarc_output.spf_result());
             } else {
                 tracing::info!(parent: &self.span,
                     event = "auth-failed",
                     context = "dmarc",
-                    rfc5321_from = mail_from.address,
-                    rfc5322_from = auth_message.from(),
+                    return_path = mail_from.address,
+                    from = auth_message.from(),
                     dkim_result = %dmarc_output.dkim_result(),
                     spf_result = %dmarc_output.spf_result());
             }
@@ -242,14 +234,20 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             }
 
             if rejected {
-                self.reset();
-                return self
-                    .write(if is_temp_fail {
-                        &b"451 4.7.1 Email temporarily rejected per DMARC policy.\r\n"[..]
-                    } else {
-                        &b"550 5.7.1 Email rejected per DMARC policy.\r\n"[..]
-                    })
-                    .await;
+                return if is_temp_fail {
+                    &b"451 4.7.1 Email temporarily rejected per DMARC policy.\r\n"[..]
+                } else {
+                    &b"550 5.7.1 Email rejected per DMARC policy.\r\n"[..]
+                };
+            }
+        }
+
+        // Analyze reports
+        if self.is_report() {
+            self.core.analyze_report(raw_message.clone());
+            if !rc.analysis.forward {
+                self.data.messages_sent += 1;
+                return b"250 2.0.0 Message queued for delivery.\r\n";
             }
         }
 
@@ -302,8 +300,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                         tracing::info!(parent: &self.span,
                             event = "seal-failed",
                             context = "arc",
-                            rfc5321_from = message.return_path,
-                            rfc5322_from = auth_message.from(),
+                            return_path = message.return_path,
+                            from = auth_message.from(),
                             "Failed to seal message: {}", err);
                     }
                 }
@@ -331,7 +329,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
         // DKIM sign
         for signer in ac.dkim.sign.eval(self).await.iter() {
-            match signer.sign_chained(&[headers.as_ref(), &self.data.message]) {
+            match signer.sign_chained(&[headers.as_ref(), &raw_message]) {
                 Ok(signature) => {
                     signature.write_header(&mut headers);
                 }
@@ -339,45 +337,32 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     tracing::info!(parent: &self.span,
                         event = "sign-failed",
                         context = "dkim",
-                        rfc5321_from = message.return_path,
-                        rfc5322_from = auth_message.from(),
+                        return_path = message.return_path,
+                        from = auth_message.from(),
                         "Failed to sign message: {}", err);
                 }
             }
         }
 
         // Update size
-        message.size = self.data.message.len() + headers.len();
+        message.size = raw_message.len() + headers.len();
         message.size_headers = auth_message.body_offset() + headers.len();
 
         // Verify queue quota
         if self.core.queue.has_quota(&mut message).await {
-            let id = message.id;
             let queue_success = {
                 let _span = self.span.enter();
                 self.core
                     .queue
-                    .queue_message(
-                        message,
-                        vec![headers, std::mem::take(&mut self.data.message)],
-                        &self.span,
-                    )
+                    .queue_message(message, Some(&headers), &raw_message, &self.span)
                     .await
             };
 
             if queue_success {
                 self.data.messages_sent += 1;
-                self.write(
-                    format!(
-                        "250 2.0.0 Message queued for delivery with ID {:X}.\r\n",
-                        id
-                    )
-                    .as_bytes(),
-                )
-                .await?;
+                b"250 2.0.0 Message queued for delivery.\r\n"
             } else {
-                self.write(b"451 4.3.5 Unable to accept message at this time.\r\n")
-                    .await?;
+                b"451 4.3.5 Unable to accept message at this time.\r\n"
             }
         } else {
             tracing::warn!(
@@ -387,12 +372,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 from = message.return_path,
                 "Queue quota exceeded, rejecting message."
             );
-            self.write(b"452 4.3.1 Mail system full, try again later.\r\n")
-                .await?;
+            b"452 4.3.1 Mail system full, try again later.\r\n"
         }
-
-        self.reset();
-        Ok(())
     }
 
     async fn build_message(
@@ -439,26 +420,37 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 };
 
                 // Set expiration time
+                let config = &self.core.queue.config;
                 let expires = Instant::now()
                     + if self.data.delivery_by == 0 {
-                        *self.core.queue.config.expire.eval(&envelope).await
+                        *config.expire.eval(&envelope).await
                     } else {
                         Duration::from_secs(self.data.delivery_by)
                     };
 
                 // Set delayed notification time
-                let notify = queue::Schedule::later(
-                    future_release
-                        + *self
-                            .core
-                            .queue
-                            .config
-                            .notify
-                            .eval(&envelope)
-                            .await
-                            .first()
-                            .unwrap(),
-                );
+                let notify_intervals = config.notify.eval(&envelope).await;
+                let notify_time = future_release
+                    + match self.data.notify_by.cmp(&0) {
+                        std::cmp::Ordering::Equal => *notify_intervals.first().unwrap(),
+                        std::cmp::Ordering::Greater => std::cmp::min(
+                            *notify_intervals.last().unwrap(),
+                            Duration::from_secs(self.data.notify_by as u64),
+                        ),
+                        std::cmp::Ordering::Less => {
+                            let notify_at = -self.data.notify_by as u64;
+                            let last_notify = notify_intervals.last().unwrap().as_secs();
+                            if last_notify > notify_at {
+                                Duration::from_secs(last_notify - notify_at)
+                            } else {
+                                *notify_intervals.first().unwrap()
+                            }
+                        }
+                    };
+                let mut notify = queue::Schedule::later(notify_time);
+                if self.data.notify_by != 0 {
+                    notify.inner = (notify_intervals.len() - 1) as u32;
+                }
 
                 message.domains.push(queue::Domain {
                     retry,

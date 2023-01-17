@@ -64,7 +64,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         if !self.stream.is_tls() {
             response.capabilities |= EXT_START_TLS;
         }
-        let ec = &self.core.session.config.ehlo;
+        let ec = &self.core.session.config.extensions;
         let rc = &self.core.session.config.rcpt;
         let ac = &self.core.session.config.auth;
         let dc = &self.core.session.config.data;

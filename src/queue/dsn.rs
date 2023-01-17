@@ -34,11 +34,11 @@ impl QueueCore {
                     .await;
 
                 // Sign message
-                let message_bytes = attempt
+                let signature = attempt
                     .message
-                    .sign(&self.config.dsn.sign, dsn, &attempt.span)
+                    .sign(&self.config.dsn.sign, &dsn, &attempt.span)
                     .await;
-                self.queue_message(dsn_message, message_bytes, &attempt.span)
+                self.queue_message(dsn_message, signature.as_deref(), &dsn, &attempt.span)
                     .await;
             }
         } else {
@@ -697,7 +697,7 @@ mod test {
             message,
             in_flight: vec![],
         };
-        let config = QueueConfig::default();
+        let config = QueueConfig::test();
 
         // Disabled DSN
         assert!(attempt.build_dsn(&config).await.is_none());

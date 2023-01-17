@@ -2,8 +2,7 @@
 Stalwart SMTP Server
 
 # TODO
-- Analyze reports
-- Null MX
+- Dashmap cleanup
 - RBL
 - Sieve
 - Spam filter

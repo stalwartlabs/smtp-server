@@ -188,13 +188,13 @@ impl Session<TcpStream> {
     }
 
     pub async fn handle_conn(
-        self,
+        mut self,
         tls_acceptor: Option<TlsAcceptor>,
         shutdown_rx: watch::Receiver<bool>,
     ) {
-        if let Some((session, shutdown_rx)) = self.handle_conn_(shutdown_rx).await {
+        if let Some(shutdown_rx) = self.handle_conn_(shutdown_rx).await {
             if let Some(tls_acceptor) = tls_acceptor {
-                if let Ok(session) = session.into_tls(tls_acceptor).await {
+                if let Ok(session) = self.into_tls(tls_acceptor).await {
                     session.handle_conn(shutdown_rx).await;
                 }
             }
@@ -203,16 +203,16 @@ impl Session<TcpStream> {
 }
 
 impl Session<TlsStream<TcpStream>> {
-    pub async fn handle_conn(self, shutdown_rx: watch::Receiver<bool>) {
+    pub async fn handle_conn(mut self, shutdown_rx: watch::Receiver<bool>) {
         self.handle_conn_(shutdown_rx).await;
     }
 }
 
 impl<T: AsyncRead + AsyncWrite + IsTls + Unpin> Session<T> {
     pub async fn handle_conn_(
-        mut self,
+        &mut self,
         mut shutdown_rx: watch::Receiver<bool>,
-    ) -> Option<(Session<T>, watch::Receiver<bool>)> {
+    ) -> Option<watch::Receiver<bool>> {
         let mut buf = vec![0; 8192];
 
         loop {
@@ -228,7 +228,7 @@ impl<T: AsyncRead + AsyncWrite + IsTls + Unpin> Session<T> {
                                         match self.ingest(&buf[..bytes_read]).await {
                                             Ok(true) => (),
                                             Ok(false) => {
-                                                return (self, shutdown_rx).into();
+                                                return (shutdown_rx).into();
                                             }
                                             Err(_) => {
                                                 break;

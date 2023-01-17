@@ -1,7 +1,7 @@
 use super::{
     utils::{AsKey, ParseValue},
-    AggregateFrequency, AggregateReport, Config, ConfigContext, EnvelopeKey, IfBlock, Report,
-    ReportConfig,
+    AddressMatch, AggregateFrequency, AggregateReport, Config, ConfigContext, EnvelopeKey, IfBlock,
+    Report, ReportAnalysis, ReportConfig,
 };
 
 impl Config {
@@ -23,6 +23,10 @@ impl Config {
             EnvelopeKey::LocalIp,
             EnvelopeKey::RecipientDomain,
         ];
+        let mut addresses = Vec::new();
+        for address in self.properties::<AddressMatch>("report.analysis.addresses") {
+            addresses.push(address?.1);
+        }
 
         let default_hostname = self.value_require("server.hostname")?;
         Ok(ReportConfig {
@@ -45,10 +49,12 @@ impl Config {
             hash: self
                 .parse_if_block("report.hash", ctx, &sender_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(32)),
-            analyze: self
-                .values("report.analyze")
-                .map(|(_, v)| v.to_string())
-                .collect(),
+            analysis: ReportAnalysis {
+                addresses,
+                forward: self.property("report.analysis.forward")?.unwrap_or(false),
+                store: self.property("report.analysis.store")?,
+                report_id: 0.into(),
+            },
         })
     }
 
@@ -167,5 +173,26 @@ impl ParseValue for AggregateFrequency {
                 key.as_key()
             )),
         }
+    }
+}
+
+impl ParseValue for AddressMatch {
+    fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
+        if let Some(value) = value.strip_prefix('*').map(|v| v.trim()) {
+            if !value.is_empty() {
+                return Ok(AddressMatch::EndsWith(value.to_lowercase()));
+            }
+        } else if let Some(value) = value.strip_suffix('*').map(|v| v.trim()) {
+            if !value.is_empty() {
+                return Ok(AddressMatch::StartsWith(value.to_lowercase()));
+            }
+        } else if value.contains('@') {
+            return Ok(AddressMatch::Equals(value.trim().to_lowercase()));
+        }
+        Err(format!(
+            "Invalid address match value {:?} for key {:?}.",
+            value,
+            key.as_key()
+        ))
     }
 }

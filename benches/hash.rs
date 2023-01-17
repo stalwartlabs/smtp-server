@@ -38,12 +38,12 @@ struct TestEnvelope {
 }
 
 impl Envelope for TestEnvelope {
-    fn local_ip(&self) -> &IpAddr {
-        &self.local_ip
+    fn local_ip(&self) -> IpAddr {
+        self.local_ip
     }
 
-    fn remote_ip(&self) -> &IpAddr {
-        &self.remote_ip
+    fn remote_ip(&self) -> IpAddr {
+        self.remote_ip
     }
 
     fn sender_domain(&self) -> &str {

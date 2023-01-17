@@ -45,8 +45,8 @@ impl Conditions {
                         }
                         ConditionValue::IpAddrMask(value) => {
                             let ctx_value = match key {
-                                EnvelopeKey::RemoteIp => *envelope.remote_ip(),
-                                EnvelopeKey::LocalIp => *envelope.local_ip(),
+                                EnvelopeKey::RemoteIp => envelope.remote_ip(),
+                                EnvelopeKey::LocalIp => envelope.local_ip(),
                                 _ => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
                             };
 
@@ -133,7 +133,7 @@ impl IpAddrMask {
             IpAddrMask::V4 { addr, mask } => {
                 if *mask == u32::MAX {
                     match remote {
-                        IpAddr::V4(addr) => addr == remote,
+                        IpAddr::V4(remote) => addr == remote,
                         IpAddr::V6(remote) => {
                             if let Some(remote) = remote.to_ipv4_mapped() {
                                 addr == &remote
@@ -160,7 +160,7 @@ impl IpAddrMask {
                 if mask == &u128::MAX {
                     match remote {
                         IpAddr::V6(remote) => remote == addr,
-                        IpAddr::V4(addr) => &addr.to_ipv6_mapped() == remote,
+                        IpAddr::V4(remote) => &remote.to_ipv6_mapped() == addr,
                     }
                 } else {
                     u128::from_be_bytes(match remote {
@@ -198,12 +198,12 @@ mod tests {
     }
 
     impl Envelope for TestEnvelope {
-        fn local_ip(&self) -> &IpAddr {
-            &self.local_ip
+        fn local_ip(&self) -> IpAddr {
+            self.local_ip
         }
 
-        fn remote_ip(&self) -> &IpAddr {
-            &self.remote_ip
+        fn remote_ip(&self) -> IpAddr {
+            self.remote_ip
         }
 
         fn sender_domain(&self) -> &str {
