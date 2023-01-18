@@ -297,7 +297,6 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         self.data.message = Vec::with_capacity(0);
         self.data.priority = 0;
         self.data.delivery_by = 0;
-        self.data.notify_by = 0;
         self.data.future_release = 0;
     }
 

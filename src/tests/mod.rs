@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use dashmap::DashMap;
 use mail_auth::{
@@ -32,6 +32,7 @@ pub mod session;
 pub trait ParseTestConfig {
     fn parse_if<T: Default + ParseValues>(&self, ctx: &ConfigContext) -> IfBlock<T>;
     fn parse_throttle(&self, ctx: &ConfigContext) -> Vec<Throttle>;
+    fn parse_quota(&self, ctx: &ConfigContext) -> QueueQuotas;
 }
 
 impl ParseTestConfig for &str {
@@ -81,6 +82,10 @@ impl ParseTestConfig for &str {
                 u16::MAX,
             )
             .unwrap()
+    }
+
+    fn parse_quota(&self, ctx: &ConfigContext) -> QueueQuotas {
+        Config::parse(self).unwrap().parse_queue_quota(ctx).unwrap()
     }
 }
 
@@ -151,6 +156,7 @@ impl SessionConfig {
                 future_release: IfBlock::new(None),
                 deliver_by: IfBlock::new(None),
                 mt_priority: IfBlock::new(None),
+                dsn: IfBlock::new(true),
             },
             auth: Auth {
                 script: IfBlock::new(None),
@@ -341,6 +347,31 @@ impl AggregateReport {
             send: IfBlock::default(),
             sign: IfBlock::default(),
             max_size: IfBlock::default(),
+        }
+    }
+}
+
+pub struct TempDir {
+    pub temp_dir: PathBuf,
+    pub delete: bool,
+}
+
+pub fn make_temp_dir(name: &str, delete: bool) -> TempDir {
+    let mut temp_dir = std::env::temp_dir();
+    temp_dir.push(name);
+    if !temp_dir.exists() {
+        let _ = std::fs::create_dir(&temp_dir);
+    } else if delete {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir(&temp_dir);
+    }
+    TempDir { temp_dir, delete }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        if self.delete {
+            let _ = std::fs::remove_dir_all(&self.temp_dir);
         }
     }
 }

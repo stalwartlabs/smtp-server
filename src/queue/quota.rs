@@ -75,7 +75,7 @@ impl QueueCore {
         id: u64,
         refs: &mut Vec<UsedQuota>,
     ) -> bool {
-        if quota.conditions.conditions.is_empty() || quota.conditions.eval(envelope).await {
+        if !quota.conditions.conditions.is_empty() && quota.conditions.eval(envelope).await {
             match self.quota.entry(quota.new_key(envelope)) {
                 Entry::Occupied(e) => {
                     if let Some(qref) = e.get().is_allowed(id, size) {

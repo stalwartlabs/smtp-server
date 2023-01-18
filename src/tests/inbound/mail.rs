@@ -1,9 +1,10 @@
 use std::{
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use mail_auth::{common::parse::TxtRecordParser, spf::Spf, IprevResult, SpfResult};
+use smtp_proto::{MAIL_BY_NOTIFY, MAIL_BY_RETURN, MAIL_REQUIRETLS};
 
 use crate::{
     config::{ConfigContext, IfBlock, VerifyStrategy},
@@ -49,6 +50,22 @@ async fn mail() {
     core.mail_auth.iprev.verify = r"[{if = 'remote-ip', eq = '10.0.0.2', then = 'strict'},
     {else = 'relaxed'}]"
         .parse_if(&ConfigContext::default());
+    config.extensions.future_release = r"[{if = 'remote-ip', eq = '10.0.0.2', then = '1d'},
+    {else = false}]"
+        .parse_if(&ConfigContext::default());
+    config.extensions.deliver_by = r"[{if = 'remote-ip', eq = '10.0.0.2', then = '1d'},
+    {else = false}]"
+        .parse_if(&ConfigContext::default());
+    config.extensions.requiretls = r"[{if = 'remote-ip', eq = '10.0.0.2', then = true},
+    {else = false}]"
+        .parse_if(&ConfigContext::default());
+    config.extensions.mt_priority = r"[{if = 'remote-ip', eq = '10.0.0.2', then = 'nsep'},
+    {else = false}]"
+        .parse_if(&ConfigContext::default());
+    config.data.max_message_size = r"[{if = 'remote-ip', eq = '10.0.0.2', then = 2048},
+    {else = 1024}]"
+        .parse_if(&ConfigContext::default());
+
     config.throttle.mail_from = r"[[throttle]]
     match = {if = 'remote-ip', eq = '10.0.0.1'}
     key = 'sender'
@@ -97,8 +114,7 @@ async fn mail() {
 
     // Test rate limit
     for n in 0..2 {
-        session.ingest(b"RSET\r\n").await.unwrap();
-        session.response().assert_code("250");
+        session.rset().await;
         session
             .ingest(b"MAIL FROM:<bill@foobar.org>\r\n")
             .await
@@ -107,6 +123,28 @@ async fn mail() {
             .response()
             .assert_code(if n == 0 { "250" } else { "451 4.4.5" });
     }
+
+    // Test disabled extensions
+    for param in [
+        "HOLDFOR=123",
+        "HOLDUNTIL=49374347",
+        "MT-PRIORITY=3",
+        "BY=120;R",
+        "REQUIRETLS",
+    ] {
+        session
+            .ingest(format!("MAIL FROM:<params@foobar.org> {}\r\n", param).as_bytes())
+            .await
+            .unwrap();
+        session.response().assert_code("501 5.5.4");
+    }
+
+    // Test size with a large value
+    session
+        .ingest(b"MAIL FROM:<bill@foobar.org> SIZE=1512\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("552 5.3.4");
 
     // Test strict IPREV
     session.data.remote_ip = "10.0.0.2".parse().unwrap();
@@ -136,8 +174,111 @@ async fn mail() {
         Instant::now() + Duration::from_secs(5),
     );
     session
-        .ingest(b"MAIL FROM:<jane@foobar.org>\r\n")
+        .ingest(b"MAIL FROM:<Jane@FooBar.org>\r\n")
         .await
         .unwrap();
     session.response().assert_code("250");
+    let mail_from = session.data.mail_from.as_ref().unwrap();
+    assert_eq!(mail_from.domain, "foobar.org");
+    assert_eq!(mail_from.address, "Jane@FooBar.org");
+    assert_eq!(mail_from.address_lcase, "jane@foobar.org");
+    session.rset().await;
+
+    // Test SIZE extension
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> SIZE=1023\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("250");
+    session.rset().await;
+
+    // Test MT-PRIORITY extension
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> MT-PRIORITY=-3\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("250");
+    assert_eq!(session.data.priority, -3);
+    session.rset().await;
+
+    // Test REQUIRETLS extension
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> REQUIRETLS\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("250");
+    assert!((session.data.mail_from.as_ref().unwrap().flags & MAIL_REQUIRETLS) != 0);
+    session.rset().await;
+
+    // Test DELIVERBY extension with by-mode=R
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> BY=120;R\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("250");
+    assert!((session.data.mail_from.as_ref().unwrap().flags & MAIL_BY_RETURN) != 0);
+    assert_eq!(session.data.delivery_by, 120);
+    session.rset().await;
+
+    // Test DELIVERBY extension with by-mode=N
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> BY=-456;N\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("250");
+    assert!((session.data.mail_from.as_ref().unwrap().flags & MAIL_BY_NOTIFY) != 0);
+    assert_eq!(session.data.delivery_by, -456);
+    session.rset().await;
+
+    // Test DELIVERBY extension with invalid by-mode=R
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> BY=-1;R\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("501 5.5.4");
+    session.rset().await;
+
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> BY=99999;R\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("501 5.5.4");
+    session.rset().await;
+
+    // Test FUTURERELEASE extension with HOLDFOR
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> HOLDFOR=1234\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("250");
+    assert_eq!(session.data.future_release, 1234);
+    session.rset().await;
+
+    // Test FUTURERELEASE extension with invalid HOLDFOR falue
+    session
+        .ingest(b"MAIL FROM:<jane@foobar.org> HOLDFOR=99999\r\n")
+        .await
+        .unwrap();
+    session.response().assert_code("501 5.5.4");
+    session.rset().await;
+
+    // Test FUTURERELEASE extension with HOLDUNTIL
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    session
+        .ingest(format!("MAIL FROM:<jane@foobar.org> HOLDUNTIL={}\r\n", now + 10).as_bytes())
+        .await
+        .unwrap();
+    session.response().assert_code("250");
+    assert_eq!(session.data.future_release, 10);
+    session.rset().await;
+
+    // Test FUTURERELEASE extension with invalud HOLDUNTIL value
+    session
+        .ingest(format!("MAIL FROM:<jane@foobar.org> HOLDUNTIL={}\r\n", now + 99999).as_bytes())
+        .await
+        .unwrap();
+    session.response().assert_code("501 5.5.4");
+    session.rset().await;
 }

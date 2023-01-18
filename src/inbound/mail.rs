@@ -1,5 +1,7 @@
+use std::time::SystemTime;
+
 use mail_auth::{IprevOutput, IprevResult, SpfOutput, SpfResult};
-use smtp_proto::{MailFrom, MAIL_BY_NOTIFY, MAIL_BY_RETURN, MAIL_BY_TRACE, MAIL_REQUIRETLS};
+use smtp_proto::{MailFrom, MAIL_BY_NOTIFY, MAIL_BY_RETURN, MAIL_REQUIRETLS};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::core::{Session, SessionAddress};
@@ -73,6 +75,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             (String::new(), String::new(), String::new())
         };
 
+        let has_dsn = from.env_id.is_some();
         self.data.mail_from = SessionAddress {
             address,
             address_lcase,
@@ -84,28 +87,100 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
 
         // Validate parameters
         let config = &self.core.session.config.extensions;
+        let config_data = &self.core.session.config.data;
         if (from.flags & MAIL_REQUIRETLS) != 0 && !*config.requiretls.eval(self).await {
-            //todo
+            self.data.mail_from = None;
+            return self
+                .write(b"501 5.5.4 REQUIRETLS has been disabled.\r\n")
+                .await;
         }
-        if (from.flags & (MAIL_BY_NOTIFY | MAIL_BY_RETURN | MAIL_BY_TRACE)) != 0 {
+        if (from.flags & (MAIL_BY_NOTIFY | MAIL_BY_RETURN)) != 0 {
             if let Some(duration) = config.deliver_by.eval(self).await {
-                if (from.flags & MAIL_BY_RETURN) != 0 {
-                    if from.by > 0 {
-                        let deliver_by = from.by as u64;
-                        if deliver_by <= duration.as_secs() {
-                            self.data.delivery_by = deliver_by;
-                        } else {
-                            // err
-                        }
-                    } else {
-                        // err
-                    }
+                if from.by.checked_abs().unwrap_or(0) as u64 <= duration.as_secs()
+                    && (from.by.is_positive() || (from.flags & MAIL_BY_NOTIFY) != 0)
+                {
+                    self.data.delivery_by = from.by;
                 } else {
-                    self.data.notify_by = from.by;
+                    self.data.mail_from = None;
+                    return self
+                        .write(
+                            format!(
+                                "501 5.5.4 BY parameter exceeds maximum of {} seconds.\r\n",
+                                duration.as_secs()
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
                 }
             } else {
-                // err
+                self.data.mail_from = None;
+                return self
+                    .write(b"501 5.5.4 DELIVERBY extension has been disabled.\r\n")
+                    .await;
             }
+        }
+        if from.mt_priority != 0 {
+            if config.mt_priority.eval(self).await.is_some() {
+                if (-6..6).contains(&from.mt_priority) {
+                    self.data.priority = from.mt_priority as i16;
+                } else {
+                    self.data.mail_from = None;
+                    return self.write(b"501 5.5.4 Invalid priority value.\r\n").await;
+                }
+            } else {
+                self.data.mail_from = None;
+                return self
+                    .write(b"501 5.5.4 MT-PRIORITY extension has been disabled.\r\n")
+                    .await;
+            }
+        }
+        if from.size > 0 && from.size > *config_data.max_message_size.eval(self).await {
+            self.data.mail_from = None;
+            return self
+                .write(b"552 5.3.4 Message too big for system.\r\n")
+                .await;
+        }
+        if from.hold_for != 0 || from.hold_until != 0 {
+            if let Some(max_hold) = config.future_release.eval(self).await {
+                let max_hold = max_hold.as_secs();
+                let hold_for = if from.hold_for != 0 {
+                    from.hold_for
+                } else {
+                    let now = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs());
+                    if from.hold_until > now {
+                        from.hold_until - now
+                    } else {
+                        0
+                    }
+                };
+                if hold_for <= max_hold {
+                    self.data.future_release = hold_for;
+                } else {
+                    self.data.mail_from = None;
+                    return self
+                        .write(
+                            format!(
+                                "501 5.5.4 Requested hold time exceeds maximum of {} seconds.\r\n",
+                                max_hold
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
+                }
+            } else {
+                self.data.mail_from = None;
+                return self
+                    .write(b"501 5.5.4 FUTURERELEASE extension has been disabled.\r\n")
+                    .await;
+            }
+        }
+        if has_dsn && !*config.dsn.eval(self).await {
+            self.data.mail_from = None;
+            return self
+                .write(b"501 5.5.4 DSN extension has been disabled.\r\n")
+                .await;
         }
 
         if self.is_allowed().await {

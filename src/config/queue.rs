@@ -250,7 +250,7 @@ impl Config {
         }
     }
 
-    fn parse_queue_quota(&self, ctx: &ConfigContext) -> super::Result<QueueQuotas> {
+    pub fn parse_queue_quota(&self, ctx: &ConfigContext) -> super::Result<QueueQuotas> {
         let mut capacities = QueueQuotas {
             sender: Vec::new(),
             rcpt: Vec::new(),

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -105,6 +105,53 @@ impl Session<DummyIo> {
 
     pub fn write_rx(&mut self, data: &str) {
         self.stream.rx_buf.extend_from_slice(data.as_bytes());
+    }
+
+    pub async fn rset(&mut self) {
+        self.ingest(b"RSET\r\n").await.unwrap();
+        self.response().assert_code("250");
+    }
+
+    pub async fn ehlo(&mut self, host: &str) {
+        self.ingest(format!("EHLO {}\r\n", host).as_bytes())
+            .await
+            .unwrap();
+        self.response().assert_code("250");
+    }
+
+    pub async fn mail_from(&mut self, from: &str, expected_code: &str) {
+        self.ingest(format!("MAIL FROM:<{}>\r\n", from).as_bytes())
+            .await
+            .unwrap();
+        self.response().assert_code(expected_code);
+    }
+
+    pub async fn rcpt_to(&mut self, to: &str, expected_code: &str) {
+        self.ingest(format!("RCPT TO:<{}>\r\n", to).as_bytes())
+            .await
+            .unwrap();
+        self.response().assert_code(expected_code);
+    }
+
+    pub async fn send_message(&mut self, from: &str, to: &str, data: &str, expected_code: &str) {
+        self.mail_from(from, "250").await;
+        self.rcpt_to(to, "250").await;
+        self.ingest(b"DATA\r\n").await.unwrap();
+        self.response().assert_code("354");
+        if let Some(file) = data.strip_prefix("test:") {
+            let mut test_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            test_file.push("resources");
+            test_file.push("tests");
+            test_file.push("inbound");
+            test_file.push(format!("{}.eml", file));
+            self.ingest(&tokio::fs::read(test_file).await.unwrap())
+                .await
+                .unwrap();
+        } else {
+            self.ingest(data.as_bytes()).await.unwrap();
+        }
+        self.ingest(b"\r\n.\r\n").await.unwrap();
+        self.response().assert_code(expected_code);
     }
 }
 

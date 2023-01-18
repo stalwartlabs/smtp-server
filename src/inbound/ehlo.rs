@@ -94,6 +94,11 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             response.capabilities |= EXT_REQUIRE_TLS;
         }
 
+        // DSN
+        if *ec.dsn.eval(self).await {
+            response.capabilities |= EXT_DSN;
+        }
+
         // Authentication
         response.auth_mechanisms = *ac.mechanisms.eval(self).await;
         if response.auth_mechanisms != 0 {

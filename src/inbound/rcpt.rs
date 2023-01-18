@@ -1,4 +1,6 @@
-use smtp_proto::RcptTo;
+use smtp_proto::{
+    RcptTo, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS,
+};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::core::{Session, SessionAddress};
@@ -9,6 +11,18 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             return self.write(b"503 5.5.1 MAIL is required first.\r\n").await;
         } else if self.data.rcpt_to.len() >= self.params.rcpt_max {
             return self.write(b"451 4.5.3 Too many recipients.\r\n").await;
+        }
+
+        // Verify parameters
+        if ((to.flags
+            & (RCPT_NOTIFY_DELAY | RCPT_NOTIFY_NEVER | RCPT_NOTIFY_SUCCESS | RCPT_NOTIFY_FAILURE)
+            != 0)
+            || to.orcpt.is_some())
+            && !self.params.rcpt_dsn
+        {
+            return self
+                .write(b"501 5.5.4 DSN extension has been disabled.\r\n")
+                .await;
         }
 
         // Build RCPT

@@ -135,6 +135,9 @@ impl Config {
             pipelining: self
                 .parse_if_block("session.extensions.pipelining", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
+            dsn: self
+                .parse_if_block("session.extensions.dsn", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(true)),
             chunking: self
                 .parse_if_block("session.extensions.chunking", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),

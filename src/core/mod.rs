@@ -129,8 +129,7 @@ pub struct SessionData {
     pub auth_errors: usize,
 
     pub priority: i16,
-    pub delivery_by: u64,
-    pub notify_by: i64,
+    pub delivery_by: i64,
     pub future_release: u64,
 
     pub valid_until: Instant,
@@ -171,6 +170,7 @@ pub struct SessionParameters {
     pub rcpt_errors_max: usize,
     pub rcpt_errors_wait: Duration,
     pub rcpt_max: usize,
+    pub rcpt_dsn: bool,
     pub rcpt_lookup_domain: Option<Arc<List>>,
     pub rcpt_lookup_addresses: Option<Arc<List>>,
     pub rcpt_lookup_expn: Option<Arc<List>>,
@@ -200,7 +200,6 @@ impl SessionData {
             messages_sent: 0,
             bytes_left: 0,
             delivery_by: 0,
-            notify_by: 0,
             future_release: 0,
             iprev: None,
             spf_ehlo: None,

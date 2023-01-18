@@ -37,6 +37,7 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
         self.params.rcpt_lookup_addresses = rc.lookup_addresses.eval(self).await.clone();
         self.params.rcpt_lookup_expn = rc.lookup_expn.eval(self).await.clone();
         self.params.rcpt_lookup_vrfy = rc.lookup_vrfy.eval(self).await.clone();
+        self.params.rcpt_dsn = *self.core.session.config.extensions.dsn.eval(self).await;
 
         self.params.max_message_size = *self
             .core

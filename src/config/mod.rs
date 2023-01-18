@@ -245,6 +245,7 @@ pub struct Extensions {
     pub pipelining: IfBlock<bool>,
     pub chunking: IfBlock<bool>,
     pub requiretls: IfBlock<bool>,
+    pub dsn: IfBlock<bool>,
     pub no_soliciting: IfBlock<Option<String>>,
     pub future_release: IfBlock<Option<Duration>>,
     pub deliver_by: IfBlock<Option<Duration>>,

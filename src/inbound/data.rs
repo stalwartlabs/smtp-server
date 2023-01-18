@@ -9,7 +9,9 @@ use mail_auth::{
     DmarcResult, ReceivedSpf, SpfResult,
 };
 use mail_builder::headers::{date::Date, message_id::generate_message_id_header};
-use smtp_proto::{RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS};
+use smtp_proto::{
+    MAIL_BY_RETURN, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS,
+};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
@@ -350,15 +352,12 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
         // Verify queue quota
         if self.core.queue.has_quota(&mut message).await {
-            let queue_success = {
-                let _span = self.span.enter();
-                self.core
-                    .queue
-                    .queue_message(message, Some(&headers), &raw_message, &self.span)
-                    .await
-            };
-
-            if queue_success {
+            if self
+                .core
+                .queue
+                .queue_message(message, Some(&headers), &raw_message, &self.span)
+                .await
+            {
                 self.data.messages_sent += 1;
                 b"250 2.0.0 Message queued for delivery.\r\n"
             } else {
@@ -376,7 +375,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         }
     }
 
-    async fn build_message(
+    pub async fn build_message(
         &self,
         mail_from: SessionAddress,
         mut rcpt_to: Vec<SessionAddress>,
@@ -419,38 +418,42 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     queue::Schedule::later(future_release)
                 };
 
-                // Set expiration time
+                // Set expiration and notification times
                 let config = &self.core.queue.config;
-                let expires = Instant::now()
-                    + if self.data.delivery_by == 0 {
-                        *config.expire.eval(&envelope).await
-                    } else {
-                        Duration::from_secs(self.data.delivery_by)
-                    };
-
-                // Set delayed notification time
                 let notify_intervals = config.notify.eval(&envelope).await;
-                let notify_time = future_release
-                    + match self.data.notify_by.cmp(&0) {
-                        std::cmp::Ordering::Equal => *notify_intervals.first().unwrap(),
-                        std::cmp::Ordering::Greater => std::cmp::min(
-                            *notify_intervals.last().unwrap(),
-                            Duration::from_secs(self.data.notify_by as u64),
-                        ),
-                        std::cmp::Ordering::Less => {
-                            let notify_at = -self.data.notify_by as u64;
-                            let last_notify = notify_intervals.last().unwrap().as_secs();
-                            if last_notify > notify_at {
-                                Duration::from_secs(last_notify - notify_at)
-                            } else {
-                                *notify_intervals.first().unwrap()
-                            }
+                let (notify, expires) = if self.data.delivery_by == 0 {
+                    (
+                        queue::Schedule::later(future_release + *notify_intervals.first().unwrap()),
+                        Instant::now() + *config.expire.eval(&envelope).await,
+                    )
+                } else if (message.flags & MAIL_BY_RETURN) != 0 {
+                    (
+                        queue::Schedule::later(future_release + *notify_intervals.first().unwrap()),
+                        Instant::now() + Duration::from_secs(self.data.delivery_by as u64),
+                    )
+                } else {
+                    let expire = *config.expire.eval(&envelope).await;
+                    let expire_secs = expire.as_secs();
+                    let notify = if self.data.delivery_by.is_positive() {
+                        let notify_at = self.data.delivery_by as u64;
+                        if expire_secs > notify_at {
+                            Duration::from_secs(notify_at)
+                        } else {
+                            *notify_intervals.first().unwrap()
+                        }
+                    } else {
+                        let notify_at = -self.data.delivery_by as u64;
+                        if expire_secs > notify_at {
+                            Duration::from_secs(expire_secs - notify_at)
+                        } else {
+                            *notify_intervals.first().unwrap()
                         }
                     };
-                let mut notify = queue::Schedule::later(notify_time);
-                if self.data.notify_by != 0 {
-                    notify.inner = (notify_intervals.len() - 1) as u32;
-                }
+                    let mut notify = queue::Schedule::later(future_release + notify);
+                    notify.inner = (notify_intervals.len() - 1) as u32; // Disable further notification attempts
+
+                    (notify, Instant::now() + expire)
+                };
 
                 message.domains.push(queue::Domain {
                     retry,
