@@ -18,7 +18,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     for (pos, value) in values.iter().enumerate() {
                         let _ = write!(
                             result,
-                            "250{}{}\n\n",
+                            "250{}{}\r\n",
                             if pos == values.len() - 1 { " " } else { "-" },
                             value
                         );
@@ -68,7 +68,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     for (pos, value) in values.iter().enumerate() {
                         let _ = write!(
                             result,
-                            "250{}{}\n\n",
+                            "250{}{}\r\n",
                             if pos == values.len() - 1 { " " } else { "-" },
                             value
                         );

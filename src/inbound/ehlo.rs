@@ -100,13 +100,15 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         }
 
         // Authentication
-        response.auth_mechanisms = *ac.mechanisms.eval(self).await;
-        if response.auth_mechanisms != 0 {
-            if !self.stream.is_tls() {
-                response.auth_mechanisms &= !(AUTH_PLAIN | AUTH_LOGIN);
-            }
+        if self.data.authenticated_as.is_empty() {
+            response.auth_mechanisms = *ac.mechanisms.eval(self).await;
             if response.auth_mechanisms != 0 {
-                response.capabilities |= EXT_AUTH;
+                if !self.stream.is_tls() {
+                    response.auth_mechanisms &= !(AUTH_PLAIN | AUTH_LOGIN);
+                }
+                if response.auth_mechanisms != 0 {
+                    response.capabilities |= EXT_AUTH;
+                }
             }
         }
 

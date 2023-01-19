@@ -32,6 +32,7 @@ pub enum Event {
     Stop,
 }
 
+#[derive(Debug)]
 pub struct DmarcEvent {
     pub domain: String,
     pub report_record: Record,
@@ -39,6 +40,7 @@ pub struct DmarcEvent {
     pub interval: AggregateFrequency,
 }
 
+#[derive(Debug)]
 pub struct TlsEvent {
     pub domain: String,
     pub policy: PolicyType,
@@ -47,7 +49,7 @@ pub struct TlsEvent {
     pub interval: AggregateFrequency,
 }
 
-#[derive(Hash)]
+#[derive(Debug, Hash)]
 pub enum PolicyType {
     Tlsa(Option<Arc<Tlsa>>),
     Sts(Option<Arc<Policy>>),

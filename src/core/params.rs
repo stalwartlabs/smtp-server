@@ -24,6 +24,11 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
         self.params.auth_lookup = ac.lookup.eval(self).await.clone();
         self.params.auth_errors_max = *ac.errors_max.eval(self).await;
         self.params.auth_errors_wait = *ac.errors_wait.eval(self).await;
+
+        // VRFY/EXPN parameters
+        let rc = &self.core.session.config.rcpt;
+        self.params.rcpt_lookup_expn = rc.lookup_expn.eval(self).await.clone();
+        self.params.rcpt_lookup_vrfy = rc.lookup_vrfy.eval(self).await.clone();
     }
 
     pub async fn eval_rcpt_params(&mut self) {

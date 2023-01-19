@@ -362,8 +362,10 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
                 }
             }
             Entry::Vacant(e) => {
+                let mut limiter = RateLimiter::new(rate.requests, rate.period.as_secs());
+                limiter.is_allowed();
                 e.insert(Limiter {
-                    rate: RateLimiter::new(rate.requests, rate.period.as_secs()).into(),
+                    rate: limiter.into(),
                     concurrency: None,
                 });
                 true

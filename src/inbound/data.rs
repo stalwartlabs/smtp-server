@@ -73,7 +73,6 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             }
 
             if rejected {
-                // This violates the advice of Section 6.1 of RFC6376
                 tracing::info!(parent: &self.span,
                     event = "failed",
                     context = "dkim",
@@ -82,6 +81,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>(),
                     "No passing DKIM signatures found.");
 
+                // 'Strict' mode violates the advice of Section 6.1 of RFC6376
                 return if dkim_output
                     .iter()
                     .any(|d| matches!(d.result(), DkimResult::TempError(_)))

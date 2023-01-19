@@ -975,7 +975,7 @@ dependencies = [
  "ed25519-dalek",
  "flate2",
  "lru-cache",
- "mail-builder 0.2.4 (git+https://github.com/stalwartlabs/mail-builder)",
+ "mail-builder 0.2.5 (git+https://github.com/stalwartlabs/mail-builder)",
  "mail-parser",
  "parking_lot",
  "quick-xml",
@@ -990,15 +990,15 @@ dependencies = [
 
 [[package]]
 name = "mail-builder"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "gethostname",
 ]
 
 [[package]]
 name = "mail-builder"
-version = "0.2.4"
-source = "git+https://github.com/stalwartlabs/mail-builder#057939b7b0a9aa952f059250d5342c7766710b39"
+version = "0.2.5"
+source = "git+https://github.com/stalwartlabs/mail-builder#589dc325508c905c6248d13596a82cd1e89e8315"
 dependencies = [
  "gethostname",
 ]
@@ -1787,7 +1787,7 @@ dependencies = [
  "dashmap",
  "lru-cache",
  "mail-auth",
- "mail-builder 0.2.4",
+ "mail-builder 0.2.5",
  "mail-parser",
  "mail-send",
  "num_cpus",
@@ -2138,9 +2138,9 @@ checksum = "497961ef93d974e23eb6f433eb5fe1b7930b659f06d12dec6fc44a8f554c0bba"
 
 [[package]]
 name = "unicode-bidi"
-version = "0.3.8"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "099b7128301d285f79ddd55b9a83d5e6b9e97c92e0ea0daebee7263e932de992"
+checksum = "0046be40136ef78dc325e0edefccf84ccddacd0afcc1ca54103fa3c61bbdab1d"
 
 [[package]]
 name = "unicode-ident"

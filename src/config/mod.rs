@@ -65,6 +65,8 @@ pub struct Host {
     pub tls_allow_invalid_certs: bool,
     pub username: Option<String>,
     pub secret: Option<String>,
+    pub max_errors: usize,
+    pub max_requests: usize,
     pub cache_entries: usize,
     pub cache_ttl_positive: Duration,
     pub cache_ttl_negative: Duration,
@@ -180,20 +182,20 @@ pub enum EnvelopeKey {
     Priority,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IfThen<T: Default> {
     pub conditions: Conditions,
     pub then: T,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Conditions {
     pub conditions: Vec<Condition>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IfBlock<T: Default> {
     pub if_then: Vec<IfThen<T>>,

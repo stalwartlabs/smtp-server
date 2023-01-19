@@ -27,6 +27,7 @@ use crate::{
 };
 
 pub mod inbound;
+pub mod remote;
 pub mod session;
 
 pub trait ParseTestConfig {

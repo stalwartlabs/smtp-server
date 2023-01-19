@@ -112,11 +112,18 @@ impl Session<DummyIo> {
         self.response().assert_code("250");
     }
 
-    pub async fn ehlo(&mut self, host: &str) {
+    pub async fn cmd(&mut self, cmd: &str, expected_code: &str) -> Vec<String> {
+        self.ingest(format!("{}\r\n", cmd).as_bytes())
+            .await
+            .unwrap();
+        self.response().assert_code(expected_code)
+    }
+
+    pub async fn ehlo(&mut self, host: &str) -> Vec<String> {
         self.ingest(format!("EHLO {}\r\n", host).as_bytes())
             .await
             .unwrap();
-        self.response().assert_code("250");
+        self.response().assert_code("250")
     }
 
     pub async fn mail_from(&mut self, from: &str, expected_code: &str) {
@@ -139,12 +146,7 @@ impl Session<DummyIo> {
         self.ingest(b"DATA\r\n").await.unwrap();
         self.response().assert_code("354");
         if let Some(file) = data.strip_prefix("test:") {
-            let mut test_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            test_file.push("resources");
-            test_file.push("tests");
-            test_file.push("inbound");
-            test_file.push(format!("{}.eml", file));
-            self.ingest(&tokio::fs::read(test_file).await.unwrap())
+            self.ingest(load_test_message(file).as_bytes())
                 .await
                 .unwrap();
         } else {
@@ -153,6 +155,15 @@ impl Session<DummyIo> {
         self.ingest(b"\r\n.\r\n").await.unwrap();
         self.response().assert_code(expected_code);
     }
+}
+
+pub fn load_test_message(file: &str) -> String {
+    let mut test_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    test_file.push("resources");
+    test_file.push("tests");
+    test_file.push("inbound");
+    test_file.push(format!("{}.eml", file));
+    std::fs::read_to_string(test_file).unwrap()
 }
 
 pub trait VerifyResponse {

@@ -19,18 +19,21 @@ pub mod quota;
 pub mod spool;
 pub mod throttle;
 
+#[derive(Debug)]
 pub enum Event {
     Queue(Schedule<Box<Message>>),
     Done(WorkerResult),
     Stop,
 }
 
+#[derive(Debug)]
 pub enum WorkerResult {
     Done,
     Retry(Schedule<Box<Message>>),
     OnHold(OnHold),
 }
 
+#[derive(Debug)]
 pub struct OnHold {
     pub next_due: Option<Instant>,
     pub limiters: Vec<ConcurrencyLimiter>,

@@ -42,6 +42,10 @@ impl Config {
             timeout: self
                 .property(("remote", id, "timeout"))?
                 .unwrap_or(Duration::from_secs(60)),
+            max_errors: self.property(("remote", id, "limits.errors"))?.unwrap_or(3),
+            max_requests: self
+                .property(("remote", id, "limits.requests"))?
+                .unwrap_or(50),
             channel_tx,
             channel_rx,
             ref_count: 0,

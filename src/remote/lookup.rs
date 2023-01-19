@@ -1,10 +1,10 @@
 use std::{collections::VecDeque, fmt::Debug, sync::Arc, time::Duration};
 
 use crate::config::{Config, Host, List, ServerProtocol};
-use mail_send::{smtp::tls::build_tls_connector, Credentials, SmtpClientBuilder};
+use mail_send::{smtp::tls::build_tls_connector, Credentials};
 use tokio::sync::{mpsc, oneshot};
 
-use super::{cache::LookupCache, imap::ImapAuthClientBuilder};
+use super::{cache::LookupCache, imap::ImapAuthClientBuilder, smtp::SmtpClientBuilder};
 
 #[derive(Debug)]
 pub enum Event {
@@ -27,7 +27,7 @@ pub enum Item {
     Expand(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LookupResult {
     True,
     False,
@@ -40,9 +40,9 @@ pub struct Lookup {
     pub result: oneshot::Sender<LookupResult>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LookupChannel {
-    tx: mpsc::Sender<Event>,
+    pub tx: mpsc::Sender<Event>,
 }
 
 #[derive(Clone)]
@@ -72,14 +72,18 @@ impl Host {
                     RemoteHost {
                         tx,
                         host: Arc::new(SmtpClientBuilder {
-                            addr: format!("{}:{}", self.address, self.port),
-                            timeout: self.timeout,
-                            tls_connector: build_tls_connector(self.tls_allow_invalid_certs),
-                            tls_hostname: self.address,
-                            tls_implicit: self.tls_implicit,
-                            is_lmtp: matches!(self.protocol, ServerProtocol::Lmtp),
-                            credentials: None,
-                            local_host,
+                            builder: mail_send::SmtpClientBuilder {
+                                addr: format!("{}:{}", self.address, self.port),
+                                timeout: self.timeout,
+                                tls_connector: build_tls_connector(self.tls_allow_invalid_certs),
+                                tls_hostname: self.address,
+                                tls_implicit: self.tls_implicit,
+                                is_lmtp: matches!(self.protocol, ServerProtocol::Lmtp),
+                                credentials: None,
+                                local_host,
+                            },
+                            max_rcpt: self.max_requests,
+                            max_auth_errors: self.max_errors,
                         }),
                     }
                     .run(
@@ -224,7 +228,27 @@ impl List {
     pub async fn lookup(&self, item: Item) -> Option<LookupResult> {
         match self {
             List::Remote(tx) => tx.lookup(item).await,
+
+            #[cfg(not(test))]
             List::Local(_) => Some(LookupResult::False),
+
+            #[cfg(test)]
+            List::Local(list) => match item {
+                Item::Exists(item) => Some(list.contains(&item).into()),
+                Item::Verify(item) | Item::Expand(item) => {
+                    for list_item in list {
+                        if let Some((prefix, suffix)) = list_item.split_once(':') {
+                            if prefix == item {
+                                return Some(LookupResult::Values(Arc::new(
+                                    suffix.split(',').map(|i| i.to_string()).collect::<Vec<_>>(),
+                                )));
+                            }
+                        }
+                    }
+                    Some(LookupResult::False)
+                }
+                Item::Authenticate(_) => unreachable!(),
+            },
         }
     }
 

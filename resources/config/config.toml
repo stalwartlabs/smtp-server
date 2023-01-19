@@ -135,7 +135,7 @@ verify = "strict"
 verify = "strict"
 sign = true
 
-[auth.signature."default"]
+[signature."default"]
 public-key = "cert-name"
 private-key = "cert-name"
 domain = "example.org"
