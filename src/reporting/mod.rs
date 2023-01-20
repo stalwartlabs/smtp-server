@@ -141,9 +141,6 @@ impl Message {
         bytes: &[u8],
         span: &tracing::Span,
     ) -> Option<Vec<u8>> {
-        self.size = bytes.len();
-        self.size_headers = bytes.len();
-
         let signers = config.eval(self).await;
         if !signers.is_empty() {
             let mut headers = Vec::with_capacity(64);
@@ -161,9 +158,6 @@ impl Message {
                 }
             }
             if !headers.is_empty() {
-                self.size += headers.len();
-                self.size_headers += headers.len();
-
                 return Some(headers);
             }
         }

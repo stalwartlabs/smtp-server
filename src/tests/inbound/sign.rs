@@ -122,7 +122,7 @@ async fn sign_and_seal() {
     config.data.add_received_spf = IfBlock::new(true);
 
     let mut config = &mut core.mail_auth;
-    let ctx = parse_signatures();
+    let ctx = ConfigContext::default().parse_signatures();
     config.spf.verify_ehlo = IfBlock::new(VerifyStrategy::Relaxed);
     config.spf.verify_mail_from = config.spf.verify_ehlo.clone();
     config.dkim.verify = config.spf.verify_ehlo.clone();
@@ -167,11 +167,12 @@ async fn sign_and_seal() {
         );
 }
 
-fn parse_signatures() -> ConfigContext {
-    let mut ctx = ConfigContext::default();
-    Config::parse(SIGNATURES)
-        .unwrap()
-        .parse_signatures(&mut ctx)
-        .unwrap();
-    ctx
+impl ConfigContext {
+    pub fn parse_signatures(mut self) -> Self {
+        Config::parse(SIGNATURES)
+            .unwrap()
+            .parse_signatures(&mut self)
+            .unwrap();
+        self
+    }
 }

@@ -1,9 +1,13 @@
 use std::{io::BufReader, sync::Arc};
 
+use mail_send::Credentials;
 use rustls::{Certificate, PrivateKey, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use tokio_rustls::TlsAcceptor;
 
+use crate::remote::lookup::{Item, LookupResult};
+
+pub mod imap;
 pub mod smtp;
 
 const CERT: &str = "-----BEGIN CERTIFICATE-----
@@ -120,4 +124,47 @@ pub fn dummy_tls_acceptor() -> Arc<TlsAcceptor> {
     Arc::new(TlsAcceptor::from(Arc::new(
         config.with_single_cert(cert_chain, keys.remove(0)).unwrap(),
     )))
+}
+
+impl Item {
+    pub fn append(&self, append: usize) -> Self {
+        match self {
+            Item::Exists(str) => Item::Exists(format!("{}{}", append, str)),
+            Item::Authenticate(str) => Item::Authenticate(match str {
+                Credentials::Plain { username, secret } => Credentials::Plain {
+                    username: username.to_string(),
+                    secret: format!("{}{}", append, secret),
+                },
+                Credentials::OAuthBearer { token } => Credentials::OAuthBearer {
+                    token: format!("{}{}", append, token),
+                },
+                Credentials::XOauth2 { username, secret } => Credentials::XOauth2 {
+                    username: username.to_string(),
+                    secret: format!("{}{}", append, secret),
+                },
+            }),
+            Item::Verify(str) => Item::Verify(format!("{}{}", append, str)),
+            Item::Expand(str) => Item::Expand(format!("{}{}", append, str)),
+        }
+    }
+}
+
+impl LookupResult {
+    pub fn append(&self, append: usize) -> Self {
+        match self {
+            LookupResult::True => LookupResult::True,
+            LookupResult::False => LookupResult::False,
+            LookupResult::Values(v) => {
+                let mut r = Vec::with_capacity(v.len());
+                for (pos, val) in v.iter().enumerate() {
+                    r.push(if pos == 0 {
+                        format!("{}{}", append, val)
+                    } else {
+                        val.to_string()
+                    });
+                }
+                LookupResult::Values(Arc::new(r))
+            }
+        }
+    }
 }

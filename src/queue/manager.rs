@@ -158,30 +158,36 @@ impl Message {
     }
 
     pub fn next_event_after(&self, instant: Instant) -> Option<Instant> {
-        let mut next_event = instant;
+        let mut next_event = None;
 
-        for (pos, domain) in self
-            .domains
-            .iter()
-            .filter(|d| matches!(d.status, Status::Scheduled | Status::TemporaryFailure(_)))
-            .enumerate()
-        {
-            if domain.retry.due > instant && (pos == 0 || domain.retry.due < next_event) {
-                next_event = domain.retry.due;
-            }
-            if domain.notify.due > instant && (pos == 0 || domain.notify.due < next_event) {
-                next_event = domain.notify.due;
-            }
-            if domain.expires > instant && (pos == 0 || domain.expires < next_event) {
-                next_event = domain.expires;
+        for domain in &self.domains {
+            if matches!(
+                domain.status,
+                Status::Scheduled | Status::TemporaryFailure(_)
+            ) {
+                if domain.retry.due > instant
+                    && next_event
+                        .as_ref()
+                        .map_or(true, |ne| domain.retry.due.lt(ne))
+                {
+                    next_event = domain.retry.due.into();
+                }
+                if domain.notify.due > instant
+                    && next_event
+                        .as_ref()
+                        .map_or(true, |ne| domain.notify.due.lt(ne))
+                {
+                    next_event = domain.notify.due.into();
+                }
+                if domain.expires > instant
+                    && next_event.as_ref().map_or(true, |ne| domain.expires.lt(ne))
+                {
+                    next_event = domain.expires.into();
+                }
             }
         }
 
-        if next_event != instant {
-            next_event.into()
-        } else {
-            None
-        }
+        next_event
     }
 }
 
@@ -207,7 +213,7 @@ impl QueueCore {
                     Ok(Some(file)) => {
                         let file = file.path();
                         if file.is_dir() {
-                            match tokio::fs::read_dir(path).await {
+                            match tokio::fs::read_dir(&file).await {
                                 Ok(mut dir) => {
                                     let file_ = file;
                                     loop {

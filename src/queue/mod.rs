@@ -16,6 +16,7 @@ use crate::core::{
 pub mod dsn;
 pub mod manager;
 pub mod quota;
+pub mod serialize;
 pub mod spool;
 pub mod throttle;
 
@@ -63,8 +64,6 @@ pub struct Message {
     pub priority: i16,
 
     pub size: usize,
-    pub size_headers: usize,
-
     pub queue_refs: Vec<UsedQuota>,
 }
 

@@ -348,7 +348,6 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
         // Update size
         message.size = raw_message.len() + headers.len();
-        message.size_headers = auth_message.body_offset() + headers.len();
 
         // Verify queue quota
         if self.core.queue.has_quota(&mut message).await {
@@ -395,7 +394,6 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             flags: mail_from.flags,
             priority: self.data.priority,
             size: 0,
-            size_headers: 0,
             env_id: mail_from.dsn_info,
             queue_refs: Vec::with_capacity(0),
         });

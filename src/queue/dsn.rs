@@ -48,7 +48,7 @@ impl QueueCore {
 }
 
 impl DeliveryAttempt {
-    async fn build_dsn(&mut self, config: &QueueConfig) -> Option<Vec<u8>> {
+    pub async fn build_dsn(&mut self, config: &QueueConfig) -> Option<Vec<u8>> {
         let now = Instant::now();
 
         let mut txt_success = String::new();
@@ -233,23 +233,47 @@ impl DeliveryAttempt {
             .write_dsn_headers(&mut dsn_header, reporting_mta);
         let dsn = dsn_header + &dsn;
 
-        // Fetch message headers
+        // Fetch up to 1024 bytes of message headers
         let headers = match File::open(&self.message.path).await {
             Ok(mut file) => {
-                let mut buf = vec![0u8; self.message.size_headers];
-                if let Err(err) = file.read_exact(&mut buf).await {
-                    tracing::error!(
-                        parent: &self.span,
-                        context = "queue",
-                        event = "error",
-                        "Failed to read {} bytes from {}: {}",
-                        self.message.size_headers,
-                        self.message.path.display(),
-                        err
-                    );
-                    String::new()
-                } else {
-                    String::from_utf8(buf).unwrap_or_default()
+                let mut buf = vec![0u8; std::cmp::min(self.message.size, 1024)];
+                match file.read(&mut buf).await {
+                    Ok(br) => {
+                        let mut prev_ch = 0;
+                        let mut last_lf = br;
+                        for (pos, &ch) in buf.iter().enumerate() {
+                            match ch {
+                                b'\n' => {
+                                    last_lf = pos + 1;
+                                    if prev_ch != b'\n' {
+                                        prev_ch = ch;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                b'\r' => (),
+                                0 => break,
+                                _ => {
+                                    prev_ch = ch;
+                                }
+                            }
+                        }
+                        if last_lf < 1024 {
+                            buf.truncate(last_lf);
+                        }
+                        String::from_utf8(buf).unwrap_or_default()
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            parent: &self.span,
+                            context = "queue",
+                            event = "error",
+                            "Failed to read from {}: {}",
+                            self.message.path.display(),
+                            err
+                        );
+                        String::new()
+                    }
                 }
             }
             Err(err) => {
@@ -616,169 +640,4 @@ trait WriteDsn {
     fn write_dsn_status(&self, dsn: &mut String);
     fn write_dsn_diagnostic(&self, dsn: &mut String);
     fn write_response(&self, dsn: &mut String);
-}
-
-#[cfg(test)]
-mod test {
-    use std::{
-        fs,
-        path::PathBuf,
-        time::{Duration, Instant, SystemTime},
-    };
-
-    use smtp_proto::{Response, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_SUCCESS};
-
-    use crate::{
-        config::QueueConfig,
-        queue::{
-            DeliveryAttempt, Domain, Error, ErrorDetails, HostResponse, Message, Recipient,
-            Schedule, Status,
-        },
-    };
-
-    #[tokio::test]
-    async fn generate_dsn() {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("resources");
-        path.push("tests");
-        path.push("dsn");
-        path.push("original.txt");
-        let size = fs::metadata(&path).unwrap().len() as usize;
-
-        let flags = RCPT_NOTIFY_FAILURE | RCPT_NOTIFY_DELAY | RCPT_NOTIFY_SUCCESS;
-        let message = Box::new(Message {
-            size_headers: size,
-            size,
-            id: 0,
-            path,
-            created: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-            return_path: "sender@foobar.org".to_string(),
-            return_path_lcase: "".to_string(),
-            return_path_domain: "foobar.org".to_string(),
-            recipients: vec![Recipient {
-                domain_idx: 0,
-                address: "foobar@example.org".to_string(),
-                address_lcase: "foobar@example.org".to_string(),
-                status: Status::PermanentFailure(HostResponse {
-                    hostname: ErrorDetails {
-                        entity: "mx.example.org".to_string(),
-                        details: "RCPT TO:<foobar@example.org>".to_string(),
-                    },
-                    response: Response {
-                        code: 550,
-                        esc: [5, 1, 2],
-                        message: "User does not exist".to_string(),
-                    },
-                }),
-                flags: 0,
-                orcpt: None,
-            }],
-            domains: vec![Domain {
-                domain: "example.org".to_string(),
-                retry: Schedule::now(),
-                notify: Schedule::now(),
-                expires: Instant::now() + Duration::from_secs(10),
-                status: Status::TemporaryFailure(Error::ConnectionError(ErrorDetails {
-                    entity: "mx.domain.org".to_string(),
-                    details: "Connection timeout".to_string(),
-                })),
-                changed: false,
-            }],
-            flags: 0,
-            env_id: None,
-            priority: 0,
-
-            queue_refs: vec![],
-        });
-        let mut attempt = DeliveryAttempt {
-            span: tracing::span!(tracing::Level::INFO, "hi"),
-            message,
-            in_flight: vec![],
-        };
-        let config = QueueConfig::test();
-
-        // Disabled DSN
-        assert!(attempt.build_dsn(&config).await.is_none());
-
-        // Failure DSN
-        attempt.message.recipients[0].flags = flags;
-        compare_dsn(&mut attempt, &config, "failure.eml").await;
-
-        // Success DSN
-        attempt.message.recipients.push(Recipient {
-            domain_idx: 0,
-            address: "jane@example.org".to_string(),
-            address_lcase: "jane@example.org".to_string(),
-            status: Status::Completed(HostResponse {
-                hostname: "mx2.example.org".to_string(),
-                response: Response {
-                    code: 250,
-                    esc: [2, 1, 5],
-                    message: "Message accepted for delivery".to_string(),
-                },
-            }),
-            flags,
-            orcpt: None,
-        });
-        compare_dsn(&mut attempt, &config, "success.eml").await;
-
-        // Delay DSN
-        attempt.message.recipients.push(Recipient {
-            domain_idx: 0,
-            address: "john.doe@example.org".to_string(),
-            address_lcase: "john.doe@example.org".to_string(),
-            status: Status::Scheduled,
-            flags,
-            orcpt: "jdoe@example.org".to_string().into(),
-        });
-        compare_dsn(&mut attempt, &config, "delay.eml").await;
-
-        // Mixed DSN
-        for rcpt in &mut attempt.message.recipients {
-            rcpt.flags = flags;
-        }
-        attempt.message.domains[0].notify.due = Instant::now();
-        compare_dsn(&mut attempt, &config, "mixed.eml").await;
-    }
-
-    async fn compare_dsn(attempt: &mut DeliveryAttempt, config: &QueueConfig, test: &str) {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("resources");
-        path.push("tests");
-        path.push("dsn");
-        path.push(test);
-
-        let dsn = remove_ids(attempt.build_dsn(config).await.unwrap());
-        let dsn_expected = fs::read_to_string(&path).unwrap();
-
-        //fs::write(&path, dsn.as_bytes()).unwrap();
-        assert_eq!(dsn, dsn_expected, "Failed for {}", path.display());
-    }
-
-    fn remove_ids(message: Vec<u8>) -> String {
-        let old_message = String::from_utf8(message).unwrap();
-        let mut message = String::with_capacity(old_message.len());
-
-        let mut boundary = "";
-        for line in old_message.split("\r\n") {
-            if line.starts_with("Date:") || line.starts_with("Message-ID:") {
-                continue;
-            } else if line.starts_with("--") {
-                message.push_str(&line.replace(boundary, "mime_boundary"));
-            } else if let Some((_, boundary_)) = line.split_once("boundary=\"") {
-                boundary = boundary_.split_once('"').unwrap().0;
-                message.push_str(&line.replace(boundary, "mime_boundary"));
-            } else if line.starts_with("Arrival-Date:") {
-                message.push_str("Arrival-Date: <date goes here>");
-            } else if line.starts_with("Will-Retry-Until:") {
-                message.push_str("Will-Retry-Until: <date goes here>");
-            } else {
-                message.push_str(line);
-            }
-            message.push_str("\r\n");
-        }
-        message
-    }
 }

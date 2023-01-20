@@ -14,18 +14,20 @@ use mail_auth::{
 use tokio::sync::mpsc;
 
 use crate::{
-    config::{AggregateFrequency, IfBlock, List, Rate, VerifyStrategy},
+    config::{AggregateFrequency, ConfigContext, IfBlock, List, Rate, VerifyStrategy},
     core::{Core, Session},
     tests::{
         inbound::{assert_empty_queue, read_dmarc_report, read_queue},
         make_temp_dir,
         session::VerifyResponse,
+        ParseTestConfig,
     },
 };
 
 #[tokio::test]
 async fn dmarc() {
     let mut core = Core::test();
+    let ctx = ConfigContext::default().parse_signatures();
 
     // Create temp dir for queue
     let temp_dir = make_temp_dir("smtp_dmarc_test", true);
@@ -131,6 +133,14 @@ async fn dmarc() {
     config.arc.verify = config.spf.verify_ehlo.clone();
     config.dmarc.verify = config.spf.verify_ehlo.clone();
 
+    let mut config = &mut core.report.config;
+    config.spf.sign = "['rsa']"
+        .parse_if::<Vec<String>>(&ctx)
+        .map_if_block(&ctx.signers, "", "")
+        .unwrap();
+    config.dmarc.sign = config.spf.sign.clone();
+    config.dkim.sign = config.spf.sign.clone();
+
     // SPF must pass
     let mut session = Session::test(core);
     session.data.remote_ip = "10.0.0.2".parse().unwrap();
@@ -146,6 +156,7 @@ async fn dmarc() {
     );
     message
         .read_lines()
+        .assert_contains("DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=example.com;")
         .assert_contains("To: spf-failures@example.com")
         .assert_contains("Feedback-Type: auth-failure")
         .assert_contains("Auth-Failure: spf");
@@ -174,6 +185,7 @@ async fn dmarc() {
     );
     message
         .read_lines()
+        .assert_contains("DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=example.com;")
         .assert_contains("To: dkim-failures@example.com")
         .assert_contains("Feedback-Type: auth-failure")
         .assert_contains("Auth-Failure: bodyhash");
@@ -218,6 +230,7 @@ async fn dmarc() {
     );
     message
         .read_lines()
+        .assert_contains("DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=example.com;")
         .assert_contains("To: dmarc-failures@example.com")
         .assert_contains("Feedback-Type: auth-failure")
         .assert_contains("Auth-Failure: dmarc")

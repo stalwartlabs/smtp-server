@@ -298,7 +298,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
                 line = self.read_line().await?;
             } else if matches!(line.get(..5), Some(b"C3 OK")) {
                 return Ok(());
-            } else if matches!(line.get(..5), Some(b"C3 BAD")) {
+            } else if matches!(line.get(..6), Some(b"C3 BAD")) {
                 return Err(Error::AuthenticationFailed);
             } else {
                 return Err(Error::InvalidResponse(line.into_string()));
