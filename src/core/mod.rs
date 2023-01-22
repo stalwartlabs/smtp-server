@@ -20,8 +20,8 @@ use tracing::Span;
 
 use crate::{
     config::{
-        EnvelopeKey, List, MailAuthConfig, QueueConfig, ReportConfig, Script, ServerProtocol,
-        SessionConfig, VerifyStrategy,
+        EnvelopeKey, List, MailAuthConfig, QueueConfig, ReportConfig, Script, SessionConfig,
+        VerifyStrategy,
     },
     inbound::auth::SaslToken,
     outbound::{
@@ -99,7 +99,7 @@ pub enum State {
 pub struct ServerInstance {
     pub id: String,
     pub listener_id: u16,
-    pub protocol: ServerProtocol,
+    pub is_smtp: bool,
     pub hostname: String,
     pub greeting: Vec<u8>,
 }

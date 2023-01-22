@@ -82,7 +82,7 @@ max_age: 604800",
                     mode: Mode::Enforce,
                     mx: vec![
                         MxPattern::Equals("mail.example.com".to_string()),
-                        MxPattern::StartsWith(".example.net".to_string()),
+                        MxPattern::StartsWith("example.net".to_string()),
                         MxPattern::Equals("backupmx.example.com".to_string()),
                     ],
                     max_age: 604800,
@@ -100,7 +100,7 @@ max_age: 86400
                     mode: Mode::Testing,
                     mx: vec![
                         MxPattern::Equals("gmail-smtp-in.l.google.com".to_string()),
-                        MxPattern::StartsWith(".gmail-smtp-in.l.google.com".to_string()),
+                        MxPattern::StartsWith("gmail-smtp-in.l.google.com".to_string()),
                     ],
                     max_age: 86400,
                 },

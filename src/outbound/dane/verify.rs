@@ -234,7 +234,6 @@ mod test {
                     }
                     _ => (),
                 }
-                if pos == 0 {}
             }
         }
         r.tlsa_add(hostname, tlsa, Instant::now() + Duration::from_secs(30));
@@ -255,7 +254,11 @@ mod test {
             }
 
             // Successful DANE verification
-            let tlsa = r.tlsa_lookup(&host).await.unwrap().unwrap();
+            let tlsa = r
+                .tlsa_lookup(format!("_25._tcp.{}.", host))
+                .await
+                .unwrap()
+                .unwrap();
 
             assert_eq!(
                 tlsa.verify(&tracing::info_span!("test_span"), &host, Some(&certs)),

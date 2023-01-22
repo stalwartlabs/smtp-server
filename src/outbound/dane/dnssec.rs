@@ -37,6 +37,11 @@ impl Resolvers {
             return Ok(Some(value));
         }
 
+        #[cfg(any(test, feature = "test"))]
+        if true {
+            return mail_auth::common::resolver::mock_resolve(key.as_ref());
+        }
+
         let mut entries = Vec::new();
         let tlsa_lookup = match self.dnssec.resolver.tlsa_lookup(key.as_ref()).await {
             Ok(tlsa_lookup) => tlsa_lookup,

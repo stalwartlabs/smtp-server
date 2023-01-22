@@ -8,7 +8,7 @@ use tokio::{
 use tokio_rustls::{server::TlsStream, TlsAcceptor};
 
 use crate::{
-    config::Server,
+    config::{Server, ServerProtocol},
     core::{Core, ServerInstance, Session, SessionData, SessionParameters, State},
 };
 
@@ -25,7 +25,7 @@ impl Server {
             greeting: format!("220 {} {}\r\n", self.hostname, self.greeting).into_bytes(),
             id: self.id,
             listener_id: self.internal_id,
-            protocol: self.protocol,
+            is_smtp: self.protocol == ServerProtocol::Smtp,
             hostname: self.hostname,
         });
 

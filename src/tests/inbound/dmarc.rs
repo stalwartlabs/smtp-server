@@ -16,12 +16,7 @@ use tokio::sync::mpsc;
 use crate::{
     config::{AggregateFrequency, ConfigContext, IfBlock, List, Rate, VerifyStrategy},
     core::{Core, Session},
-    tests::{
-        inbound::{assert_empty_queue, read_dmarc_report, read_queue},
-        make_temp_dir,
-        session::VerifyResponse,
-        ParseTestConfig,
-    },
+    tests::{inbound::read_dmarc_report, session::VerifyResponse, ParseTestConfig},
 };
 
 #[tokio::test]
@@ -30,8 +25,7 @@ async fn dmarc() {
     let ctx = ConfigContext::default().parse_signatures();
 
     // Create temp dir for queue
-    let temp_dir = make_temp_dir("smtp_dmarc_test", true);
-    core.queue.config.path = IfBlock::new(temp_dir.temp_dir.clone());
+    let mut qr = core.init_test_queue("smtp_dmarc_test");
 
     // Add SPF, DKIM and DMARC records
     core.resolvers.dns.txt_add(
@@ -95,10 +89,8 @@ async fn dmarc() {
         Instant::now() + Duration::from_secs(5),
     );
 
-    // Create queue and report channels
-    let (queue_tx, mut queue_rx) = mpsc::channel(128);
+    // Create report channels
     let (report_tx, mut report_rx) = mpsc::channel(128);
-    core.queue.tx = queue_tx;
     core.report.tx = report_tx;
 
     let mut config = &mut core.session.config.rcpt;
@@ -149,7 +141,7 @@ async fn dmarc() {
     session.mail_from("bill@example.com", "550 5.7.23").await;
 
     // Expect SPF auth failure report
-    let message = read_queue(&mut queue_rx).await.inner;
+    let message = qr.read_event().await.unwrap_message();
     assert_eq!(
         message.recipients.last().unwrap().address,
         "spf-failures@example.com"
@@ -163,7 +155,7 @@ async fn dmarc() {
 
     // Second DKIM failure report should be rate limited
     session.mail_from("bill@example.com", "550 5.7.23").await;
-    assert_empty_queue(&mut queue_rx);
+    qr.assert_empty_queue();
 
     // Invalid DKIM signatures should be rejected
     session.data.remote_ip = "10.0.0.1".parse().unwrap();
@@ -171,14 +163,14 @@ async fn dmarc() {
     session
         .send_message(
             "bill@example.com",
-            "jdoe@example.com",
+            &["jdoe@example.com"],
             "test:invalid_dkim",
             "550 5.7.20",
         )
         .await;
 
     // Expect DKIM auth failure report
-    let message = read_queue(&mut queue_rx).await.inner;
+    let message = qr.read_event().await.unwrap_message();
     assert_eq!(
         message.recipients.last().unwrap().address,
         "dkim-failures@example.com"
@@ -194,36 +186,36 @@ async fn dmarc() {
     session
         .send_message(
             "bill@example.com",
-            "jdoe@example.com",
+            &["jdoe@example.com"],
             "test:invalid_dkim",
             "550 5.7.20",
         )
         .await;
-    assert_empty_queue(&mut queue_rx);
+    qr.assert_empty_queue();
 
     // Invalid ARC should be rejected
     session
         .send_message(
             "bill@example.com",
-            "jdoe@example.com",
+            &["jdoe@example.com"],
             "test:invalid_arc",
             "550 5.7.29",
         )
         .await;
-    assert_empty_queue(&mut queue_rx);
+    qr.assert_empty_queue();
 
     // Unaligned DMARC should be rejected
     session
         .send_message(
             "joe@foobar.com",
-            "jdoe@example.com",
+            &["jdoe@example.com"],
             "test:dkim",
             "550 5.7.1",
         )
         .await;
 
     // Expect DMARC auth failure report
-    let message = read_queue(&mut queue_rx).await.inner;
+    let message = qr.read_event().await.unwrap_message();
     assert_eq!(
         message.recipients.last().unwrap().address,
         "dmarc-failures@example.com"
@@ -247,20 +239,25 @@ async fn dmarc() {
     session
         .send_message(
             "joe@foobar.com",
-            "jdoe@example.com",
+            &["jdoe@example.com"],
             "test:dkim",
             "550 5.7.1",
         )
         .await;
-    assert_empty_queue(&mut queue_rx);
+    qr.assert_empty_queue();
 
     // Messagess passing DMARC should be accepted
     session
-        .send_message("bill@example.com", "jdoe@example.com", "test:dkim", "250")
+        .send_message(
+            "bill@example.com",
+            &["jdoe@example.com"],
+            "test:dkim",
+            "250",
+        )
         .await;
-    read_queue(&mut queue_rx)
+    qr.read_event()
         .await
-        .inner
+        .unwrap_message()
         .read_lines()
         .assert_contains("dkim=pass")
         .assert_contains("spf=pass")

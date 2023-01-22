@@ -40,12 +40,12 @@ allow-invalid-certs = true
 #[tokio::test]
 async fn remote_imap() {
     // Enable logging
-    tracing::subscriber::set_global_default(
+    /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_max_level(tracing::Level::DEBUG)
             .finish(),
     )
-    .unwrap();
+    .unwrap();*/
 
     // Spawn mock LMTP server
     let shutdown = spawn_mock_imap_server(5);

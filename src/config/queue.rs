@@ -133,6 +133,9 @@ impl Config {
             max_multihomed: self
                 .parse_if_block("queue.outbound.limits.multihomed", ctx, &rcpt_envelope_keys)?
                 .unwrap_or_else(|| IfBlock::new(2)),
+            ip_strategy: self
+                .parse_if_block("queue.outbound.ip-strategy", ctx, &sender_envelope_keys)?
+                .unwrap_or_else(|| IfBlock::new(IpLookupStrategy::Ipv4thenIpv6)),
             source_ip: QueueOutboundSourceIp {
                 ipv4: self
                     .parse_if_block("queue.outbound.source-ip.v4", ctx, &mx_envelope_keys)?
@@ -141,49 +144,7 @@ impl Config {
                     .parse_if_block("queue.outbound.source-ip.v6", ctx, &mx_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(Vec::new())),
             },
-            next_hop: IfBlock {
-                if_then: {
-                    let mut if_then = Vec::with_capacity(next_hop.if_then.len());
-
-                    for i in next_hop.if_then {
-                        if_then.push(IfThen {
-                            conditions: i.conditions,
-                            then: if let Some(then) = i.then {
-                                Some(
-                                    ctx.hosts
-                                        .get(&then)
-                                        .ok_or_else(|| {
-                                            format!(
-                                "Host {:?} not found for property \"queue.next-hop\".",
-                                then
-                            )
-                                        })?
-                                        .into(),
-                                )
-                            } else {
-                                None
-                            },
-                        });
-                    }
-
-                    if_then
-                },
-                default: if let Some(default) = next_hop.default {
-                    Some(
-                        ctx.hosts
-                            .get(&default)
-                            .ok_or_else(|| {
-                                format!(
-                                    "Relay host {:?} not found for property \"queue.next-hop\".",
-                                    default
-                                )
-                            })?
-                            .into(),
-                    )
-                } else {
-                    None
-                },
-            },
+            next_hop: next_hop.into_relay_host(ctx)?,
             tls: QueueOutboundTls {
                 dane: self
                     .parse_if_block("queue.outbound.tls.dane", ctx, &host_envelope_keys)?
@@ -353,6 +314,54 @@ impl Config {
         } else {
             Ok(quota)
         }
+    }
+}
+
+impl IfBlock<Option<String>> {
+    pub fn into_relay_host(self, ctx: &ConfigContext) -> super::Result<IfBlock<Option<RelayHost>>> {
+        Ok(IfBlock {
+            if_then: {
+                let mut if_then = Vec::with_capacity(self.if_then.len());
+
+                for i in self.if_then {
+                    if_then.push(IfThen {
+                        conditions: i.conditions,
+                        then: if let Some(then) = i.then {
+                            Some(
+                                ctx.hosts
+                                    .get(&then)
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "Host {:?} not found for property \"queue.next-hop\".",
+                                            then
+                                        )
+                                    })?
+                                    .into(),
+                            )
+                        } else {
+                            None
+                        },
+                    });
+                }
+
+                if_then
+            },
+            default: if let Some(default) = self.default {
+                Some(
+                    ctx.hosts
+                        .get(&default)
+                        .ok_or_else(|| {
+                            format!(
+                                "Relay host {:?} not found for property \"queue.next-hop\".",
+                                default
+                            )
+                        })?
+                        .into(),
+                )
+            } else {
+                None
+            },
+        })
     }
 }
 

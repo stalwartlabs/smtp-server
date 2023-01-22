@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
 use ahash::AHashSet;
-use tokio::sync::mpsc;
 
 use crate::{
     config::{ConfigContext, IfBlock, List},
     core::{Core, Session, SessionAddress},
     tests::{
-        inbound::read_queue,
-        make_temp_dir,
         session::{load_test_message, DummyIo, VerifyResponse},
         ParseTestConfig,
     },
@@ -19,12 +16,7 @@ async fn data() {
     let mut core = Core::test();
 
     // Create temp dir for queue
-    let temp_dir = make_temp_dir("smtp_data_test", true);
-    core.queue.config.path = IfBlock::new(temp_dir.temp_dir.clone());
-
-    // Create queue receiver
-    let (queue_tx, mut queue_rx) = mpsc::channel(128);
-    core.queue.tx = queue_tx;
+    let mut qr = core.init_test_queue("smtp_data_test");
 
     let mut config = &mut core.session.config.rcpt;
     config.lookup_domains = IfBlock::new(Some(Arc::new(List::Local(AHashSet::from_iter([
@@ -83,20 +75,30 @@ async fn data() {
 
     // Send broken message
     session
-        .send_message("john@doe.org", "bill@foobar.org", "From: john", "550 5.7.7")
+        .send_message(
+            "john@doe.org",
+            &["bill@foobar.org"],
+            "From: john",
+            "550 5.7.7",
+        )
         .await;
 
     // Naive Loop detection
     session
-        .send_message("john@doe.org", "bill@foobar.org", "test:loop", "450 4.4.6")
+        .send_message(
+            "john@doe.org",
+            &["bill@foobar.org"],
+            "test:loop",
+            "450 4.4.6",
+        )
         .await;
 
     // No headers should be added to messages from 10.0.0.1
     session
-        .send_message("john@doe.org", "bill@foobar.org", "test:no_msgid", "250")
+        .send_message("john@doe.org", &["bill@foobar.org"], "test:no_msgid", "250")
         .await;
     assert_eq!(
-        read_queue(&mut queue_rx).await.inner.read_message(),
+        qr.read_event().await.unwrap_message().read_message(),
         load_test_message("no_msgid")
     );
 
@@ -111,11 +113,11 @@ async fn data() {
     session.data.remote_ip = "10.0.0.3".parse().unwrap();
     session.eval_session_params().await;
     session
-        .send_message("john@doe.org", "mike@test.com", "test:no_msgid", "250")
+        .send_message("john@doe.org", &["mike@test.com"], "test:no_msgid", "250")
         .await;
-    read_queue(&mut queue_rx)
+    qr.read_event()
         .await
-        .inner
+        .unwrap_message()
         .read_lines()
         .assert_contains("From: ")
         .assert_contains("To: ")
@@ -132,13 +134,13 @@ async fn data() {
     session.data.remote_ip = "10.0.0.2".parse().unwrap();
     session.eval_session_params().await;
     session
-        .send_message("john@doe.org", "bill@foobar.org", "test:no_dkim", "250")
+        .send_message("john@doe.org", &["bill@foobar.org"], "test:no_dkim", "250")
         .await;
-    queued_messages.push(read_queue(&mut queue_rx).await);
+    queued_messages.push(qr.read_event().await);
     session
         .send_message(
             "john@doe.org",
-            "bill@foobar.org",
+            &["bill@foobar.org"],
             "test:no_dkim",
             "452 4.3.1",
         )
@@ -149,13 +151,18 @@ async fn data() {
 
     // Only 1500 bytes are allowed in the queue to domain foobar.org
     session
-        .send_message("jane@foobar.org", "bill@foobar.org", "test:no_dkim", "250")
+        .send_message(
+            "jane@foobar.org",
+            &["bill@foobar.org"],
+            "test:no_dkim",
+            "250",
+        )
         .await;
-    queued_messages.push(read_queue(&mut queue_rx).await);
+    queued_messages.push(qr.read_event().await);
     session
         .send_message(
             "jane@foobar.org",
-            "bill@foobar.org",
+            &["bill@foobar.org"],
             "test:no_dkim",
             "452 4.3.1",
         )
@@ -163,13 +170,18 @@ async fn data() {
 
     // Only 1500 bytes are allowed in the queue to recipient jane@domain.net
     session
-        .send_message("jane@foobar.org", "jane@domain.net", "test:no_dkim", "250")
+        .send_message(
+            "jane@foobar.org",
+            &["jane@domain.net"],
+            "test:no_dkim",
+            "250",
+        )
         .await;
-    queued_messages.push(read_queue(&mut queue_rx).await);
+    queued_messages.push(qr.read_event().await);
     session
         .send_message(
             "jane@foobar.org",
-            "jane@domain.net",
+            &["jane@domain.net"],
             "test:no_dkim",
             "452 4.3.1",
         )

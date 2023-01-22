@@ -3,7 +3,6 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    config::ServerProtocol,
     core::{Core, ServerInstance, Session, SessionData, SessionParameters, State},
     inbound::IsTls,
 };
@@ -127,22 +126,34 @@ impl Session<DummyIo> {
     }
 
     pub async fn mail_from(&mut self, from: &str, expected_code: &str) {
-        self.ingest(format!("MAIL FROM:<{}>\r\n", from).as_bytes())
-            .await
-            .unwrap();
+        self.ingest(
+            if !from.starts_with("<") {
+                format!("MAIL FROM:<{}>\r\n", from)
+            } else {
+                format!("MAIL FROM:{}\r\n", from)
+            }
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
         self.response().assert_code(expected_code);
     }
 
     pub async fn rcpt_to(&mut self, to: &str, expected_code: &str) {
-        self.ingest(format!("RCPT TO:<{}>\r\n", to).as_bytes())
-            .await
-            .unwrap();
+        self.ingest(
+            if !to.starts_with("<") {
+                format!("RCPT TO:<{}>\r\n", to)
+            } else {
+                format!("RCPT TO:{}\r\n", to)
+            }
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
         self.response().assert_code(expected_code);
     }
 
-    pub async fn send_message(&mut self, from: &str, to: &str, data: &str, expected_code: &str) {
-        self.mail_from(from, "250").await;
-        self.rcpt_to(to, "250").await;
+    pub async fn data(&mut self, data: &str, expected_code: &str) {
         self.ingest(b"DATA\r\n").await.unwrap();
         self.response().assert_code("354");
         if let Some(file) = data.strip_prefix("test:") {
@@ -155,13 +166,21 @@ impl Session<DummyIo> {
         self.ingest(b"\r\n.\r\n").await.unwrap();
         self.response().assert_code(expected_code);
     }
+
+    pub async fn send_message(&mut self, from: &str, to: &[&str], data: &str, expected_code: &str) {
+        self.mail_from(from, "250").await;
+        for to in to {
+            self.rcpt_to(to, "250").await;
+        }
+        self.data(data, expected_code).await;
+    }
 }
 
 pub fn load_test_message(file: &str) -> String {
     let mut test_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     test_file.push("resources");
     test_file.push("tests");
-    test_file.push("inbound");
+    test_file.push("messages");
     test_file.push(format!("{}.eml", file));
     std::fs::read_to_string(test_file).unwrap()
 }
@@ -203,7 +222,7 @@ impl ServerInstance {
         Self {
             id: "smtp".to_string(),
             listener_id: 1,
-            protocol: ServerProtocol::Smtp,
+            is_smtp: true,
             hostname: "mx.example.org".to_string(),
             greeting: b"220 mx.example.org at your service.\r\n".to_vec(),
         }

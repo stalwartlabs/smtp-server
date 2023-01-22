@@ -141,6 +141,7 @@ impl Config {
                         | EnvelopeKey::Sender
                         | EnvelopeKey::SenderDomain
                         | EnvelopeKey::AuthenticatedAs
+                        | EnvelopeKey::Mx
                         | EnvelopeKey::LocalIp
                         | EnvelopeKey::RemoteIp,
                         _,
@@ -241,6 +242,7 @@ impl Config {
             EnvelopeKey::RemoteIp,
             EnvelopeKey::LocalIp,
             EnvelopeKey::Priority,
+            EnvelopeKey::Mx,
         ];
 
         for rule_name in self.sub_keys("rule") {

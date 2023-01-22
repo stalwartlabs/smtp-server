@@ -9,10 +9,7 @@ use smtp_proto::{
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::{
-    config::ServerProtocol,
-    core::{Envelope, Session, State},
-};
+use crate::core::{Envelope, Session, State};
 
 use super::{auth::SaslToken, IsTls};
 
@@ -33,7 +30,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                                 self.handle_mail_from(from).await?;
                             }
                             Request::Ehlo { host } => {
-                                if self.instance.protocol == ServerProtocol::Smtp {
+                                if self.instance.is_smtp {
                                     self.handle_ehlo(host).await?;
                                 } else {
                                     self.write(b"500 5.5.1 Invalid command.\r\n").await?;
@@ -134,9 +131,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                                 .await?;
                             }
                             Request::Helo { host } => {
-                                if self.instance.protocol == ServerProtocol::Smtp
-                                    && self.data.helo_domain.is_empty()
-                                {
+                                if self.instance.is_smtp && self.data.helo_domain.is_empty() {
                                     self.data.helo_domain = host;
                                     self.write(
                                         format!("250 {} says hello\r\n", self.instance.hostname)
@@ -148,7 +143,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                                 }
                             }
                             Request::Lhlo { host } => {
-                                if self.instance.protocol == ServerProtocol::Lmtp {
+                                if !self.instance.is_smtp {
                                     self.handle_ehlo(host).await?;
                                 } else {
                                     self.write(b"502 5.5.1 Invalid command.\r\n").await?;
@@ -205,8 +200,15 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 State::Data(receiver) => {
                     if self.data.message.len() + bytes.len() < self.params.max_message_size {
                         if receiver.ingest(&mut iter, &mut self.data.message) {
+                            let num_rcpts = self.data.rcpt_to.len();
                             let message = self.queue_message().await;
-                            self.write(message).await?;
+                            if self.instance.is_smtp {
+                                self.write(message).await?;
+                            } else {
+                                for _ in 0..num_rcpts {
+                                    self.write(message).await?;
+                                }
+                            }
                             self.reset();
                             state = State::default();
                         } else {
@@ -220,8 +222,15 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     if receiver.ingest(&mut iter, &mut self.data.message) {
                         if self.can_send_data().await? {
                             if receiver.is_last {
+                                let num_rcpts = self.data.rcpt_to.len();
                                 let message = self.queue_message().await;
-                                self.write(message).await?;
+                                if self.instance.is_smtp {
+                                    self.write(message).await?;
+                                } else {
+                                    for _ in 0..num_rcpts {
+                                        self.write(message).await?;
+                                    }
+                                }
                                 self.reset();
                             } else {
                                 self.write(b"250 2.6.0 Chunk accepted.\r\n").await?;

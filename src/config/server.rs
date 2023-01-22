@@ -346,7 +346,10 @@ mod tests {
 
     use tokio::net::TcpSocket;
 
-    use crate::config::{Config, ConfigContext, Listener, Server, ServerProtocol};
+    use crate::{
+        config::{Config, ConfigContext, Listener, Server, ServerProtocol},
+        tests::add_test_certs,
+    };
 
     #[test]
     fn parse_servers() {
@@ -356,19 +359,7 @@ mod tests {
         file.push("config");
         file.push("servers.toml");
 
-        let mut cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        cert_path.push("resources");
-        cert_path.push("tests");
-        cert_path.push("certs");
-        let mut cert = cert_path.clone();
-        cert.push("tls_cert.pem");
-        let mut pk = cert_path.clone();
-        pk.push("tls_privatekey.pem");
-
-        let toml = fs::read_to_string(file)
-            .unwrap()
-            .replace("{CERT}", cert.as_path().to_str().unwrap())
-            .replace("{PK}", pk.as_path().to_str().unwrap());
+        let toml = add_test_certs(&fs::read_to_string(file).unwrap());
 
         // Parse servers
         let config = Config::parse(&toml).unwrap();

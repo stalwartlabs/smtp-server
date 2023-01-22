@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use mail_auth::{
     common::lru::{DnsCache, LruCache},
     trust_dns_resolver::config::{ResolverConfig, ResolverOpts},
-    Resolver,
+    IpLookupStrategy, Resolver,
 };
 use mail_send::smtp::tls::build_tls_connector;
 use smtp_proto::{AUTH_LOGIN, AUTH_PLAIN};
@@ -238,6 +238,7 @@ impl QueueConfig {
                 ipv4: IfBlock::new(vec![]),
                 ipv6: IfBlock::new(vec![]),
             },
+            ip_strategy: IfBlock::new(IpLookupStrategy::Ipv4thenIpv6),
             tls: QueueOutboundTls {
                 dane: IfBlock::new(crate::config::RequireOptional::Optional),
                 mta_sts: IfBlock::new(crate::config::RequireOptional::Optional),
@@ -375,6 +376,41 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         if self.delete {
             let _ = std::fs::remove_dir_all(&self.temp_dir);
+        }
+    }
+}
+
+pub fn add_test_certs(config: &str) -> String {
+    let mut cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    cert_path.push("resources");
+    cert_path.push("tests");
+    cert_path.push("certs");
+    let mut cert = cert_path.clone();
+    cert.push("tls_cert.pem");
+    let mut pk = cert_path.clone();
+    pk.push("tls_privatekey.pem");
+
+    config
+        .replace("{CERT}", cert.as_path().to_str().unwrap())
+        .replace("{PK}", pk.as_path().to_str().unwrap())
+}
+
+pub struct QueueReceiver {
+    _temp_dir: TempDir,
+    pub queue_rx: mpsc::Receiver<crate::queue::Event>,
+}
+
+impl Core {
+    pub fn init_test_queue(&mut self, test_name: &str) -> QueueReceiver {
+        let _temp_dir = make_temp_dir(test_name, true);
+        self.queue.config.path = IfBlock::new(_temp_dir.temp_dir.clone());
+
+        let (queue_tx, queue_rx) = mpsc::channel(128);
+        self.queue.tx = queue_tx;
+
+        QueueReceiver {
+            _temp_dir,
+            queue_rx,
         }
     }
 }

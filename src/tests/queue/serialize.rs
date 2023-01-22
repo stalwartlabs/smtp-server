@@ -4,16 +4,13 @@ use std::{
 };
 
 use smtp_proto::{Response, MAIL_REQUIRETLS, MAIL_SMTPUTF8, RCPT_CONNEG, RCPT_NOTIFY_FAILURE};
-use tokio::sync::mpsc;
 
 use crate::{
-    config::IfBlock,
     core::Core,
     queue::{
         Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule, Status,
         RCPT_STATUS_CHANGED,
     },
-    tests::{inbound::read_queue, make_temp_dir},
 };
 
 #[tokio::test]
@@ -21,12 +18,7 @@ async fn queue_serialize() {
     let mut core = Core::test();
 
     // Create temp dir for queue
-    let temp_dir = make_temp_dir("smtp_queue_serialize_test", true);
-    core.queue.config.path = IfBlock::new(temp_dir.temp_dir.clone());
-
-    // Create queue receiver
-    let (queue_tx, mut queue_rx) = mpsc::channel(128);
-    core.queue.tx = queue_tx;
+    let mut qr = core.init_test_queue("smtp_queue_serialize_test");
 
     // Create test message
     let message = Message {
@@ -91,7 +83,7 @@ async fn queue_serialize() {
             )
             .await
     );
-    let mut message = read_queue(&mut queue_rx).await.inner;
+    let mut message = qr.read_event().await.unwrap_message();
 
     // Deserialize
     assert_msg_eq(

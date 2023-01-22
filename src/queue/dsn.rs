@@ -202,7 +202,11 @@ impl DeliveryAttempt {
         if has_delay {
             let mut domains = std::mem::take(&mut self.message.domains);
             for domain in &mut domains {
-                if domain.notify.due <= now {
+                if matches!(
+                    &domain.status,
+                    Status::TemporaryFailure(_) | Status::Scheduled
+                ) && domain.notify.due <= now
+                {
                     let envelope = SimpleEnvelope::new(&self.message, &domain.domain);
 
                     if let Some(next_notify) = config
@@ -497,6 +501,13 @@ impl Domain {
 }
 
 impl<T, E> Status<T, E> {
+    pub fn into_permanent(self) -> Self {
+        match self {
+            Status::TemporaryFailure(v) => Status::PermanentFailure(v),
+            v => v,
+        }
+    }
+
     fn write_dsn_action(&self, dsn: &mut String) {
         dsn.push_str("Action: ");
         dsn.push_str(match self {

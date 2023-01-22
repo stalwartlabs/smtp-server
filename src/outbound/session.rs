@@ -145,7 +145,7 @@ impl Message {
                         let response = HostResponse {
                             hostname: ErrorDetails {
                                 entity: params.hostname.to_string(),
-                                details: cmd,
+                                details: cmd.trim().to_string(),
                             },
                             response,
                         };
@@ -354,7 +354,7 @@ impl Message {
 
     fn build_rcpt_to(&self, rcpt: &Recipient, capabilities: &EhloResponse<String>) -> String {
         let mut rcpt_to = String::with_capacity(rcpt.address.len() + 60);
-        let _ = write!(rcpt_to, "RCPT TO:<{}>", self.return_path);
+        let _ = write!(rcpt_to, "RCPT TO:<{}>", rcpt.address);
         if capabilities.has_capability(EXT_DSN) {
             if rcpt.has_flag(RCPT_NOTIFY_SUCCESS | RCPT_NOTIFY_FAILURE | RCPT_NOTIFY_DELAY) {
                 rcpt_to.push_str(" NOTIFY=");
@@ -473,11 +473,7 @@ pub async fn read_data_responses<T: AsyncRead + AsyncWrite + Unpin>(
     num_responses: usize,
 ) -> Result<Vec<Response<String>>, Status<(), Error>> {
     tokio::time::timeout(smtp_client.timeout, async {
-        let mut responses = Vec::with_capacity(num_responses);
-        for _ in 0..num_responses {
-            responses.push(smtp_client.read().await?);
-        }
-        Ok(responses)
+        smtp_client.read_many(num_responses).await
     })
     .await
     .map_err(|_| Status::timeout(hostname, "reading DATA"))?
@@ -490,11 +486,22 @@ pub async fn send_message<T: AsyncRead + AsyncWrite + Unpin>(
     bdat_cmd: &Option<String>,
     params: &SessionParams<'_>,
 ) -> Result<(), Status<(), Error>> {
-    let raw_message = fs::read(&message.path).await.map_err(|err| {
+    let mut raw_message = vec![0u8; message.size];
+    let mut file = fs::File::open(&message.path).await.map_err(|err| {
         tracing::error!(parent: params.span,
                             context = "queue", 
                             event = "error", 
-                            "Failed to read message file {} from disk: {}", 
+                            "Failed to open message file {}: {}", 
+                            message.path.display(),
+                            err);
+        Status::TemporaryFailure(Error::Io("Queue system error.".to_string()))
+    })?;
+    file.read_exact(&mut raw_message).await.map_err(|err| {
+        tracing::error!(parent: params.span,
+                            context = "queue", 
+                            event = "error", 
+                            "Failed to read {} bytes file {} from disk: {}", 
+                            message.size,
                             message.path.display(),
                             err);
         Status::TemporaryFailure(Error::Io("Queue system error.".to_string()))

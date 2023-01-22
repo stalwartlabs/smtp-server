@@ -8,12 +8,11 @@ use mail_auth::{
     common::{parse::TxtRecordParser, verify::DomainKey},
     spf::Spf,
 };
-use tokio::sync::mpsc;
 
 use crate::{
     config::{Config, ConfigContext, IfBlock, List, VerifyStrategy},
     core::{Core, Session},
-    tests::{inbound::read_queue, make_temp_dir, session::VerifyResponse, ParseTestConfig},
+    tests::{session::VerifyResponse, ParseTestConfig},
 };
 
 const SIGNATURES: &str = "
@@ -59,8 +58,7 @@ async fn sign_and_seal() {
     let mut core = Core::test();
 
     // Create temp dir for queue
-    let temp_dir = make_temp_dir("smtp_sign_test", true);
-    core.queue.config.path = IfBlock::new(temp_dir.temp_dir.clone());
+    let mut qr = core.init_test_queue("smtp_sign_test");
 
     // Add SPF, DKIM and DMARC records
     core.resolvers.dns.txt_add(
@@ -101,10 +99,6 @@ async fn sign_and_seal() {
         Instant::now() + Duration::from_secs(5),
     );
 
-    // Create queue and report channels
-    let (queue_tx, mut queue_rx) = mpsc::channel(128);
-    core.queue.tx = queue_tx;
-
     let mut config = &mut core.session.config.rcpt;
     config.lookup_domains = IfBlock::new(Some(Arc::new(List::Local(AHashSet::from_iter([
         "example.com".to_string(),
@@ -143,11 +137,16 @@ async fn sign_and_seal() {
     session.eval_session_params().await;
     session.ehlo("mx.example.com").await;
     session
-        .send_message("bill@foobar.org", "jdoe@example.com", "test:no_dkim", "250")
+        .send_message(
+            "bill@foobar.org",
+            &["jdoe@example.com"],
+            "test:no_dkim",
+            "250",
+        )
         .await;
-    read_queue(&mut queue_rx)
+    qr.read_event()
         .await
-        .inner
+        .unwrap_message()
         .read_lines()
         .assert_contains(
             "DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=example.com; c=simple/relaxed;",
@@ -155,11 +154,11 @@ async fn sign_and_seal() {
 
     // Test ARC verify and seal
     session
-        .send_message("bill@foobar.org", "jdoe@example.com", "test:arc", "250")
+        .send_message("bill@foobar.org", &["jdoe@example.com"], "test:arc", "250")
         .await;
-    read_queue(&mut queue_rx)
+    qr.read_event()
         .await
-        .inner
+        .unwrap_message()
         .read_lines()
         .assert_contains("ARC-Seal: i=3; a=ed25519-sha256; s=ed; d=example.com; cv=pass;")
         .assert_contains(

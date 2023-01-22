@@ -214,7 +214,7 @@ async fn accept_smtp(stream: TcpStream, acceptor: Arc<TlsAcceptor>, in_flight: O
             if buf.contains("ok") {
                 format!("250 {}\r\n", buf.split_once(' ').unwrap().1)
             } else {
-                "550-I refuse to\r\n550 accept that recipient.\r\n".to_string()
+                "550-I refuse to\r\n550 verify that recipient.\r\n".to_string()
             }
         } else if buf.starts_with("EXPN") {
             if buf.contains("ok") {

@@ -66,7 +66,7 @@ impl IsTls for TlsStream<TcpStream> {
             }
             .as_bytes(),
         );
-        headers.extend_from_slice(b")\r\n\r");
+        headers.extend_from_slice(b")\r\n\t");
     }
 }
 

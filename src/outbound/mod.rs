@@ -1,9 +1,16 @@
+use std::borrow::Cow;
+
+use mail_send::Credentials;
 use smtp_proto::{Response, Severity};
 
-use crate::queue::{DeliveryAttempt, Error, ErrorDetails, HostResponse, Message, Status};
+use crate::{
+    config::{RelayHost, ServerProtocol},
+    queue::{DeliveryAttempt, Error, ErrorDetails, HostResponse, Message, Status},
+};
 
 pub mod dane;
 pub mod delivery;
+pub mod lookup;
 pub mod mta_sts;
 pub mod session;
 
@@ -187,6 +194,76 @@ impl From<Box<Message>> for DeliveryAttempt {
             ),
             in_flight: Vec::new(),
             message,
+        }
+    }
+}
+
+enum RemoteHost<'x> {
+    Relay(&'x RelayHost),
+    MX(&'x str),
+}
+
+impl<'x> RemoteHost<'x> {
+    fn hostname(&self) -> &str {
+        match self {
+            RemoteHost::MX(host) => host,
+            RemoteHost::Relay(host) => host.address.as_str(),
+        }
+    }
+
+    fn fqdn_hostname(&self) -> Cow<'_, str> {
+        match self {
+            RemoteHost::MX(host) => {
+                if !host.ends_with('.') {
+                    format!("{}.", host).into()
+                } else {
+                    (*host).into()
+                }
+            }
+            RemoteHost::Relay(host) => host.address.as_str().into(),
+        }
+    }
+
+    fn port(&self) -> u16 {
+        match self {
+            #[cfg(test)]
+            RemoteHost::MX(_) => 9925,
+            #[cfg(not(test))]
+            RemoteHost::MX(_) => 25,
+            RemoteHost::Relay(host) => host.port,
+        }
+    }
+
+    fn credentials(&self) -> Option<&Credentials<String>> {
+        match self {
+            RemoteHost::MX(_) => None,
+            RemoteHost::Relay(host) => host.auth.as_ref(),
+        }
+    }
+
+    fn allow_invalid_certs(&self) -> bool {
+        #[cfg(test)]
+        {
+            true
+        }
+        #[cfg(not(test))]
+        match self {
+            RemoteHost::MX(_) => false,
+            RemoteHost::Relay(host) => host.tls_allow_invalid_certs,
+        }
+    }
+
+    fn implicit_tls(&self) -> bool {
+        match self {
+            RemoteHost::MX(_) => false,
+            RemoteHost::Relay(host) => host.tls_implicit,
+        }
+    }
+
+    fn is_smtp(&self) -> bool {
+        match self {
+            RemoteHost::MX(_) => true,
+            RemoteHost::Relay(host) => host.protocol == ServerProtocol::Smtp,
         }
     }
 }

@@ -25,6 +25,7 @@ use ahash::{AHashMap, AHashSet};
 use mail_auth::{
     common::crypto::{Ed25519Key, RsaKey, Sha256},
     dkim::{Canonicalization, Done},
+    IpLookupStrategy,
 };
 use mail_send::Credentials;
 use regex::Regex;
@@ -343,6 +344,7 @@ pub struct QueueConfig {
     pub next_hop: IfBlock<Option<RelayHost>>,
     pub max_mx: IfBlock<usize>,
     pub max_multihomed: IfBlock<usize>,
+    pub ip_strategy: IfBlock<IpLookupStrategy>,
     pub source_ip: QueueOutboundSourceIp,
     pub tls: QueueOutboundTls,
     pub dsn: Dsn,

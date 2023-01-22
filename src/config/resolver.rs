@@ -1,10 +1,10 @@
 use mail_auth::{
     common::lru::{DnsCache, LruCache},
     trust_dns_resolver::{
-        config::{LookupIpStrategy, ResolverConfig, ResolverOpts},
+        config::{ResolverConfig, ResolverOpts},
         system_conf::read_system_conf,
     },
-    Resolver,
+    IpLookupStrategy, Resolver,
 };
 
 use crate::{core::Resolvers, outbound::dane::DnssecResolver};
@@ -35,9 +35,7 @@ impl Config {
         if let Some(preserve) = self.property("resolver.preserve-intermediates")? {
             opts.preserve_intermediates = preserve;
         }
-        if let Some(strategy) = self.property("resolver.strategy")? {
-            opts.ip_strategy = strategy;
-        }
+
         if let Some(try_tcp_on_error) = self.property("resolver.try-tcp-on-error")? {
             opts.try_tcp_on_error = try_tcp_on_error;
         }
@@ -79,14 +77,14 @@ impl Config {
     }
 }
 
-impl ParseValue for LookupIpStrategy {
+impl ParseValue for IpLookupStrategy {
     fn parse_value(key: impl AsKey, value: &str) -> super::Result<Self> {
         Ok(match value.to_lowercase().as_str() {
-            "ipv4-only" => LookupIpStrategy::Ipv4Only,
-            "ipv6-only" => LookupIpStrategy::Ipv6Only,
-            "ipv4-and-ipv6" => LookupIpStrategy::Ipv4AndIpv6,
-            "ipv6-then-ipv4" => LookupIpStrategy::Ipv6thenIpv4,
-            "ipv4-then-ipv6" => LookupIpStrategy::Ipv4thenIpv6,
+            "ipv4-only" => IpLookupStrategy::Ipv4Only,
+            "ipv6-only" => IpLookupStrategy::Ipv6Only,
+            //"ipv4-and-ipv6" => IpLookupStrategy::Ipv4AndIpv6,
+            "ipv6-then-ipv4" => IpLookupStrategy::Ipv6thenIpv4,
+            "ipv4-then-ipv6" => IpLookupStrategy::Ipv4thenIpv6,
             _ => {
                 return Err(format!(
                     "Invalid IP lookup strategy {:?} for property {:?}.",

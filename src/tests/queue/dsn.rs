@@ -5,19 +5,16 @@ use std::{
 };
 
 use smtp_proto::{Response, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_SUCCESS};
-use tokio::{fs::File, io::AsyncReadExt, sync::mpsc};
+use tokio::{fs::File, io::AsyncReadExt};
 
 use crate::{
-    config::{ConfigContext, IfBlock},
+    config::ConfigContext,
     core::Core,
     queue::{
         DeliveryAttempt, Domain, Error, ErrorDetails, HostResponse, Message, Recipient, Schedule,
         Status,
     },
-    tests::{
-        inbound::{assert_empty_queue, read_queue},
-        make_temp_dir, ParseTestConfig,
-    },
+    tests::ParseTestConfig,
 };
 
 #[tokio::test]
@@ -91,21 +88,16 @@ async fn generate_dsn() {
         .unwrap();
 
     // Create temp dir for queue
-    let temp_dir = make_temp_dir("smtp_dsn_test", true);
-    core.queue.config.path = IfBlock::new(temp_dir.temp_dir.clone());
-
-    // Create queue and report channels
-    let (queue_tx, mut queue_rx) = mpsc::channel(128);
-    core.queue.tx = queue_tx;
+    let mut qr = core.init_test_queue("smtp_dsn_test");
 
     // Disabled DSN
     core.queue.send_dsn(&mut attempt).await;
-    assert_empty_queue(&mut queue_rx);
+    qr.assert_empty_queue();
 
     // Failure DSN
     attempt.message.recipients[0].flags = flags;
     core.queue.send_dsn(&mut attempt).await;
-    compare_dsn(read_queue(&mut queue_rx).await.inner, "failure.eml").await;
+    compare_dsn(qr.read_event().await.unwrap_message(), "failure.eml").await;
 
     // Success DSN
     attempt.message.recipients.push(Recipient {
@@ -124,7 +116,7 @@ async fn generate_dsn() {
         orcpt: None,
     });
     core.queue.send_dsn(&mut attempt).await;
-    compare_dsn(read_queue(&mut queue_rx).await.inner, "success.eml").await;
+    compare_dsn(qr.read_event().await.unwrap_message(), "success.eml").await;
 
     // Delay DSN
     attempt.message.recipients.push(Recipient {
@@ -136,7 +128,7 @@ async fn generate_dsn() {
         orcpt: "jdoe@example.org".to_string().into(),
     });
     core.queue.send_dsn(&mut attempt).await;
-    compare_dsn(read_queue(&mut queue_rx).await.inner, "delay.eml").await;
+    compare_dsn(qr.read_event().await.unwrap_message(), "delay.eml").await;
 
     // Mixed DSN
     for rcpt in &mut attempt.message.recipients {
@@ -144,7 +136,7 @@ async fn generate_dsn() {
     }
     attempt.message.domains[0].notify.due = Instant::now();
     core.queue.send_dsn(&mut attempt).await;
-    compare_dsn(read_queue(&mut queue_rx).await.inner, "mixed.eml").await;
+    compare_dsn(qr.read_event().await.unwrap_message(), "mixed.eml").await;
 
     // Load queue
     let queue = core.queue.read_queue().await;

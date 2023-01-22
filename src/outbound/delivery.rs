@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
@@ -9,20 +8,21 @@ use mail_auth::{
     mta_sts::TlsRpt,
     report::tlsrpt::{FailureDetails, ResultType},
 };
-use mail_send::{Credentials, SmtpClient};
-use rand::{seq::SliceRandom, Rng};
+use mail_send::SmtpClient;
 use smtp_proto::MAIL_REQUIRETLS;
 
 use crate::{
-    config::{AggregateFrequency, RelayHost, ServerProtocol, TlsStrategy},
+    config::{AggregateFrequency, TlsStrategy},
     core::Core,
     queue::ErrorDetails,
     reporting::{tls::TlsRptOptions, PolicyType, TlsEvent},
 };
 
 use super::{
+    lookup::ToRemoteHost,
     mta_sts,
     session::{read_greeting, say_helo, try_start_tls, SessionParams, StartTlsResult},
+    RemoteHost,
 };
 use crate::queue::{
     manager::Queue, throttle, DeliveryAttempt, Domain, Error, Event, OnHold, QueueEnvelope,
@@ -269,49 +269,24 @@ impl DeliveryAttempt {
                         }
                     };
 
-                    if !mx_list.is_empty() {
-                        // Obtain max number of MX hosts to process
-                        let max_mx = *queue_config.max_mx.eval(&envelope).await;
-                        let mut remote_hosts = Vec::with_capacity(max_mx);
-
-                        for mx in mx_list.iter() {
-                            if mx.exchanges.len() > 1 {
-                                let mut slice = mx.exchanges.iter().collect::<Vec<_>>();
-                                slice.shuffle(&mut rand::thread_rng());
-                                for remote_host in slice {
-                                    remote_hosts.push(RemoteHost::MX(remote_host.as_str()));
-                                    if remote_hosts.len() == max_mx {
-                                        break;
-                                    }
-                                }
-                            } else if let Some(remote_host) = mx.exchanges.first() {
-                                // Check for Null MX
-                                if mx.preference == 0 && remote_host == "." {
-                                    tracing::info!(
-                                        parent: &span,
-                                        context = "dns",
-                                        event = "null-mx",
-                                        reason = "Domain does not accept messages (mull MX)",
-                                    );
-                                    domain.set_status(
-                                        Status::PermanentFailure(Error::DnsError(
-                                            "Domain does not accept messages (null MX)".to_string(),
-                                        )),
-                                        queue_config.retry.eval(&envelope).await,
-                                    );
-                                    continue 'next_domain;
-                                }
-                                remote_hosts.push(RemoteHost::MX(remote_host.as_str()));
-                                if remote_hosts.len() == max_mx {
-                                    break;
-                                }
-                            }
-                        }
+                    if let Some(remote_hosts) = mx_list
+                        .to_remote_hosts(&domain.domain, *queue_config.max_mx.eval(&envelope).await)
+                    {
                         remote_hosts
                     } else {
-                        // If an empty list of MXs is returned, the address is treated as if it was
-                        // associated with an implicit MX RR with a preference of 0, pointing to that host.
-                        vec![RemoteHost::MX(domain.domain.as_str())]
+                        tracing::info!(
+                            parent: &span,
+                            context = "dns",
+                            event = "null-mx",
+                            reason = "Domain does not accept messages (mull MX)",
+                        );
+                        domain.set_status(
+                            Status::PermanentFailure(Error::DnsError(
+                                "Domain does not accept messages (null MX)".to_string(),
+                            )),
+                            queue_config.retry.eval(&envelope).await,
+                        );
+                        continue 'next_domain;
                     }
                 };
 
@@ -897,7 +872,7 @@ impl DeliveryAttempt {
         let mut has_pending_delivery = false;
         let span = self.span.clone();
 
-        for domain in &mut self.message.domains {
+        for (idx, domain) in self.message.domains.iter_mut().enumerate() {
             match &domain.status {
                 Status::TemporaryFailure(err) if domain.expires <= now => {
                     tracing::info!(
@@ -907,11 +882,15 @@ impl DeliveryAttempt {
                         reason = %err,
                     );
 
+                    for rcpt in &mut self.message.recipients {
+                        if rcpt.domain_idx == idx {
+                            rcpt.status = std::mem::replace(&mut rcpt.status, Status::Scheduled)
+                                .into_permanent();
+                        }
+                    }
+
                     domain.status =
-                        match std::mem::replace(&mut domain.status, Status::Completed(())) {
-                            Status::TemporaryFailure(err) => Status::PermanentFailure(err),
-                            _ => unreachable!(),
-                        };
+                        std::mem::replace(&mut domain.status, Status::Scheduled).into_permanent();
                     domain.changed = true;
                 }
                 Status::Scheduled if domain.expires <= now => {
@@ -921,6 +900,13 @@ impl DeliveryAttempt {
                         domain = domain.domain,
                         reason = "Queue rate limit exceeded.",
                     );
+
+                    for rcpt in &mut self.message.recipients {
+                        if rcpt.domain_idx == idx {
+                            rcpt.status = std::mem::replace(&mut rcpt.status, Status::Scheduled)
+                                .into_permanent();
+                        }
+                    }
 
                     domain.status = Status::PermanentFailure(Error::Io(
                         "Queue rate limit exceeded.".to_string(),
@@ -935,132 +921,6 @@ impl DeliveryAttempt {
         }
 
         has_pending_delivery
-    }
-}
-
-enum RemoteHost<'x> {
-    Relay(&'x RelayHost),
-    MX(&'x str),
-}
-
-impl<'x> RemoteHost<'x> {
-    fn hostname(&self) -> &str {
-        match self {
-            RemoteHost::MX(host) => host,
-            RemoteHost::Relay(host) => host.address.as_str(),
-        }
-    }
-
-    fn fqdn_hostname(&self) -> Cow<'_, str> {
-        match self {
-            RemoteHost::MX(host) => {
-                if !host.ends_with('.') {
-                    format!("{}.", host).into()
-                } else {
-                    (*host).into()
-                }
-            }
-            RemoteHost::Relay(host) => host.address.as_str().into(),
-        }
-    }
-
-    fn port(&self) -> u16 {
-        match self {
-            RemoteHost::MX(_) => 25,
-            RemoteHost::Relay(host) => host.port,
-        }
-    }
-
-    fn credentials(&self) -> Option<&Credentials<String>> {
-        match self {
-            RemoteHost::MX(_) => None,
-            RemoteHost::Relay(host) => host.auth.as_ref(),
-        }
-    }
-
-    fn allow_invalid_certs(&self) -> bool {
-        match self {
-            RemoteHost::MX(_) => false,
-            RemoteHost::Relay(host) => host.tls_allow_invalid_certs,
-        }
-    }
-
-    fn implicit_tls(&self) -> bool {
-        match self {
-            RemoteHost::MX(_) => false,
-            RemoteHost::Relay(host) => host.tls_implicit,
-        }
-    }
-
-    fn is_smtp(&self) -> bool {
-        match self {
-            RemoteHost::MX(_) => true,
-            RemoteHost::Relay(host) => host.protocol == ServerProtocol::Smtp,
-        }
-    }
-}
-
-impl Core {
-    async fn resolve_host(
-        &self,
-        remote_host: &RemoteHost<'_>,
-        envelope: &QueueEnvelope<'_>,
-        max_multihomed: usize,
-    ) -> Result<(Option<IpAddr>, Vec<IpAddr>), Status<(), Error>> {
-        let mut remote_ips = Vec::new();
-        let mut source_ip = None;
-
-        for (pos, remote_ip) in self
-            .resolvers
-            .dns
-            .ip_lookup(remote_host.fqdn_hostname().as_ref())
-            .await?
-            .take(max_multihomed)
-            .enumerate()
-        {
-            if pos == 0 {
-                if remote_ip.is_ipv4() {
-                    let source_ips = self.queue.config.source_ip.ipv4.eval(envelope).await;
-                    match source_ips.len().cmp(&1) {
-                        std::cmp::Ordering::Equal => {
-                            source_ip = IpAddr::from(*source_ips.first().unwrap()).into();
-                        }
-                        std::cmp::Ordering::Greater => {
-                            source_ip = IpAddr::from(
-                                source_ips[rand::thread_rng().gen_range(0..source_ips.len())],
-                            )
-                            .into();
-                        }
-                        std::cmp::Ordering::Less => (),
-                    }
-                } else {
-                    let source_ips = self.queue.config.source_ip.ipv6.eval(envelope).await;
-                    match source_ips.len().cmp(&1) {
-                        std::cmp::Ordering::Equal => {
-                            source_ip = IpAddr::from(*source_ips.first().unwrap()).into();
-                        }
-                        std::cmp::Ordering::Greater => {
-                            source_ip = IpAddr::from(
-                                source_ips[rand::thread_rng().gen_range(0..source_ips.len())],
-                            )
-                            .into();
-                        }
-                        std::cmp::Ordering::Less => (),
-                    }
-                }
-            }
-            remote_ips.push(remote_ip);
-        }
-
-        // Make sure there is at least one IP address
-        if !remote_ips.is_empty() {
-            Ok((source_ip, remote_ips))
-        } else {
-            Err(Status::TemporaryFailure(Error::DnsError(format!(
-                "No IP addresses found for {:?}.",
-                envelope.mx
-            ))))
-        }
     }
 }
 

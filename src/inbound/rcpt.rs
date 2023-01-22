@@ -7,6 +7,15 @@ use crate::core::{Session, SessionAddress};
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     pub async fn handle_rcpt_to(&mut self, to: RcptTo<String>) -> Result<(), ()> {
+        #[cfg(test)]
+        if self.instance.id.ends_with("-debug") {
+            if to.address.contains("fail@") {
+                return self.write(b"503 5.5.1 Invalid recipient.\r\n").await;
+            } else if to.address.contains("delay@") {
+                return self.write(b"451 4.5.3 Try again later.\r\n").await;
+            }
+        }
+
         if self.data.mail_from.is_none() {
             return self.write(b"503 5.5.1 MAIL is required first.\r\n").await;
         } else if self.data.rcpt_to.len() >= self.params.rcpt_max {
