@@ -26,6 +26,7 @@ pub mod scheduler;
 pub mod spf;
 pub mod tls;
 
+#[derive(Debug)]
 pub enum Event {
     Dmarc(Box<DmarcEvent>),
     Tls(Box<TlsEvent>),
@@ -49,7 +50,7 @@ pub struct TlsEvent {
     pub interval: AggregateFrequency,
 }
 
-#[derive(Debug, Hash)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub enum PolicyType {
     Tlsa(Option<Arc<Tlsa>>),
     Sts(Option<Arc<Policy>>),

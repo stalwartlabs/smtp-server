@@ -11,12 +11,11 @@ use mail_auth::{
     report::DmarcResult,
     spf::Spf,
 };
-use tokio::sync::mpsc;
 
 use crate::{
     config::{AggregateFrequency, ConfigContext, IfBlock, List, Rate, VerifyStrategy},
     core::{Core, Session},
-    tests::{inbound::read_dmarc_report, session::VerifyResponse, ParseTestConfig},
+    tests::{session::VerifyResponse, ParseTestConfig},
 };
 
 #[tokio::test]
@@ -90,8 +89,7 @@ async fn dmarc() {
     );
 
     // Create report channels
-    let (report_tx, mut report_rx) = mpsc::channel(128);
-    core.report.tx = report_tx;
+    let mut rr = core.init_test_report();
 
     let mut config = &mut core.session.config.rcpt;
     config.lookup_domains = IfBlock::new(Some(Arc::new(List::Local(AHashSet::from_iter([
@@ -229,7 +227,7 @@ async fn dmarc() {
         .assert_contains("dmarc=fail");
 
     // Expect DMARC aggregate report
-    let report = read_dmarc_report(&mut report_rx).await;
+    let report = rr.read_report().await.unwrap_dmarc();
     assert_eq!(report.domain, "example.com");
     assert_eq!(report.interval, AggregateFrequency::Daily);
     assert_eq!(report.dmarc_record.rua().len(), 1);

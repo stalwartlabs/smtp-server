@@ -9,8 +9,10 @@ use crate::{
 
 use super::add_test_certs;
 
+pub mod dane;
 pub mod extensions;
 pub mod lmtp;
+pub mod mta_sts;
 pub mod smtp;
 pub mod throttle;
 

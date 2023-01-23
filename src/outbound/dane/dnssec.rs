@@ -104,11 +104,11 @@ impl Resolvers {
     pub(crate) fn tlsa_add<'x>(
         &self,
         key: impl IntoFqdn<'x>,
-        value: Tlsa,
+        value: impl Into<Arc<Tlsa>>,
         valid_until: std::time::Instant,
     ) {
         self.cache
             .tlsa
-            .insert(key.into_fqdn().into_owned(), Arc::new(value), valid_until);
+            .insert(key.into_fqdn().into_owned(), value.into(), valid_until);
     }
 }

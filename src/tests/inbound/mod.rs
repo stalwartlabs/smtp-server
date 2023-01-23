@@ -1,13 +1,13 @@
 use std::time::Duration;
 
-use tokio::sync::mpsc::{self, error::TryRecvError};
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::{
-    queue::{self, Message, Schedule, WorkerResult},
+    queue::{self, Message, OnHold, Schedule, WorkerResult},
     reporting::{self, DmarcEvent, TlsEvent},
 };
 
-use super::QueueReceiver;
+use super::{QueueReceiver, ReportReceiver};
 
 pub mod auth;
 pub mod basic;
@@ -46,6 +46,31 @@ impl QueueReceiver {
     }
 }
 
+impl ReportReceiver {
+    pub async fn read_report(&mut self) -> reporting::Event {
+        match tokio::time::timeout(Duration::from_millis(100), self.report_rx.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => panic!("Channel closed."),
+            Err(_) => panic!("No report event received."),
+        }
+    }
+
+    pub async fn try_read_report(&mut self) -> Option<reporting::Event> {
+        match tokio::time::timeout(Duration::from_millis(100), self.report_rx.recv()).await {
+            Ok(Some(event)) => Some(event),
+            Ok(None) => panic!("Channel closed."),
+            Err(_) => None,
+        }
+    }
+    pub fn assert_no_reports(&mut self) {
+        match self.report_rx.try_recv() {
+            Err(TryRecvError::Empty) => (),
+            Ok(event) => panic!("Expected no reports but got {:?}", event),
+            Err(err) => panic!("Report error: {:?}", err),
+        }
+    }
+}
+
 impl queue::Event {
     pub fn unwrap_message(self) -> Box<Message> {
         match self {
@@ -80,27 +105,41 @@ impl queue::Event {
             e => panic!("Unexpected event: {:?}", e),
         }
     }
-}
 
-pub async fn read_dmarc_report(rx: &mut mpsc::Receiver<reporting::Event>) -> Box<DmarcEvent> {
-    match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-        Ok(Some(event)) => match event {
-            reporting::Event::Dmarc(event) => event,
-            _ => panic!("Unexpected event."),
-        },
-        Ok(None) => panic!("Channel closed."),
-        Err(_) => panic!("No queue event received."),
+    pub fn unwrap_on_hold(self) -> OnHold {
+        match self {
+            queue::Event::Done(WorkerResult::OnHold(value)) => value,
+            queue::Event::Queue(message) => {
+                panic!("Unexpected message: {}", message.inner.read_message());
+            }
+            e => panic!("Unexpected event: {:?}", e),
+        }
+    }
+
+    pub fn unwrap_retry(self) -> Schedule<Box<Message>> {
+        match self {
+            queue::Event::Done(WorkerResult::Retry(value)) => value,
+            queue::Event::Queue(message) => {
+                panic!("Unexpected message: {}", message.inner.read_message());
+            }
+            e => panic!("Unexpected event: {:?}", e),
+        }
     }
 }
 
-pub async fn read_tls_report(rx: &mut mpsc::Receiver<reporting::Event>) -> Box<TlsEvent> {
-    match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-        Ok(Some(event)) => match event {
+impl reporting::Event {
+    pub fn unwrap_dmarc(self) -> Box<DmarcEvent> {
+        match self {
+            reporting::Event::Dmarc(event) => event,
+            e => panic!("Unexpected event: {:?}", e),
+        }
+    }
+
+    pub fn unwrap_tls(self) -> Box<TlsEvent> {
+        match self {
             reporting::Event::Tls(event) => event,
-            _ => panic!("Unexpected event."),
-        },
-        Ok(None) => panic!("Channel closed."),
-        Err(_) => panic!("No queue event received."),
+            e => panic!("Unexpected event: {:?}", e),
+        }
     }
 }
 

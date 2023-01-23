@@ -5,12 +5,12 @@ use std::{
 };
 
 use mail_auth::{common::lru::DnsCache, mta_sts::MtaSts, report::tlsrpt::ResultType};
-use reqwest::redirect;
 
-use crate::{core::Core, USER_AGENT};
+use crate::core::Core;
 
 use super::{Error, Policy};
 
+#[allow(unused_variables)]
 impl Core {
     pub async fn lookup_mta_sts_policy<'x>(
         &self,
@@ -43,10 +43,11 @@ impl Core {
         }
 
         // Fetch policy
+        #[cfg(not(test))]
         let bytes = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
+            .user_agent(crate::USER_AGENT)
             .timeout(timeout)
-            .redirect(redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::none())
             .build()?
             .get(&format!(
                 "https://mta-sts.{}/.well-known/mta-sts.txt",
@@ -56,6 +57,10 @@ impl Core {
             .await?
             .bytes()
             .await?;
+        #[cfg(test)]
+        let bytes = crate::tests::outbound::mta_sts::STS_TEST_POLICY
+            .lock()
+            .clone();
 
         // Parse policy
         let policy = Policy::parse(

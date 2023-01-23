@@ -36,6 +36,7 @@ pub trait ParseTestConfig {
     fn parse_if<T: Default + ParseValues>(&self, ctx: &ConfigContext) -> IfBlock<T>;
     fn parse_throttle(&self, ctx: &ConfigContext) -> Vec<Throttle>;
     fn parse_quota(&self, ctx: &ConfigContext) -> QueueQuotas;
+    fn parse_queue_throttle(&self, ctx: &ConfigContext) -> QueueThrottle;
 }
 
 impl ParseTestConfig for &str {
@@ -89,6 +90,13 @@ impl ParseTestConfig for &str {
 
     fn parse_quota(&self, ctx: &ConfigContext) -> QueueQuotas {
         Config::parse(self).unwrap().parse_queue_quota(ctx).unwrap()
+    }
+
+    fn parse_queue_throttle(&self, ctx: &ConfigContext) -> QueueThrottle {
+        Config::parse(self)
+            .unwrap()
+            .parse_queue_throttle(ctx)
+            .unwrap()
     }
 }
 
@@ -400,6 +408,10 @@ pub struct QueueReceiver {
     pub queue_rx: mpsc::Receiver<crate::queue::Event>,
 }
 
+pub struct ReportReceiver {
+    pub report_rx: mpsc::Receiver<crate::reporting::Event>,
+}
+
 impl Core {
     pub fn init_test_queue(&mut self, test_name: &str) -> QueueReceiver {
         let _temp_dir = make_temp_dir(test_name, true);
@@ -412,5 +424,11 @@ impl Core {
             _temp_dir,
             queue_rx,
         }
+    }
+
+    pub fn init_test_report(&mut self) -> ReportReceiver {
+        let (report_tx, report_rx) = mpsc::channel(128);
+        self.report.tx = report_tx;
+        ReportReceiver { report_rx }
     }
 }

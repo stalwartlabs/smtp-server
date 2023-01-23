@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[tokio::test]
-async fn throttle() {
+async fn throttle_inbound() {
     let mut core = Core::test();
     let mut config = &mut core.session.config;
     config.throttle.connect = r"[[throttle]]

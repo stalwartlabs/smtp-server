@@ -23,6 +23,7 @@ pub struct Policy {
     pub max_age: u64,
 }
 
+#[derive(Debug)]
 pub enum Error {
     Dns(mail_auth::Error),
     Http(reqwest::Error),

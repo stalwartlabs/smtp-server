@@ -200,23 +200,34 @@ impl DeliveryAttempt {
                         Err(err) => {
                             // Report MTA-STS error
                             if let Some(tls_report) = &tls_report {
-                                if !matches!(
-                                    &err,
-                                    mta_sts::Error::Dns(
-                                        mail_auth::Error::DnsError(_)
-                                            | mail_auth::Error::DnsRecordNotFound(_)
-                                    )
-                                ) {
-                                    core.schedule_report(TlsEvent {
-                                        policy: PolicyType::Sts(None),
-                                        domain: envelope.domain.to_string(),
-                                        failure: FailureDetails::new(&err)
-                                            .with_failure_reason_code(err.to_string())
-                                            .into(),
-                                        tls_record: tls_report.record.clone(),
-                                        interval: tls_report.interval,
-                                    })
-                                    .await;
+                                match &err {
+                                    mta_sts::Error::Dns(mail_auth::Error::DnsRecordNotFound(_)) => {
+                                        if tls_strategy.is_mta_sts_required() {
+                                            core.schedule_report(TlsEvent {
+                                                policy: PolicyType::Sts(None),
+                                                domain: envelope.domain.to_string(),
+                                                failure: FailureDetails::new(ResultType::Other)
+                                                .with_failure_reason_code("MTA-STS is required and no policy was found.")
+                                                    .into(),
+                                                tls_record: tls_report.record.clone(),
+                                                interval: tls_report.interval,
+                                            })
+                                            .await;
+                                        }
+                                    }
+                                    mta_sts::Error::Dns(mail_auth::Error::DnsError(_)) => (),
+                                    _ => {
+                                        core.schedule_report(TlsEvent {
+                                            policy: PolicyType::Sts(None),
+                                            domain: envelope.domain.to_string(),
+                                            failure: FailureDetails::new(&err)
+                                                .with_failure_reason_code(err.to_string())
+                                                .into(),
+                                            tls_record: tls_report.record.clone(),
+                                            interval: tls_report.interval,
+                                        })
+                                        .await;
+                                    }
                                 }
                             }
 
@@ -350,6 +361,10 @@ impl DeliveryAttempt {
                         }
                     };
 
+                    // Update TLS strategy
+                    tls_strategy.dane = *queue_config.tls.dane.eval(&envelope).await;
+                    tls_strategy.tls = *queue_config.tls.start.eval(&envelope).await;
+
                     // Lookup DANE policy
                     let dane_policy = if tls_strategy.try_dane() {
                         match core
@@ -415,7 +430,7 @@ impl DeliveryAttempt {
                                             failure: FailureDetails::new(ResultType::DaneRequired)
                                                 .with_receiving_mx_hostname(envelope.mx)
                                                 .with_failure_reason_code(
-                                                    "DANE is required by this host.",
+                                                    "No TLSA DNSSEC records found.",
                                                 )
                                                 .into(),
                                             tls_record: tls_report.record.clone(),
@@ -453,6 +468,25 @@ impl DeliveryAttempt {
 
                                     last_status =
                                         if matches!(&err, mail_auth::Error::DnsRecordNotFound(_)) {
+                                            // Report DANE required
+                                            if let Some(tls_report) = &tls_report {
+                                                core.schedule_report(TlsEvent {
+                                                    policy: PolicyType::Tlsa(None),
+                                                    domain: envelope.domain.to_string(),
+                                                    failure: FailureDetails::new(
+                                                        ResultType::DaneRequired,
+                                                    )
+                                                    .with_receiving_mx_hostname(envelope.mx)
+                                                    .with_failure_reason_code(
+                                                        "No TLSA records found for MX.",
+                                                    )
+                                                    .into(),
+                                                    tls_record: tls_report.record.clone(),
+                                                    interval: tls_report.interval,
+                                                })
+                                                .await;
+                                            }
+
                                             Status::PermanentFailure(Error::DaneError(
                                                 ErrorDetails {
                                                     entity: envelope.mx.to_string(),
@@ -529,15 +563,6 @@ impl DeliveryAttempt {
                             }
                         };
 
-                        // Obtain TLS strategy
-                        tls_strategy.dane = *queue_config.tls.dane.eval(&envelope).await;
-                        tls_strategy.tls = *queue_config.tls.start.eval(&envelope).await;
-                        let tls_connector = if !remote_host.allow_invalid_certs() {
-                            &core.queue.connectors.pki_verify
-                        } else {
-                            &core.queue.connectors.dummy_verify
-                        };
-
                         // Obtail session parameters
                         let params = SessionParams {
                             span: &span,
@@ -549,6 +574,13 @@ impl DeliveryAttempt {
                             timeout_mail: *queue_config.timeout.mail.eval(&envelope).await,
                             timeout_rcpt: *queue_config.timeout.rcpt.eval(&envelope).await,
                             timeout_data: *queue_config.timeout.data.eval(&envelope).await,
+                        };
+
+                        // Prepare TLS connector
+                        let tls_connector = if !remote_host.allow_invalid_certs() {
+                            &core.queue.connectors.pki_verify
+                        } else {
+                            &core.queue.connectors.dummy_verify
                         };
 
                         let delivery_result = if !remote_host.implicit_tls() {

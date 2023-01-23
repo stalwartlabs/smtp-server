@@ -104,7 +104,7 @@ fn delivery_events() {
     assert!(message.next_event().is_none());
 }
 
-fn new_message() -> Box<Message> {
+pub fn new_message() -> Box<Message> {
     Box::new(Message {
         size: 0,
         id: 0,

@@ -42,53 +42,6 @@ impl Config {
             .parse_if_block::<Option<String>>("queue.outbound.next-hop", ctx, &rcpt_envelope_keys)?
             .unwrap_or_else(|| IfBlock::new(None));
 
-        // Parse throttle
-        let mut throttle = QueueThrottle {
-            sender: Vec::new(),
-            rcpt: Vec::new(),
-            host: Vec::new(),
-        };
-        let all_throttles = self.parse_throttle(
-            "queue.throttle",
-            ctx,
-            &rcpt_envelope_keys,
-            THROTTLE_RCPT_DOMAIN
-                | THROTTLE_SENDER
-                | THROTTLE_SENDER_DOMAIN
-                | THROTTLE_MX
-                | THROTTLE_REMOTE_IP
-                | THROTTLE_LOCAL_IP,
-        )?;
-        for t in all_throttles {
-            if (t.keys & (THROTTLE_MX | THROTTLE_REMOTE_IP | THROTTLE_LOCAL_IP)) != 0
-                || t.conditions.conditions.iter().any(|c| {
-                    matches!(
-                        c,
-                        Condition::Match {
-                            key: EnvelopeKey::Mx | EnvelopeKey::RemoteIp | EnvelopeKey::LocalIp,
-                            ..
-                        }
-                    )
-                })
-            {
-                throttle.host.push(t);
-            } else if (t.keys & (THROTTLE_RCPT_DOMAIN)) != 0
-                || t.conditions.conditions.iter().any(|c| {
-                    matches!(
-                        c,
-                        Condition::Match {
-                            key: EnvelopeKey::RecipientDomain,
-                            ..
-                        }
-                    )
-                })
-            {
-                throttle.rcpt.push(t);
-            } else {
-                throttle.sender.push(t);
-            }
-        }
-
         let default_hostname = self.value_require("server.hostname")?;
 
         let config = QueueConfig {
@@ -147,16 +100,16 @@ impl Config {
             next_hop: next_hop.into_relay_host(ctx)?,
             tls: QueueOutboundTls {
                 dane: self
-                    .parse_if_block("queue.outbound.tls.dane", ctx, &host_envelope_keys)?
+                    .parse_if_block("queue.outbound.tls.dane", ctx, &mx_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
                 mta_sts: self
                     .parse_if_block("queue.outbound.tls.mta_sts", ctx, &rcpt_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
                 start: self
-                    .parse_if_block("queue.outbound.tls.tls", ctx, &host_envelope_keys)?
+                    .parse_if_block("queue.outbound.tls.tls", ctx, &mx_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
             },
-            throttle,
+            throttle: self.parse_queue_throttle(ctx)?,
             quota: self.parse_queue_quota(ctx)?,
             timeout: QueueOutboundTimeout {
                 connect: self
@@ -209,6 +162,66 @@ impl Config {
         } else {
             Ok(config)
         }
+    }
+
+    pub fn parse_queue_throttle(&self, ctx: &ConfigContext) -> super::Result<QueueThrottle> {
+        // Parse throttle
+        let mut throttle = QueueThrottle {
+            sender: Vec::new(),
+            rcpt: Vec::new(),
+            host: Vec::new(),
+        };
+        let envelope_keys = [
+            EnvelopeKey::RecipientDomain,
+            EnvelopeKey::Sender,
+            EnvelopeKey::SenderDomain,
+            EnvelopeKey::Priority,
+            EnvelopeKey::Mx,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+        ];
+        let all_throttles = self.parse_throttle(
+            "queue.throttle",
+            ctx,
+            &envelope_keys,
+            THROTTLE_RCPT_DOMAIN
+                | THROTTLE_SENDER
+                | THROTTLE_SENDER_DOMAIN
+                | THROTTLE_MX
+                | THROTTLE_REMOTE_IP
+                | THROTTLE_LOCAL_IP,
+        )?;
+        for t in all_throttles {
+            if (t.keys & (THROTTLE_MX | THROTTLE_REMOTE_IP | THROTTLE_LOCAL_IP)) != 0
+                || t.conditions.conditions.iter().any(|c| {
+                    matches!(
+                        c,
+                        Condition::Match {
+                            key: EnvelopeKey::Mx | EnvelopeKey::RemoteIp | EnvelopeKey::LocalIp,
+                            ..
+                        }
+                    )
+                })
+            {
+                throttle.host.push(t);
+            } else if (t.keys & (THROTTLE_RCPT_DOMAIN)) != 0
+                || t.conditions.conditions.iter().any(|c| {
+                    matches!(
+                        c,
+                        Condition::Match {
+                            key: EnvelopeKey::RecipientDomain,
+                            ..
+                        }
+                    )
+                })
+            {
+                throttle.rcpt.push(t);
+            } else {
+                throttle.sender.push(t);
+            }
+        }
+
+        Ok(throttle)
     }
 
     pub fn parse_queue_quota(&self, ctx: &ConfigContext) -> super::Result<QueueQuotas> {

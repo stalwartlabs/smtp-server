@@ -35,7 +35,7 @@ async fn lmtp_delivery() {
     let mut core = Core::test();
     core.session.config.rcpt.relay = IfBlock::new(true);
     core.session.config.extensions.dsn = IfBlock::new(true);
-    let mut remote_qr = core.init_test_queue("smtp_delivery_remote");
+    let mut remote_qr = core.init_test_queue("lmtp_delivery_remote");
     let _rx = start_test_server(core.into(), false);
 
     // Add mock DNS entries
@@ -47,7 +47,7 @@ async fn lmtp_delivery() {
     );
 
     // Multiple delivery attempts
-    let mut local_qr = core.init_test_queue("smtp_delivery_local");
+    let mut local_qr = core.init_test_queue("lmtp_delivery_local");
 
     let mut ctx = ConfigContext::default();
     let config = Config::parse(REMOTE).unwrap();

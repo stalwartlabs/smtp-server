@@ -430,6 +430,7 @@ pub struct QueueOutboundTimeout {
     pub mta_sts: IfBlock<Duration>,
 }
 
+#[derive(Debug)]
 pub struct QueueThrottle {
     pub sender: Vec<Throttle>,
     pub rcpt: Vec<Throttle>,

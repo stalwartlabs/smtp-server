@@ -12,6 +12,7 @@ use crate::{
 
 use super::{Domain, Status};
 
+#[derive(Debug)]
 pub enum Error {
     Concurrency { limiter: ConcurrencyLimiter },
     Rate { retry_at: Instant },
@@ -69,10 +70,11 @@ impl QueueCore {
                         }
                         limiter
                     });
-                    let rate = throttle
-                        .rate
-                        .as_ref()
-                        .map(|rate| RateLimiter::new(rate.requests, rate.period.as_secs()));
+                    let rate = throttle.rate.as_ref().map(|rate| {
+                        let mut r = RateLimiter::new(rate.requests, rate.period.as_secs());
+                        r.is_allowed();
+                        r
+                    });
 
                     e.insert(Limiter { rate, concurrency });
                 }

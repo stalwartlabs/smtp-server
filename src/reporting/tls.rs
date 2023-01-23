@@ -31,7 +31,7 @@ use super::{
     TlsEvent,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TlsRptOptions {
     pub record: Arc<TlsRpt>,
     pub interval: AggregateFrequency,
