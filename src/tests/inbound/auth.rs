@@ -23,6 +23,9 @@ async fn auth() {
 
     let mut config = &mut core.session.config.auth;
 
+    config.require = r"[{if = 'remote-ip', eq = '10.0.0.1', then = true},
+    {else = false}]"
+        .parse_if(&ctx);
     config.lookup = r"[{if = 'remote-ip', eq = '10.0.0.1', then = 'plain'},
     {else = false}]"
         .parse_if::<Option<String>>(&ctx)
@@ -77,12 +80,17 @@ async fn auth() {
         .unwrap_err();
     session.response().assert_code("421 4.3.0");
 
+    // Should not be able to send without authenticating
+    session.state = State::default();
+    session.mail_from("bill@foobar.org", "503 5.5.1").await;
+
     // Successful PLAIN authentication
     session.data.auth_errors = 0;
-    session.state = State::default();
     session
         .cmd("AUTH PLAIN AGpvaG4Ac2VjcmV0", "235 2.7.0")
         .await;
+    session.mail_from("bill@foobar.org", "250").await;
+    session.data.mail_from.take();
 
     // Should not be able to authenticate twice
     session

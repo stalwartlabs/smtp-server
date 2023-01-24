@@ -12,7 +12,7 @@ use tokio_rustls::TlsAcceptor;
 use crate::{
     config::{Config, ConfigContext},
     core::throttle::{ConcurrencyLimiter, InFlight},
-    remote::lookup::{Item, LookupChannel, LookupResult},
+    remote::lookup::{Item, LookupResult},
 };
 
 use super::dummy_tls_acceptor;
@@ -46,9 +46,7 @@ async fn remote_smtp() {
     let mut ctx = ConfigContext::default();
     let config = Config::parse(REMOTE).unwrap();
     config.parse_remote_hosts(&mut ctx).unwrap();
-    let lookup = LookupChannel {
-        tx: ctx.hosts.remove("lmtp").unwrap().spawn(&config),
-    };
+    let lookup = ctx.hosts.remove("lmtp").unwrap().spawn(&config);
 
     // Basic lookup
     let tests = vec![

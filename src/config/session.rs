@@ -9,6 +9,36 @@ use super::{
 
 impl Config {
     pub fn parse_session_config(&self, ctx: &ConfigContext) -> super::Result<SessionConfig> {
+        let available_keys = [
+            EnvelopeKey::Listener,
+            EnvelopeKey::RemoteIp,
+            EnvelopeKey::LocalIp,
+        ];
+
+        Ok(SessionConfig {
+            duration: self
+                .parse_if_block("session.duration", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(15 * 60))),
+            transfer_limit: self
+                .parse_if_block("session.transfer-limit", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(250 * 1024 * 1024)),
+            timeout: self
+                .parse_if_block::<Option<Duration>>("session.timeout", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(Some(Duration::from_secs(5 * 60))))
+                .try_unwrap("session.timeout")
+                .unwrap_or_else(|_| IfBlock::new(Duration::from_secs(5 * 60))),
+            throttle: self.parse_session_throttle(ctx)?,
+            connect: self.parse_session_connect(ctx)?,
+            ehlo: self.parse_session_ehlo(ctx)?,
+            auth: self.parse_session_auth(ctx)?,
+            mail: self.parse_session_mail(ctx)?,
+            rcpt: self.parse_session_rcpt(ctx)?,
+            data: self.parse_session_data(ctx)?,
+            extensions: self.parse_extensions(ctx)?,
+        })
+    }
+
+    fn parse_session_throttle(&self, ctx: &ConfigContext) -> super::Result<SessionThrottle> {
         // Parse throttle
         let mut throttle = SessionThrottle {
             connect: Vec::new(),
@@ -78,33 +108,7 @@ impl Config {
             }
         }
 
-        let available_keys = [
-            EnvelopeKey::Listener,
-            EnvelopeKey::RemoteIp,
-            EnvelopeKey::LocalIp,
-        ];
-
-        Ok(SessionConfig {
-            duration: self
-                .parse_if_block("session.duration", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(Duration::from_secs(15 * 60))),
-            transfer_limit: self
-                .parse_if_block("session.transfer-limit", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(500 * 1024 * 1024)),
-            timeout: self
-                .parse_if_block::<Option<Duration>>("session.timeout", ctx, &available_keys)?
-                .unwrap_or_else(|| IfBlock::new(Some(Duration::from_secs(5 * 60))))
-                .try_unwrap("session.timeout")
-                .unwrap_or_else(|_| IfBlock::new(Duration::from_secs(5 * 60))),
-            throttle,
-            connect: self.parse_session_connect(ctx)?,
-            ehlo: self.parse_session_ehlo(ctx)?,
-            auth: self.parse_session_auth(ctx)?,
-            mail: self.parse_session_mail(ctx)?,
-            rcpt: self.parse_session_rcpt(ctx)?,
-            data: self.parse_session_data(ctx)?,
-            extensions: self.parse_extensions(ctx)?,
-        })
+        Ok(throttle)
     }
 
     fn parse_session_connect(&self, ctx: &ConfigContext) -> super::Result<Connect> {
@@ -212,6 +216,9 @@ impl Config {
                     .into_iter()
                     .fold(0, |acc, m| acc | m.mechanism),
             },
+            require: self
+                .parse_if_block("session.auth.require", ctx, &available_keys)?
+                .unwrap_or_else(|| IfBlock::new(false)),
             errors_max: self
                 .parse_if_block("session.auth.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(3)),

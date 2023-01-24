@@ -1,27 +1,28 @@
 [server]
-hostname = "mx.example.org"
-greeting = "Stalwart SMTP at your service"
+hostname = "%%HOST%%"
+#greeting = "Stalwart SMTP at your service"
 protocol = "smtp"
 
-[server.listener."smtp"]
-bind = ["0.0.0.0:9025"]
-tls.implicit = false
+[server.run-as]
+user = "stalwart-smtp"
+group = "stalwart-smtp"
 
-[server.listener."smtps"]
-bind = ["0.0.0.0:9465"]
-#tls.sni = [{subject = "domain.org", pki = "abc"}]
-#socket.backlog = 1024
+[server.listener."smtp"]
+bind = ["0.0.0.0:25"]
 
 [server.listener."submission"]
-bind = ["0.0.0.0:9587"]
-#tls = {implicit = true}
+bind = ["0.0.0.0:587"]
+
+[server.listener."submissions"]
+bind = ["0.0.0.0:465"]
+tls.implicit = true
 
 [server.tls]
 enable = true
-implicit = true
+implicit = false
 timeout = "1m"
 certificate = "default"
-#sni = [{subject = "domain.org", pki = "abc"}]
+#sni = [{subject = "", certificate = ""}]
 #protocols = ["TLSv1.2", TLSv1.3"]
 #ciphers = []
 ignore-client-order = true
@@ -39,11 +40,12 @@ backlog = 1024
 [global]
 log-level = "trace"
 concurrency = 1024
-throttle-map = {shard = 32, capacity = 10}
+shared-map = {shard = 32, capacity = 10}
+#thread-pool = 8
 
 [session]
 timeout = "5m"
-transfer-limit = 5000000
+transfer-limit = 262144000 # 250 MB
 duration = "10m"
 
 [session.connect]
@@ -58,21 +60,22 @@ pipelining = true
 chunking = true
 requiretls = true
 no-soliciting = ""
-dsn = true
-future-release = [
-    { if = "listener", eq = "submission", then = "5d"},
-    { else = false }
-]
-deliver-by = false
-mt-priority = false
+dsn = [ { if = "authenticated-as", ne = "", then = true},
+        { else = false } ]
+future-release = [ { if = "authenticated-as", ne = "", then = "7d"},
+                   { else = false } ]
+deliver-by = [ { if = "authenticated-as", ne = "", then = "15d"},
+               { else = false } ]
+mt-priority = [ { if = "authenticated-as", ne = "", then = "mixer"},
+                { else = false } ]
 
 [session.auth]
-mechanisms = [
-    { if = "listener", eq = "submission", then = ["plain", "login"]},
-    { else = false }
-]
-lookup = [ { if = "listener", eq = "submission", then = "local-addresses" }, 
+mechanisms = [ { if = "listener", ne = "smtp", then = ["plain", "login"]},
+               { else = [] } ]
+lookup = [ { if = "listener", ne = "smtp", then = "authentication" }, 
            { else = false } ]
+require = [ { if = "listener", ne = "smtp", then = true},
+            { else = false } ]
 
 [session.auth.errors]
 total = 3
@@ -80,13 +83,12 @@ wait = "5s"
 
 [session.mail]
 #script = mail-from.sieve
-timeout = 10
 
 [session.rcpt]
 #script = rcpt-to.sieve
 relay = [ { if = "authenticated-as", ne = "", then = true }, 
-         { else = false } ]
-max-recipients = 100
+          { else = false } ]
+max-recipients = 25
 
 [session.rcpt.lookup]
 domains = "local-domains"
@@ -97,7 +99,7 @@ expn = [ { if = "authenticated-as", ne = "", then = "local-addresses" },
          { else = false } ]
 
 [session.rcpt.errors]
-total = 3
+total = 5
 wait = "5s"
 
 [session.data]
@@ -105,222 +107,245 @@ wait = "5s"
 
 [session.data.limits]
 messages = 10
-size = 100000
+size = 104857600
 received-headers = 50
-mime-parts = 50
-nested-messages = 3
 
 [session.data.add-headers]
-received = true
-received-spf = true
-return-path = true
-auth-results = true
-message-id = true
-date = true
+received = [ { if = "listener", eq = "smtp", then = true }, 
+             { else = false } ]
+received-spf = [ { if = "listener", eq = "smtp", then = true }, 
+                 { else = false } ]
+auth-results = [ { if = "listener", eq = "smtp", then = true }, 
+                 { else = false } ]
+message-id = [ { if = "listener", eq = "smtp", then = false }, 
+               { else = true } ]
+date = [ { if = "listener", eq = "smtp", then = false }, 
+         { else = true } ]
+return-path = false
 
 [[session.throttle]]
-match = {if = "remote-ip", eq = "127.0.0.1"}
-key = ["remote-ip", "authenticated-as"]
-concurrency = 100
-rate = "50/30s"
+#match = {if = "remote-ip", eq = "10.0.0.1"}
+key = ["remote-ip"]
+concurrency = 5
+#rate = "5/1h"
 
 [[session.throttle]]
-key = "sender-domain"
-concurrency = 10000
+key = ["sender-domain", "rcpt"]
+rate = "25/1h"
 
 [auth.iprev]
-verify = "strict"
+verify = [ { if = "listener", eq = "smtp", then = "relaxed" }, 
+           { else = "disable" } ]
 
 [auth.dkim]
-verify = "strict"
-sign = true
+verify = "relaxed"
+sign = [ { if = "listener", ne = "smtp", then = ["rsa"] }, 
+         { else = [] } ]
 
-[signature."default"]
-public-key = "cert-name"
-private-key = "cert-name"
-domain = "example.org"
-selector = ""
-headers = ["From", "To", "Date", "Subject", "Message-ID"]
-algorithm = "rsa-sha256"
-canonicalization = "simple/relaxed"
-expire = "10d"
-third-party = ""
-third-party-algo = ""
-auid = ""
-set-body-length = false
-report = true
-
-[auth.spf]
-verify.ehlo = "relaxed"
-verify.mail-from = "relaxed"
+[auth.spf.verify]
+ehlo = [ { if = "listener", eq = "smtp", then = "relaxed" }, 
+         { else = "disable" } ]
+mail-from = [ { if = "listener", eq = "smtp", then = "relaxed" }, 
+              { else = "disable" } ]
 
 [auth.arc]
-verify = "strict"
-seal = true
+verify = "relaxed"
+seal = ["rsa"]
 
 [auth.dmarc]
-verify = "strict"
-
-[remote."lmtp"]
-address = 192.168.0.1
-port = 25
-protocol = "lmtp"
-
-[remote."lmtp".auth]
-username = "hello"
-secret = "world"
-
-[remote."lmtp".cache]
-entries = 1000
-ttl = {positive = 10, negative = 5}
-
-[remote."lmtp".tls]
-implicit = true
-allow-invalid-certs = true
+verify = [ { if = "listener", eq = "smtp", then = "relaxed" }, 
+           { else = "disable" } ]
 
 [queue]
-path = "/var/spool/queue"
-hash = 123
+path = "%%QUEUE_DIR%%"
+hash = 64
 
 [queue.schedule]
-retry = ["0m", "2m", "5m", "10m", "15m", "30m", "1h", "2h"]
+retry = ["2m", "5m", "10m", "15m", "30m", "1h", "2h"]
 notify = ["1d", "3d"]
 expire = "5d"
 
 [queue.outbound]
 #hostname = mx.domain.org
-next-hop = "lmtp"
+next-hop = [ { if = "rcpt-domain", in-list = "local-domains", then = "lmtp" }, 
+             { else = false } ]
+ip-strategy = "ipv4-then-ipv6"
 
 [queue.outbound.tls]
-dane = require
-mta-sts = disabled
-starttls = optional
+dane = "optional"
+mta-sts = "optional"
+starttls = "require"
 
-[queue.outbound.source-ip]
-v4 = ["192.168.0.2", "162.168.0.1"]
-v6 = ["192.168.0.2", "162.168.0.1"]
+#[queue.outbound.source-ip]
+#v4 = ["10.0.0.10", "10.0.0.11"]
+#v6 = ["a::b", "a::c"]
 
 [queue.outbound.limits]
-mx = 5
+mx = 7
 multihomed = 2
 
 [queue.outbound.timeouts]
-connect = "1m"
-greeting = "1m"
-tls = "1m"
-ehlo = "1m"
-mail-from = "1m"
-rcpt-to = "1m"
-data = "5m"
-mta-sts = "1m"
+connect = "3m"
+greeting = "3m"
+tls = "2m"
+ehlo = "3m"
+mail-from = "3m"
+rcpt-to = "3m"
+data = "10m"
+mta-sts = "2m"
 
 [[queue.quota]]
-match = {if = "remote-ip", eq = "127.0.0.1"}
-key = [""]
-messages = 10000
-size = 1000000
+#match = {if = "remote-ip", eq = "10.0.0.1"}
+#key = ["rcpt"]
+messages = 100000
+size = 10737418240 # 10gb
 
 [[queue.throttle]]
-rate = "1/60s"
-concurrency = 1000
-key = ["remote-ip"]
+key = ["rcpt-domain"]
+#rate = "100/1h"
+concurrency = 5
 
 [resolver]
-type = "cloudflare"
-strategy = "ipv6"
-dnssec = true
-preserve-intermediates = true
+type = "cloudflare-tls"
+#preserve-intermediates = true
 concurrency = 2
-timeout = 100
-attempts = 3
+timeout = "5s"
+attempts = 2
 try-tcp-on-error = true
 
 [resolver.cache]
-a = 1000
-mx = 9393
-txt = 3233
-tlsa = 333
+txt = 2048
+mx = 1024
+ipv4 = 1024
+ipv6 = 1024
+ptr = 1024
+tlsa = 1024
+mta-sts = 1024
 
+[report]
+path = "%%QUEUE_DIR%%"
+hash = 64
+#submitter = "mx.domain.org"
 
-[scripts]
+[report.analysis]
+addresses = ["dmarc@*", "abuse@*"]
+forward = true
+#store = "/var/spool/report"
 
-[scripts]
-ehlo = "this is my script"
+[report.dsn]
+from-name = "Mail Delivery Subsystem"
+from-address = "MAILER-DAEMON@%%DOMAIN%%"
+sign = ["rsa"]
+
+[report.dkim]
+from-name = "Report Subsystem"
+from-address = "noreply-dkim@%%DOMAIN%%"
+subject = "DKIM Authentication Failure Report"
+sign = ["rsa"]
+send = "1/1d"
+
+[report.spf]
+from-name = "Report Subsystem"
+from-address = "noreply-spf@%%DOMAIN%%"
+subject = "SPF Authentication Failure Report"
+send = "1/1d"
+sign = ["rsa"]
+
+[report.dmarc]
+from-name = "Report Subsystem"
+from-address = "noreply-dmarc@%%DOMAIN%%"
+subject = "DMARC Authentication Failure Report"
+send = "1/1d"
+sign = ["rsa"]
+
+[report.dmarc.aggregate]
+from-name = "DMARC Report"
+from-address = "noreply-dmarc@%%DOMAIN%%"
+org-name = "%%DOMAIN%%"
+#contact-info = ""
+send = "daily"
+max-size = 26214400 # 25mb
+sign = ["rsa"]
+
+[report.tls.aggregate]
+from-name = "TLS Report"
+from-address = "noreply-tls@%%DOMAIN%%"
+org-name = "%%DOMAIN%%"
+#contact-info = ""
+send = "daily"
+max-size = 26214400 # 25 mb
+sign = ["rsa"]
+
+[signature."rsa"]
+public-key = "%%DKIM_PUBLIC%%"
+private-key = "%%DKIM_PRIVATE%%"
+domain = "%%DOMAIN%%"
+selector = "%%DKIM_SELECTOR%%"
+headers = ["From", "To", "Date", "Subject", "Message-ID"]
+algorithm = "rsa-sha256"
+canonicalization = "relaxed/relaxed"
+#expire = "10d"
+#third-party = ""
+#third-party-algo = ""
+#auid = ""
+set-body-length = false
+report = true
+
+[remote."lmtp"]
+address = "%LMTP_HOST%"
+port = 25
+protocol = "lmtp"
+timeout = "1m"
+
+[remote."lmtp".cache]
+entries = 1000
+ttl = {positive = "1d", negative = "1h"}
+
+[remote."lmtp".tls]
+implicit = false
+allow-invalid-certs = true
+
+#[remote."lmtp".auth]
+#username = ""
+#secret = ""
+
+[remote."lmtp".limits]
+errors = 3
+requests = 50
+
+[remote."imap"]
+address = "%IMAP_HOST%"
+port = 143
+protocol = "imap"
+timeout = "1m"
+
+[remote."imap".cache]
+entries = 1000
+ttl = {positive = "1d", negative = "1h"}
+
+[remote."imap".tls]
+implicit = false
+allow-invalid-certs = true
+
+#[scripts]
+#ehlo = "this is my script"
 
 [list."local-domains"]
 type = "inline"
-items = ["example.org", "*.example.net"]
+items = ["%%DOMAIN%%"]
 
 [list."local-addresses"]
 type = "remote"
 host = "lmtp"
 
+[list."authentication"]
+type = "remote"
+host = "imap"
+
 #[list."local-users"]
 #type = "file"
 #path = "/tmp/file.txt"
 
-[report]
-path = "/var/spool/report"
-hash = 16
-submitter = "mx.domain.org"
-
-[report.analysis]
-addresses = ["dmarc@*", "abuse@*"]
-forward = true
-store = "/var/spool/report"
-
-[report.dsn]
-from-name = "Mail Delivery Subsystem"
-from-address = "MAILER-DAEMON@domain.org"
-subject = "Delivery Status Notification"
-sign = []
-
-[report.dkim]
-from-name = "Autentication Report"
-from-address = "noreply-auth-failure"
-subject = "SPF Authentication Failure Report"
-send = "1/20d"
-
-[report.spf]
-from-name = "Autentication Report"
-from-address = "noreply-auth-failure"
-subject = "SPF Authentication Failure Report"
-sign = []
-send = "1/20d"
-
-[report.dmarc]
-from-name = "DMARC report"
-from-address = "noreply-dmarc"
-subject = "DMARC Failure Report"
-send = "1/20d"
-sign = []
-
-[report.dmarc.aggregate]
-from-name = "DMARC report"
-from-address = "noreply-dmarc"
-subject = "DMARC aggregate report for $1"
-org-name = "Mycorp"
-contact-info = ""
-send = never
-max-size = 10000
-sign = []
-
-[report.tls.aggregate]
-from-name = "Autentication Report"
-from-address = "noreply-auth-failure"
-subject = "TLS Failure Report"
-org-name = "Mycorp"
-contact-info = ""
-send = never
-max-size = 10000
-sign = []
-
-[servers."relay".dmarc]
-send-reports = true
-#report-frequency = requested, 86400
-incoming-address = "dmarc@*"
-
-[certificate]
 [certificate."default"]
 cert = '''
 -----BEGIN CERTIFICATE-----

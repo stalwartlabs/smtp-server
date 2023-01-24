@@ -80,14 +80,14 @@ impl Config {
                             &String::from_utf8(self.file_contents((
                                 "signature",
                                 id,
-                                "public-key",
+                                "private-key",
                             ))?)
                             .unwrap_or_default(),
                         )
                         .map_err(|err| {
                             format!(
                                 "Failed to build RSA key for {}: {}",
-                                ("signature", id, "public-key",).as_key(),
+                                ("signature", id, "private-key",).as_key(),
                                 err
                             )
                         })?;
@@ -95,14 +95,14 @@ impl Config {
                             &String::from_utf8(self.file_contents((
                                 "signature",
                                 id,
-                                "public-key",
+                                "private-key",
                             ))?)
                             .unwrap_or_default(),
                         )
                         .map_err(|err| {
                             format!(
                                 "Failed to build RSA key for {}: {}",
-                                ("signature", id, "public-key",).as_key(),
+                                ("signature", id, "private-key",).as_key(),
                                 err
                             )
                         })?;

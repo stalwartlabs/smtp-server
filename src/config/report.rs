@@ -111,15 +111,6 @@ impl Config {
                     &rcpt_envelope_keys,
                 )?
                 .unwrap_or_else(|| IfBlock::new(format!("noreply-{}@{}", id, default_hostname))),
-            subject: self
-                .parse_if_block(
-                    ("report", id, "aggregate.subject"),
-                    ctx,
-                    &rcpt_envelope_keys,
-                )?
-                .unwrap_or_else(|| {
-                    IfBlock::new(format!("{} Aggregage Report", id.to_ascii_uppercase()))
-                }),
             org_name: self
                 .parse_if_block(
                     ("report", id, "aggregate.org-name"),

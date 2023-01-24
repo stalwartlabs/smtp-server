@@ -22,6 +22,7 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
         let ac = &self.core.session.config.auth;
         self.params.auth_script = ac.script.eval(self).await.clone();
         self.params.auth_lookup = ac.lookup.eval(self).await.clone();
+        self.params.auth_require = *ac.require.eval(self).await;
         self.params.auth_errors_max = *ac.errors_max.eval(self).await;
         self.params.auth_errors_wait = *ac.errors_wait.eval(self).await;
 

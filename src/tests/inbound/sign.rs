@@ -17,7 +17,7 @@ use crate::{
 
 const SIGNATURES: &str = "
 [signature.rsa]
-public-key = '''
+private-key = '''
 -----BEGIN RSA PRIVATE KEY-----
 MIICXwIBAAKBgQDwIRP/UC3SBsEmGqZ9ZJW3/DkMoGeLnQg1fWn7/zYtIxN2SnFC
 jxOCKG9v3b4jYfcTNh5ijSsq631uBItLa7od+v/RtdC2UzJ1lWT947qR+Rcac2gb

@@ -37,7 +37,7 @@ pub struct TlsRptOptions {
     pub interval: AggregateFrequency,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TlsFormat {
     rua: Vec<ReportUri>,
     policy: PolicyDetails,
@@ -131,6 +131,7 @@ impl GenerateTlsReport for Arc<Core> {
                     event = "empty-report",
                     "No policies found in report"
                 );
+                path.cleanup_blocking();
                 return;
             }
 
@@ -161,6 +162,15 @@ impl GenerateTlsReport for Arc<Core> {
                             .timeout(Duration::from_secs(2 * 60))
                             .build()
                         {
+                            #[cfg(test)]
+                            if uri == "https://127.0.0.1/tls" {
+                                crate::tests::reporting::tls::TLS_HTTP_REPORT
+                                    .lock()
+                                    .extend_from_slice(&json);
+                                path.cleanup_blocking();
+                                return;
+                            }
+
                             match client
                                 .post(uri)
                                 .header(CONTENT_TYPE, "application/tlsrpt+gzip")
@@ -169,6 +179,15 @@ impl GenerateTlsReport for Arc<Core> {
                             {
                                 Ok(response) => {
                                     if response.status().is_success() {
+                                        tracing::info!(
+                                            parent: &span,
+                                            context = "http",
+                                            event = "success",
+                                            url = uri,
+                                        );
+                                        path.cleanup_blocking();
+                                        return;
+                                    } else {
                                         tracing::debug!(
                                             parent: &span,
                                             context = "http",
@@ -176,7 +195,6 @@ impl GenerateTlsReport for Arc<Core> {
                                             url = uri,
                                             status = %response.status()
                                         );
-                                        return;
                                     }
                                 }
                                 Err(err) => {
@@ -271,7 +289,7 @@ impl Scheduler {
                 }
             }
             Entry::Vacant(e) => {
-                let created = event.interval.from_timestamp();
+                let created = event.interval.to_timestamp();
                 let deliver_at = created + event.interval.as_secs();
 
                 self.main.push(Schedule {
@@ -366,7 +384,7 @@ impl Scheduler {
             let bytes_written = json_write(&path.path[pos].inner, &entry).await;
 
             if bytes_written > 0 {
-                path.size = bytes_written;
+                path.size += bytes_written;
             } else {
                 // Something went wrong, remove record
                 if let Entry::Occupied(mut e) = self
@@ -383,7 +401,8 @@ impl Scheduler {
             }
         } else if path.size < *max_size {
             // Append to existing report
-            path.size += json_append(&path.path[pos].inner, &event.failure).await;
+            path.size +=
+                json_append(&path.path[pos].inner, &event.failure, *max_size - path.size).await;
         }
     }
 }

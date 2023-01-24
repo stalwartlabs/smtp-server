@@ -45,6 +45,7 @@ impl AnalyzeReport for Arc<Core> {
             let message = if let Some(message) = Message::parse(&message) {
                 message
             } else {
+                tracing::debug!(context = "report", "Failed to parse message.");
                 return;
             };
             let from = match message.from() {
@@ -114,7 +115,9 @@ impl AnalyzeReport for Arc<Core> {
                             ("xml", _) => Format::Dmarc,
                             ("tlsrpt", _) | (_, "json") => Format::Tls,
                             _ => {
-                                if attachment_name.map_or(false, |n| n.contains(".xml")) {
+                                if attachment_name
+                                    .map_or(false, |n| n.contains(".xml") || n.contains('!'))
+                                {
                                     Format::Dmarc
                                 } else {
                                     continue;

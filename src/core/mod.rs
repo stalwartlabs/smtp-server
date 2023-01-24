@@ -161,6 +161,7 @@ pub struct SessionParameters {
     // Auth parameters
     pub auth_script: Option<Arc<Script>>,
     pub auth_lookup: Option<Arc<List>>,
+    pub auth_require: bool,
     pub auth_errors_max: usize,
     pub auth_errors_wait: Duration,
 

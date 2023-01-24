@@ -167,12 +167,15 @@ impl Message {
 }
 
 impl AggregateFrequency {
-    pub fn from_timestamp(&self) -> u64 {
-        let mut dt = DateTime::from_timestamp(
+    pub fn to_timestamp(&self) -> u64 {
+        self.to_timestamp_(DateTime::from_timestamp(
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs()) as i64,
-        );
+        ))
+    }
+
+    pub fn to_timestamp_(&self, mut dt: DateTime) -> u64 {
         (match self {
             AggregateFrequency::Hourly => {
                 dt.minute = 0;
@@ -190,7 +193,7 @@ impl AggregateFrequency {
                 dt.hour = 0;
                 dt.minute = 0;
                 dt.second = 0;
-                dt.to_timestamp() - (86400 * 7 * dow as i64)
+                dt.to_timestamp() - (86400 * dow as i64)
             }
             AggregateFrequency::Never => dt.to_timestamp(),
         }) as u64
@@ -248,6 +251,56 @@ impl From<(&Option<Arc<Policy>>, &Option<Arc<Tlsa>>)> for PolicyType {
             (Some(value), _) => PolicyType::Sts(Some(value.clone())),
             (_, Some(value)) => PolicyType::Tlsa(Some(value.clone())),
             _ => PolicyType::None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mail_parser::DateTime;
+
+    use crate::config::AggregateFrequency;
+
+    #[test]
+    fn aggregate_to_timestamp() {
+        for (freq, date, expected) in [
+            (
+                AggregateFrequency::Hourly,
+                "2023-01-24T09:10:40Z",
+                "2023-01-24T09:00:00Z",
+            ),
+            (
+                AggregateFrequency::Daily,
+                "2023-01-24T09:10:40Z",
+                "2023-01-24T00:00:00Z",
+            ),
+            (
+                AggregateFrequency::Weekly,
+                "2023-01-24T09:10:40Z",
+                "2023-01-22T00:00:00Z",
+            ),
+            (
+                AggregateFrequency::Weekly,
+                "2023-01-28T23:59:59Z",
+                "2023-01-22T00:00:00Z",
+            ),
+            (
+                AggregateFrequency::Weekly,
+                "2023-01-22T23:59:59Z",
+                "2023-01-22T00:00:00Z",
+            ),
+        ] {
+            assert_eq!(
+                DateTime::from_timestamp(
+                    freq.to_timestamp_(DateTime::parse_rfc3339(date).unwrap()) as i64
+                )
+                .to_rfc3339(),
+                expected,
+                "failed for {:?} {} {}",
+                freq,
+                date,
+                expected
+            );
         }
     }
 }

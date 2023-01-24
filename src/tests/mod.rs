@@ -30,6 +30,7 @@ pub mod inbound;
 pub mod outbound;
 pub mod queue;
 pub mod remote;
+pub mod reporting;
 pub mod session;
 
 pub trait ParseTestConfig {
@@ -173,6 +174,7 @@ impl SessionConfig {
                 script: IfBlock::new(None),
                 lookup: IfBlock::new(None),
                 mechanisms: IfBlock::new(AUTH_PLAIN | AUTH_LOGIN),
+                require: IfBlock::new(false),
                 errors_max: IfBlock::new(10),
                 errors_wait: IfBlock::new(Duration::from_secs(1)),
             },
@@ -353,7 +355,6 @@ impl AggregateReport {
         Self {
             name: IfBlock::default(),
             address: IfBlock::default(),
-            subject: IfBlock::default(),
             org_name: IfBlock::default(),
             contact_info: IfBlock::default(),
             send: IfBlock::default(),

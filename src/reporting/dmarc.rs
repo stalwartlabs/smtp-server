@@ -29,10 +29,10 @@ use super::{
 };
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct DmarcFormat {
-    rua: Vec<URI>,
-    policy: PolicyPublished,
-    records: Vec<Record>,
+pub struct DmarcFormat {
+    pub rua: Vec<URI>,
+    pub policy: PolicyPublished,
+    pub records: Vec<Record>,
 }
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
@@ -412,7 +412,7 @@ impl Scheduler {
             Entry::Occupied(e) => (None, e.into_mut().dmarc_path()),
             Entry::Vacant(e) => {
                 let domain = e.key().domain_name().to_string();
-                let created = event.interval.from_timestamp();
+                let created = event.interval.to_timestamp();
                 let deliver_at = created + event.interval.as_secs();
 
                 self.main.push(Schedule {
@@ -452,62 +452,7 @@ impl Scheduler {
             }
         } else if path.size < *max_size {
             // Append to existing report
-            path.size += json_append(&path.path, &event.report_record).await;
+            path.size += json_append(&path.path, &event.report_record, *max_size - path.size).await;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use mail_auth::{
-        dmarc::URI,
-        report::{Alignment, Disposition, PolicyPublished, Record},
-    };
-
-    use crate::reporting::dmarc::DmarcFormat;
-
-    #[test]
-    fn strip_json() {
-        let mut d = DmarcFormat {
-            rua: vec![
-                URI {
-                    uri: "hello".to_string(),
-                    max_size: 0,
-                },
-                URI {
-                    uri: "world".to_string(),
-                    max_size: 0,
-                },
-            ],
-            policy: PolicyPublished {
-                domain: "example.org".to_string(),
-                version_published: None,
-                adkim: Alignment::Relaxed,
-                aspf: Alignment::Strict,
-                p: Disposition::Quarantine,
-                sp: Disposition::Reject,
-                testing: false,
-                fo: None,
-            },
-            records: vec![Record::default()
-                .with_count(1)
-                .with_envelope_from("domain.net")
-                .with_envelope_to("other.org")],
-        };
-        let mut s = serde_json::to_string(&d).unwrap();
-        s.truncate(s.len() - 2);
-
-        let r = Record::default()
-            .with_count(2)
-            .with_envelope_from("otherdomain.net")
-            .with_envelope_to("otherother.org");
-        let rs = serde_json::to_string(&r).unwrap();
-
-        d.records.push(r);
-
-        assert_eq!(
-            serde_json::from_str::<DmarcFormat>(&format!("{},{}]}}", s, rs)).unwrap(),
-            d
-        );
     }
 }

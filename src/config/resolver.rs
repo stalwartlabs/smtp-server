@@ -35,9 +35,11 @@ impl Config {
         if let Some(preserve) = self.property("resolver.preserve-intermediates")? {
             opts.preserve_intermediates = preserve;
         }
-
         if let Some(try_tcp_on_error) = self.property("resolver.try-tcp-on-error")? {
             opts.try_tcp_on_error = try_tcp_on_error;
+        }
+        if let Some(attempts) = self.property("resolver.attempts")? {
+            opts.attempts = attempts;
         }
 
         // Prepare DNSSEC resolver options

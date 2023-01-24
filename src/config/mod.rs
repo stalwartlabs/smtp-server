@@ -259,6 +259,7 @@ pub struct Auth {
     pub script: IfBlock<Option<Arc<Script>>>,
     pub lookup: IfBlock<Option<Arc<List>>>,
     pub mechanisms: IfBlock<u64>,
+    pub require: IfBlock<bool>,
     pub errors_max: IfBlock<usize>,
     pub errors_wait: IfBlock<Duration>,
 }
@@ -397,7 +398,6 @@ pub struct Dsn {
 pub struct AggregateReport {
     pub name: IfBlock<String>,
     pub address: IfBlock<String>,
-    pub subject: IfBlock<String>,
     pub org_name: IfBlock<Option<String>>,
     pub contact_info: IfBlock<Option<String>>,
     pub send: IfBlock<AggregateFrequency>,

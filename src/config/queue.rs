@@ -1,4 +1,4 @@
-use std::{fs, time::Duration};
+use std::time::Duration;
 
 use mail_send::Credentials;
 
@@ -103,10 +103,10 @@ impl Config {
                     .parse_if_block("queue.outbound.tls.dane", ctx, &mx_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
                 mta_sts: self
-                    .parse_if_block("queue.outbound.tls.mta_sts", ctx, &rcpt_envelope_keys)?
+                    .parse_if_block("queue.outbound.tls.mta-sts", ctx, &rcpt_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
                 start: self
-                    .parse_if_block("queue.outbound.tls.tls", ctx, &mx_envelope_keys)?
+                    .parse_if_block("queue.outbound.tls.starttls", ctx, &mx_envelope_keys)?
                     .unwrap_or_else(|| IfBlock::new(RequireOptional::Optional)),
             },
             throttle: self.parse_queue_throttle(ctx)?,
@@ -430,11 +430,10 @@ impl ParseValue for PathBuf {
     fn parse_value(_key: impl utils::AsKey, value: &str) -> super::Result<Self> {
         let path = PathBuf::from(value);
 
-        if !path.exists() {
-            fs::create_dir(&path)
-                .map_err(|err| format!("Failed to create spool directory {:?}: {}", path, err))?;
+        if path.exists() {
+            Ok(path)
+        } else {
+            Err(format!("Directory {} does not exist.", path.display()))
         }
-
-        Ok(path)
     }
 }

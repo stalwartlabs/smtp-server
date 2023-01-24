@@ -33,10 +33,6 @@ impl Server {
         for listener_config in self.listeners {
             // Bind socket
             let local_ip = listener_config.addr.ip();
-            listener_config
-                .socket
-                .bind(listener_config.addr)
-                .map_err(|err| format!("Failed to bind to {}: {}", listener_config.addr, err))?;
             let listener = listener_config
                 .socket
                 .listen(listener_config.backlog.unwrap_or(1024))

@@ -99,7 +99,7 @@ async fn data() {
         .await;
     assert_eq!(
         qr.read_event().await.unwrap_message().read_message(),
-        load_test_message("no_msgid")
+        load_test_message("no_msgid", "messages")
     );
 
     // Maximum one message per session is allowed for 10.0.0.1

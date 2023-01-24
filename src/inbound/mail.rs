@@ -20,6 +20,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             return self
                 .write(b"503 5.5.1 Multiple MAIL commands not allowed.\r\n")
                 .await;
+        } else if self.params.auth_require && self.data.authenticated_as.is_empty() {
+            return self
+                .write(b"503 5.5.1 You must authenticate first.\r\n")
+                .await;
         } else if self.data.iprev.is_none() && self.params.iprev.verify() {
             let iprev = self
                 .core

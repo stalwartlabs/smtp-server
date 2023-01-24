@@ -56,21 +56,20 @@ pub trait RemoteLookup: Clone {
 }
 
 impl Host {
-    pub fn spawn(self, config: &Config) -> mpsc::Sender<Event> {
+    pub fn spawn(self, config: &Config) -> LookupChannel {
         // Create channel
-        let (tx, rx) = mpsc::channel(1024);
         let local_host = config
             .value("server.hostname")
             .unwrap_or("[127.0.0.1]")
             .to_string();
-        let tx_ = tx.clone();
+        let tx_ = self.channel_tx.clone();
 
         tokio::spawn(async move {
             // Prepare builders
             match self.protocol {
                 ServerProtocol::Smtp | ServerProtocol::Lmtp => {
                     RemoteHost {
-                        tx,
+                        tx: self.channel_tx,
                         host: Arc::new(SmtpClientBuilder {
                             builder: mail_send::SmtpClientBuilder {
                                 addr: format!("{}:{}", self.address, self.port),
@@ -87,7 +86,7 @@ impl Host {
                         }),
                     }
                     .run(
-                        rx,
+                        self.channel_rx,
                         self.cache_entries,
                         self.cache_ttl_positive,
                         self.cache_ttl_negative,
@@ -97,7 +96,7 @@ impl Host {
                 }
                 ServerProtocol::Imap => {
                     RemoteHost {
-                        tx,
+                        tx: self.channel_tx,
                         host: Arc::new(
                             ImapAuthClientBuilder::new(
                                 format!("{}:{}", self.address, self.port),
@@ -111,7 +110,7 @@ impl Host {
                         ),
                     }
                     .run(
-                        rx,
+                        self.channel_rx,
                         self.cache_entries,
                         self.cache_ttl_positive,
                         self.cache_ttl_negative,
@@ -122,7 +121,7 @@ impl Host {
             }
         });
 
-        tx_
+        LookupChannel { tx: tx_ }
     }
 }
 

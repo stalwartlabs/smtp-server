@@ -76,6 +76,10 @@ impl RateLimiter {
             )
     }
 
+    pub fn elapsed(&self) -> Duration {
+        self.limiter.0.elapsed()
+    }
+
     pub fn reset(&mut self) {
         self.limiter = (Instant::now(), self.max_requests);
     }

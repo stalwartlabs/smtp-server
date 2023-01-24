@@ -157,7 +157,11 @@ impl Session<DummyIo> {
         self.ingest(b"DATA\r\n").await.unwrap();
         self.response().assert_code("354");
         if let Some(file) = data.strip_prefix("test:") {
-            self.ingest(load_test_message(file).as_bytes())
+            self.ingest(load_test_message(file, "messages").as_bytes())
+                .await
+                .unwrap();
+        } else if let Some(file) = data.strip_prefix("report:") {
+            self.ingest(load_test_message(file, "reports").as_bytes())
                 .await
                 .unwrap();
         } else {
@@ -176,11 +180,11 @@ impl Session<DummyIo> {
     }
 }
 
-pub fn load_test_message(file: &str) -> String {
+pub fn load_test_message(file: &str, test: &str) -> String {
     let mut test_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     test_file.push("resources");
     test_file.push("tests");
-    test_file.push("messages");
+    test_file.push(test);
     test_file.push(format!("{}.eml", file));
     std::fs::read_to_string(test_file).unwrap()
 }

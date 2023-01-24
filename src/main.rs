@@ -68,40 +68,43 @@ async fn main() -> std::io::Result<()> {
             ),
             throttle: DashMap::with_capacity_and_hasher_and_shard_amount(
                 config
-                    .property("global.throttle-map.capacity")
-                    .failed("Failed to parse throttle map capacity")
+                    .property("global.shared-map.capacity")
+                    .failed("Failed to parse shared map capacity")
                     .unwrap_or(2),
                 ThrottleKeyHasherBuilder::default(),
                 config
-                    .property("global.throttle-map.shard")
-                    .failed("Failed to parse throttle map shard amount")
-                    .unwrap_or(32),
+                    .property::<u64>("global.shared-map.shard")
+                    .failed("Failed to parse shared map shard amount")
+                    .unwrap_or(32)
+                    .next_power_of_two() as usize,
             ),
         },
         queue: QueueCore {
             config: queue_config,
             throttle: DashMap::with_capacity_and_hasher_and_shard_amount(
                 config
-                    .property("global.throttle-map.capacity")
-                    .failed("Failed to parse throttle map capacity")
+                    .property("global.shared-map.capacity")
+                    .failed("Failed to parse shared map capacity")
                     .unwrap_or(2),
                 ThrottleKeyHasherBuilder::default(),
                 config
-                    .property("global.throttle-map.shard")
-                    .failed("Failed to parse throttle map shard amount")
-                    .unwrap_or(32),
+                    .property::<u64>("global.shared-map.shard")
+                    .failed("Failed to parse shared map shard amount")
+                    .unwrap_or(32)
+                    .next_power_of_two() as usize,
             ),
             id_seq: 0.into(),
             quota: DashMap::with_capacity_and_hasher_and_shard_amount(
                 config
-                    .property("global.throttle-map.capacity")
-                    .failed("Failed to parse throttle map capacity")
+                    .property("global.shared-map.capacity")
+                    .failed("Failed to parse shared map capacity")
                     .unwrap_or(2),
                 ThrottleKeyHasherBuilder::default(),
                 config
-                    .property("global.throttle-map.shard")
-                    .failed("Failed to parse throttle map shard amount")
-                    .unwrap_or(32),
+                    .property::<u64>("global.shared-map.shard")
+                    .failed("Failed to parse shared map shard amount")
+                    .unwrap_or(32)
+                    .next_power_of_two() as usize,
             ),
             tx: queue_tx,
             connectors: TlsConnectors {
@@ -115,6 +118,25 @@ async fn main() -> std::io::Result<()> {
         },
         mail_auth: mail_auth_config,
     });
+
+    // Bind ports before dropping privileges
+    for server in &config_context.servers {
+        for listener in &server.listeners {
+            listener
+                .socket
+                .bind(listener.addr)
+                .failed(&format!("Failed to bind to {}", listener.addr));
+        }
+    }
+
+    // Drop privileges
+    if let Some(run_as_user) = config.value("server.run-as.user") {
+        let mut pd = privdrop::PrivDrop::default().user(run_as_user);
+        if let Some(run_as_group) = config.value("server.run-as.group") {
+            pd = pd.group(run_as_group);
+        }
+        pd.apply().failed("Failed to drop privileges");
+    }
 
     // Enable logging
     tracing::subscriber::set_global_default(
@@ -138,6 +160,13 @@ async fn main() -> std::io::Result<()> {
 
     // Spawn report manager
     report_rx.spawn(core.clone(), core.report.read_reports().await);
+
+    // Spawn remote hosts
+    for host in config_context.hosts.into_values() {
+        if host.ref_count != 0 {
+            host.spawn(&config);
+        }
+    }
 
     // Spawn listeners
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

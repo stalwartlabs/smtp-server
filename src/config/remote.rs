@@ -38,7 +38,7 @@ impl Config {
                 .unwrap_or(Duration::from_secs(86400)),
             cache_ttl_negative: self
                 .property(("remote", id, "cache.ttl.positive"))?
-                .unwrap_or(Duration::from_secs(86400)),
+                .unwrap_or(Duration::from_secs(3600)),
             timeout: self
                 .property(("remote", id, "timeout"))?
                 .unwrap_or(Duration::from_secs(60)),

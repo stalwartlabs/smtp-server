@@ -23,7 +23,7 @@ use tokio::{
 
 use crate::{
     config::AggregateFrequency,
-    core::{Core, ReportCore},
+    core::{worker::SpawnCleanup, Core, ReportCore},
     queue::{InstantFromTimestamp, Schedule},
 };
 
@@ -39,12 +39,13 @@ pub struct Scheduler {
     pub reports: AHashMap<ReportKey, ReportValue>,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReportType<T, U> {
     Dmarc(T),
     Tls(U),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct ReportPath<T> {
     pub path: T,
     pub size: usize,
@@ -52,7 +53,7 @@ pub struct ReportPath<T> {
     pub deliver_at: AggregateFrequency,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReportPolicy<T> {
     pub inner: T,
     pub policy: u64,
@@ -61,6 +62,8 @@ pub struct ReportPolicy<T> {
 impl SpawnReport for mpsc::Receiver<Event> {
     fn spawn(mut self, core: Arc<Core>, mut scheduler: Scheduler) {
         tokio::spawn(async move {
+            let mut last_cleanup = Instant::now();
+
             loop {
                 match tokio::time::timeout(scheduler.wake_up_time(), self.recv()).await {
                     Ok(Some(event)) => match event {
@@ -85,6 +88,12 @@ impl SpawnReport for mpsc::Receiver<Event> {
                                 _ => unreachable!(),
                             }
                         }
+
+                        // Cleanup expired throttles
+                        if last_cleanup.elapsed().as_secs() >= 86400 {
+                            last_cleanup = Instant::now();
+                            core.spawn_cleanup();
+                        }
                     }
                 }
             }
@@ -101,8 +110,8 @@ impl Core {
         interval: AggregateFrequency,
     ) -> PathBuf {
         let (ext, domain) = match domain {
-            ReportType::Dmarc(domain) => ("t", domain),
-            ReportType::Tls(domain) => ("d", domain),
+            ReportType::Dmarc(domain) => ("d", domain),
+            ReportType::Tls(domain) => ("t", domain),
         };
 
         // Build base path
@@ -153,7 +162,7 @@ impl ReportCore {
                     Ok(Some(file)) => {
                         let file = file.path();
                         if file.is_dir() {
-                            match tokio::fs::read_dir(path).await {
+                            match tokio::fs::read_dir(&file).await {
                                 Ok(mut dir) => {
                                     let file_ = file;
                                     loop {
@@ -399,24 +408,26 @@ pub async fn json_write(path: &PathBuf, entry: &impl Serialize) -> usize {
     }
 }
 
-pub async fn json_append(path: &PathBuf, entry: &impl Serialize) -> usize {
+pub async fn json_append(path: &PathBuf, entry: &impl Serialize, bytes_left: usize) -> usize {
     let mut bytes = Vec::with_capacity(128);
     bytes.push(b',');
     if serde_json::to_writer(&mut bytes, entry).is_ok() {
-        let err = match OpenOptions::new().append(true).open(&path).await {
-            Ok(mut file) => match file.write_all(&bytes).await {
-                Ok(_) => return bytes.len() + 1,
+        if bytes.len() <= bytes_left {
+            let err = match OpenOptions::new().append(true).open(&path).await {
+                Ok(mut file) => match file.write_all(&bytes).await {
+                    Ok(_) => return bytes.len(),
+                    Err(err) => err,
+                },
                 Err(err) => err,
-            },
-            Err(err) => err,
-        };
-        tracing::error!(
-            context = "report",
-            event = "error",
-            "Failed to append report to {}: {}",
-            path.display(),
-            err
-        );
+            };
+            tracing::error!(
+                context = "report",
+                event = "error",
+                "Failed to append report to {}: {}",
+                path.display(),
+                err
+            );
+        }
     }
     0
 }
