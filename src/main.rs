@@ -12,6 +12,7 @@ use smtp_server::{
     reporting::{self, scheduler::SpawnReport},
 };
 use tokio::sync::{mpsc, watch};
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -130,23 +131,31 @@ async fn main() -> std::io::Result<()> {
     }
 
     // Drop privileges
-    if let Some(run_as_user) = config.value("server.run-as.user") {
-        let mut pd = privdrop::PrivDrop::default().user(run_as_user);
-        if let Some(run_as_group) = config.value("server.run-as.group") {
-            pd = pd.group(run_as_group);
+    #[cfg(not(target_env = "msvc"))]
+    {
+        if let Some(run_as_user) = config.value("server.run-as.user") {
+            let mut pd = privdrop::PrivDrop::default().user(run_as_user);
+            if let Some(run_as_group) = config.value("server.run-as.group") {
+                pd = pd.group(run_as_group);
+            }
+            pd.apply().failed("Failed to drop privileges");
         }
-        pd.apply().failed("Failed to drop privileges");
     }
 
     // Enable logging
+    let file_appender = tracing_appender::rolling::daily("/var/log/stalwart-smtp", "smtp.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
-            .with_max_level(
-                config
-                    .property("global.log-level")
-                    .failed("Failed to parse log level")
-                    .unwrap_or(tracing::Level::INFO),
+            .with_env_filter(
+                EnvFilter::builder()
+                    .parse(&format!(
+                        "smtp_server={}",
+                        config.value("global.log-level").unwrap_or("info")
+                    ))
+                    .failed("Failed to log level"),
             )
+            .with_writer(non_blocking)
             .finish(),
     )
     .failed("Failed to set subscriber");

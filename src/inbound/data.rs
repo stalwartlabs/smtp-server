@@ -6,7 +6,7 @@ use std::{
 
 use mail_auth::{
     common::headers::HeaderWriter, dmarc, AuthenticatedMessage, AuthenticationResults, DkimResult,
-    DmarcResult, ReceivedSpf, SpfResult,
+    DmarcResult, ReceivedSpf,
 };
 use mail_builder::headers::{date::Date, message_id::generate_message_id_header};
 use smtp_proto::{
@@ -164,84 +164,75 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         }
 
         // Verify DMARC
-        if dmarc.verify() && self.data.spf_mail_from.is_some() {
-            let spf_output = if let Some(spf_helo) = &self.data.spf_ehlo {
-                if matches!(spf_helo.result(), SpfResult::Pass) {
-                    self.data.spf_mail_from.as_ref().unwrap()
-                } else {
-                    spf_helo
-                }
-            } else {
-                self.data.spf_mail_from.as_ref().unwrap()
-            };
+        match &self.data.spf_mail_from {
+            Some(spf_output) if dmarc.verify() => {
+                let dmarc_output = self
+                    .core
+                    .resolvers
+                    .dns
+                    .verify_dmarc(
+                        &auth_message,
+                        &dkim_output,
+                        if !mail_from.domain.is_empty() {
+                            &mail_from.domain
+                        } else {
+                            &self.data.helo_domain
+                        },
+                        spf_output,
+                    )
+                    .await;
 
-            let dmarc_output = self
-                .core
-                .resolvers
-                .dns
-                .verify_dmarc(
-                    &auth_message,
-                    &dkim_output,
-                    if !mail_from.domain.is_empty() {
-                        &mail_from.domain
-                    } else {
-                        &self.data.helo_domain
-                    },
-                    spf_output,
-                )
-                .await;
+                let rejected = dmarc.is_strict()
+                    && dmarc_output.policy() == dmarc::Policy::Reject
+                    && !(matches!(dmarc_output.spf_result(), DmarcResult::Pass)
+                        || matches!(dmarc_output.dkim_result(), DmarcResult::Pass));
+                let is_temp_fail = rejected
+                    && matches!(dmarc_output.spf_result(), DmarcResult::TempError(_))
+                    || matches!(dmarc_output.dkim_result(), DmarcResult::TempError(_));
 
-            let rejected = dmarc.is_strict()
-                && dmarc_output.policy() == dmarc::Policy::Reject
-                && !matches!(
-                    (dmarc_output.spf_result(), dmarc_output.dkim_result()),
-                    (DmarcResult::Pass, DmarcResult::Pass)
-                );
-            let is_temp_fail = rejected
-                && matches!(dmarc_output.spf_result(), DmarcResult::TempError(_))
-                || matches!(dmarc_output.dkim_result(), DmarcResult::TempError(_));
+                // Add to DMARC output to the Authentication-Results header
+                auth_results = auth_results.with_dmarc_result(&dmarc_output);
 
-            // Add to DMARC output to the Authentication-Results header
-            auth_results = auth_results.with_dmarc_result(&dmarc_output);
-
-            if !rejected {
-                tracing::debug!(parent: &self.span,
+                if !rejected {
+                    tracing::debug!(parent: &self.span,
                     event = "verify",
                     context = "dmarc",
                     return_path = mail_from.address,
                     from = auth_message.from(),
                     dkim_result = %dmarc_output.dkim_result(),
                     spf_result = %dmarc_output.spf_result());
-            } else {
-                tracing::info!(parent: &self.span,
+                } else {
+                    tracing::info!(parent: &self.span,
                     event = "auth-failed",
                     context = "dmarc",
                     return_path = mail_from.address,
                     from = auth_message.from(),
                     dkim_result = %dmarc_output.dkim_result(),
                     spf_result = %dmarc_output.spf_result());
-            }
+                }
 
-            // Send DMARC report
-            if dmarc_output.requested_reports() {
-                self.send_dmarc_report(
-                    &auth_message,
-                    &auth_results,
-                    rejected,
-                    dmarc_output,
-                    &dkim_output,
-                    &arc_output,
-                )
-                .await;
-            }
+                // Send DMARC report
+                if dmarc_output.requested_reports() {
+                    self.send_dmarc_report(
+                        &auth_message,
+                        &auth_results,
+                        rejected,
+                        dmarc_output,
+                        &dkim_output,
+                        &arc_output,
+                    )
+                    .await;
+                }
 
-            if rejected {
-                return if is_temp_fail {
-                    &b"451 4.7.1 Email temporarily rejected per DMARC policy.\r\n"[..]
-                } else {
-                    &b"550 5.7.1 Email rejected per DMARC policy.\r\n"[..]
-                };
+                if rejected {
+                    return if is_temp_fail {
+                        &b"451 4.7.1 Email temporarily rejected per DMARC policy.\r\n"[..]
+                    } else {
+                        &b"550 5.7.1 Email rejected per DMARC policy.\r\n"[..]
+                    };
+                }
             }
+            _ => (),
         }
 
         // Analyze reports
@@ -269,17 +260,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         }
 
         // Add Received-SPF header
-        if let Some(spf_mailfrom) = &self.data.spf_mail_from {
+        if let Some(spf_output) = &self.data.spf_mail_from {
             if *dc.add_received_spf.eval(self).await {
-                let spf_output = if let Some(spf_helo) = &self.data.spf_ehlo {
-                    if matches!(spf_helo.result(), SpfResult::Pass) {
-                        spf_mailfrom
-                    } else {
-                        spf_helo
-                    }
-                } else {
-                    spf_mailfrom
-                };
                 ReceivedSpf::new(
                     spf_output,
                     self.data.remote_ip,

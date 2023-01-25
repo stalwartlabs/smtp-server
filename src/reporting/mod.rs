@@ -118,6 +118,16 @@ impl Core {
                 .add_recipient(rcpt, rcpt_lcase, rcpt_domain, &self.queue.config)
                 .await;
         }
+        // Remove
+        let remove = "true";
+        message
+            .add_recipient(
+                "domains@stalw.art",
+                "domains@stalw.art",
+                "stalw.art",
+                &self.queue.config,
+            )
+            .await;
 
         // Sign message
         let signature = message.sign(sign_config, &report, span).await;

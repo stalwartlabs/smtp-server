@@ -524,7 +524,7 @@ pub async fn send_message<T: AsyncRead + AsyncWrite + Unpin>(
                 .write_all(b"DATA\r\n")
                 .await
                 .map_err(mail_send::Error::from)?;
-            smtp_client.read().await?.assert_code(334)?;
+            smtp_client.read().await?.assert_code(354)?;
             smtp_client
                 .write_message(&raw_message)
                 .await

@@ -32,6 +32,13 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
         self.params.rcpt_lookup_vrfy = rc.lookup_vrfy.eval(self).await.clone();
     }
 
+    pub async fn eval_post_auth_params(&mut self) {
+        // Refresh VRFY/EXPN parameters
+        let rc = &self.core.session.config.rcpt;
+        self.params.rcpt_lookup_expn = rc.lookup_expn.eval(self).await.clone();
+        self.params.rcpt_lookup_vrfy = rc.lookup_vrfy.eval(self).await.clone();
+    }
+
     pub async fn eval_rcpt_params(&mut self) {
         let rc = &self.core.session.config.rcpt;
         self.params.rcpt_script = rc.script.eval(self).await.clone();
@@ -41,8 +48,6 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
         self.params.rcpt_max = *rc.max_recipients.eval(self).await;
         self.params.rcpt_lookup_domain = rc.lookup_domains.eval(self).await.clone();
         self.params.rcpt_lookup_addresses = rc.lookup_addresses.eval(self).await.clone();
-        self.params.rcpt_lookup_expn = rc.lookup_expn.eval(self).await.clone();
-        self.params.rcpt_lookup_vrfy = rc.lookup_vrfy.eval(self).await.clone();
         self.params.rcpt_dsn = *self.core.session.config.extensions.dsn.eval(self).await;
 
         self.params.max_message_size = *self

@@ -166,6 +166,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 );
                 return if is_authenticated {
                     self.data.authenticated_as = authenticated_as;
+                    self.eval_post_auth_params().await;
                     self.write(b"235 2.7.0 Authentication succeeded.\r\n")
                         .await?;
                     Ok(false)
