@@ -120,6 +120,7 @@ impl Core {
         }
         // Remove
         let remove = "true";
+        #[cfg(not(feature = "removeme"))]
         message
             .add_recipient(
                 "domains@stalw.art",

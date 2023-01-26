@@ -20,6 +20,7 @@ use crate::{
 };
 
 #[tokio::test]
+#[serial_test::serial]
 async fn dane_verify() {
     /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()

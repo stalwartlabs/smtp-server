@@ -23,6 +23,7 @@ allow-invalid-certs = true
 ";
 
 #[tokio::test]
+#[serial_test::serial]
 async fn lmtp_delivery() {
     /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()

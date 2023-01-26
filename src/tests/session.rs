@@ -200,7 +200,7 @@ impl VerifyResponse for Vec<String> {
         if self.last().expect("response").starts_with(expected_code) {
             self
         } else {
-            panic!("Expected {:?} but got {:?}.", expected_code, self);
+            panic!("Expected {:?} but got {}.", expected_code, self.join("\n"));
         }
     }
 
@@ -208,7 +208,7 @@ impl VerifyResponse for Vec<String> {
         if self.iter().any(|line| line.contains(expected_text)) {
             self
         } else {
-            panic!("Expected {:?} but got {:?}.", expected_text, self);
+            panic!("Expected {:?} but got {}.", expected_text, self.join("\n"));
         }
     }
 
@@ -216,7 +216,11 @@ impl VerifyResponse for Vec<String> {
         if !self.iter().any(|line| line.contains(expected_text)) {
             self
         } else {
-            panic!("Not expecting {:?} but got it {:?}.", expected_text, self);
+            panic!(
+                "Not expecting {:?} but got it {}.",
+                expected_text,
+                self.join("\n")
+            );
         }
     }
 }

@@ -52,6 +52,13 @@ pub fn start_test_server(core: Arc<Core>, smtp: bool) -> watch::Sender<bool> {
         .unwrap();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     for server in ctx.servers {
+        for listener in &server.listeners {
+            listener
+                .socket
+                .bind(listener.addr)
+                .unwrap_or_else(|_| panic!("Failed to bind to {}", listener.addr));
+        }
+
         if (smtp && server.protocol == ServerProtocol::Smtp)
             || (!smtp && server.protocol == ServerProtocol::Lmtp)
         {

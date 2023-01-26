@@ -23,6 +23,7 @@ use crate::{
 pub static STS_TEST_POLICY: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
 #[tokio::test]
+#[serial_test::serial]
 async fn mta_sts_verify() {
     /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()

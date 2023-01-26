@@ -190,7 +190,8 @@ impl ImapAuthClient<TcpStream> {
         tls_hostname: &str,
     ) -> Result<ImapAuthClient<TlsStream<TcpStream>>, Error> {
         let line = tokio::time::timeout(self.timeout, async {
-            self.stream.write_all(b"C7 STARTTLS\r\n").await?;
+            self.write(b"C7 STARTTLS\r\n").await?;
+
             self.read_line().await
         })
         .await
@@ -259,42 +260,39 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
         credentials: &Credentials<String>,
     ) -> Result<(), Error> {
         if (mechanism & (AUTH_PLAIN | AUTH_XOAUTH2 | AUTH_OAUTHBEARER)) != 0 {
-            self.stream
-                .write_all(
-                    format!(
-                        "C3 AUTHENTICATE {} {}\r\n",
-                        mechanism.to_mechanism(),
-                        credentials
-                            .encode(mechanism, "")
-                            .map_err(|err| Error::InvalidChallenge(err.to_string()))?
-                    )
-                    .as_bytes(),
+            self.write(
+                format!(
+                    "C3 AUTHENTICATE {} {}\r\n",
+                    mechanism.to_mechanism(),
+                    credentials
+                        .encode(mechanism, "")
+                        .map_err(|err| Error::InvalidChallenge(err.to_string()))?
                 )
-                .await?;
+                .as_bytes(),
+            )
+            .await?;
         } else {
-            self.stream
-                .write_all(format!("C3 AUTHENTICATE {}\r\n", mechanism.to_mechanism()).as_bytes())
+            self.write(format!("C3 AUTHENTICATE {}\r\n", mechanism.to_mechanism()).as_bytes())
                 .await?;
         }
         let mut line = self.read_line().await?;
 
         for _ in 0..3 {
             if matches!(line.first(), Some(b'+')) {
-                self.stream
-                    .write_all(
-                        format!(
-                            "{}\r\n",
-                            credentials
-                                .encode(
-                                    mechanism,
-                                    std::str::from_utf8(line.get(2..).unwrap_or_default())
-                                        .unwrap_or_default()
-                                )
-                                .map_err(|err| Error::InvalidChallenge(err.to_string()))?
-                        )
-                        .as_bytes(),
+                self.write(
+                    format!(
+                        "{}\r\n",
+                        credentials
+                            .encode(
+                                mechanism,
+                                std::str::from_utf8(line.get(2..).unwrap_or_default())
+                                    .unwrap_or_default()
+                            )
+                            .map_err(|err| Error::InvalidChallenge(err.to_string()))?
                     )
-                    .await?;
+                    .as_bytes(),
+                )
+                .await?;
                 line = self.read_line().await?;
             } else if matches!(line.get(..5), Some(b"C3 OK")) {
                 return Ok(());
@@ -312,7 +310,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
 
     pub async fn authentication_mechanisms(&mut self) -> Result<u64, Error> {
         tokio::time::timeout(self.timeout, async {
-            self.stream.write_all(b"C0 CAPABILITY\r\n").await?;
+            self.write(b"C0 CAPABILITY\r\n").await?;
 
             let line = self.read_line().await?;
             if !matches!(line.get(..12), Some(b"* CAPABILITY")) {
@@ -350,7 +348,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
 
     pub async fn noop(&mut self) -> Result<(), Error> {
         tokio::time::timeout(self.timeout, async {
-            self.stream.write_all(b"C8 NOOP\r\n").await?;
+            self.write(b"C8 NOOP\r\n").await?;
             self.read_line().await?;
             Ok(())
         })
@@ -360,7 +358,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
 
     pub async fn logout(&mut self) -> Result<(), Error> {
         tokio::time::timeout(self.timeout, async {
-            self.stream.write_all(b"C9 LOGOUT\r\n").await?;
+            self.write(b"C9 LOGOUT\r\n").await?;
             Ok(())
         })
         .await
@@ -406,6 +404,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
                 return Err(Error::Disconnected);
             }
         }
+    }
+
+    async fn write(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
+        self.stream.write_all(bytes).await?;
+        self.stream.flush().await
     }
 }
 

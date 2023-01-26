@@ -14,6 +14,7 @@ use crate::{
 };
 
 #[tokio::test]
+#[serial_test::serial]
 async fn extensions() {
     /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()

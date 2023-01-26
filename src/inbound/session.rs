@@ -311,21 +311,24 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
 
     #[inline(always)]
     pub async fn write(&mut self, bytes: &[u8]) -> Result<(), ()> {
-        match self.stream.write_all(bytes).await {
-            Ok(_) => {
-                tracing::trace!(parent: &self.span,
-                                event = "write",
-                                data = std::str::from_utf8(bytes).unwrap_or_default() ,
-                                size = bytes.len());
-                Ok(())
-            }
-            Err(err) => {
-                tracing::debug!(parent: &self.span,
-                                event = "error",
-                                "Failed to write to stream: {:?}", err);
-                Err(())
-            }
-        }
+        let err = match self.stream.write_all(bytes).await {
+            Ok(_) => match self.stream.flush().await {
+                Ok(_) => {
+                    tracing::trace!(parent: &self.span,
+                            event = "write",
+                            data = std::str::from_utf8(bytes).unwrap_or_default() ,
+                            size = bytes.len());
+                    return Ok(());
+                }
+                Err(err) => err,
+            },
+            Err(err) => err,
+        };
+
+        tracing::debug!(parent: &self.span,
+            event = "error",
+            "Failed to write to stream: {:?}", err);
+        Err(())
     }
 
     #[inline(always)]

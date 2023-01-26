@@ -204,6 +204,7 @@ enum RemoteHost<'x> {
 }
 
 impl<'x> RemoteHost<'x> {
+    #[inline(always)]
     fn hostname(&self) -> &str {
         match self {
             RemoteHost::MX(host) => host,
@@ -211,6 +212,7 @@ impl<'x> RemoteHost<'x> {
         }
     }
 
+    #[inline(always)]
     fn fqdn_hostname(&self) -> Cow<'_, str> {
         match self {
             RemoteHost::MX(host) => {
@@ -224,6 +226,7 @@ impl<'x> RemoteHost<'x> {
         }
     }
 
+    #[inline(always)]
     fn port(&self) -> u16 {
         match self {
             #[cfg(test)]
@@ -234,6 +237,7 @@ impl<'x> RemoteHost<'x> {
         }
     }
 
+    #[inline(always)]
     fn credentials(&self) -> Option<&Credentials<String>> {
         match self {
             RemoteHost::MX(_) => None,
@@ -241,6 +245,7 @@ impl<'x> RemoteHost<'x> {
         }
     }
 
+    #[inline(always)]
     fn allow_invalid_certs(&self) -> bool {
         #[cfg(test)]
         {
@@ -253,6 +258,7 @@ impl<'x> RemoteHost<'x> {
         }
     }
 
+    #[inline(always)]
     fn implicit_tls(&self) -> bool {
         match self {
             RemoteHost::MX(_) => false,
@@ -260,6 +266,7 @@ impl<'x> RemoteHost<'x> {
         }
     }
 
+    #[inline(always)]
     fn is_smtp(&self) -> bool {
         match self {
             RemoteHost::MX(_) => true,

@@ -117,11 +117,15 @@ async fn dmarc() {
     config.dmarc_aggregate.send = IfBlock::new(AggregateFrequency::Daily);
 
     let mut config = &mut core.mail_auth;
-    config.spf.verify_ehlo = IfBlock::new(VerifyStrategy::Strict);
+    config.spf.verify_ehlo = "[{if = 'remote-ip', eq = '10.0.0.2', then = 'strict'},
+    { else = 'relaxed' }]"
+        .parse_if(&ConfigContext::default());
     config.spf.verify_mail_from = config.spf.verify_ehlo.clone();
-    config.dkim.verify = config.spf.verify_ehlo.clone();
-    config.arc.verify = config.spf.verify_ehlo.clone();
-    config.dmarc.verify = config.spf.verify_ehlo.clone();
+    config.dmarc.verify = IfBlock::new(VerifyStrategy::Strict);
+    config.arc.verify = config.dmarc.verify.clone();
+    config.dkim.verify = "[{if = 'sender-domain', eq = 'test.net', then = 'relaxed'},
+    { else = 'strict' }]"
+        .parse_if(&ConfigContext::default());
 
     let mut config = &mut core.report.config;
     config.spf.sign = "['rsa']"
@@ -132,7 +136,8 @@ async fn dmarc() {
     config.dkim.sign = config.spf.sign.clone();
 
     // SPF must pass
-    let mut session = Session::test(core);
+    let core = Arc::new(core);
+    let mut session = Session::test(core.clone());
     session.data.remote_ip = "10.0.0.2".parse().unwrap();
     session.eval_session_params().await;
     session.ehlo("mx.example.com").await;
@@ -203,11 +208,16 @@ async fn dmarc() {
     qr.assert_empty_queue();
 
     // Unaligned DMARC should be rejected
+    core.resolvers.dns.txt_add(
+        "test.net",
+        Spf::parse(b"v=spf1 -all").unwrap(),
+        Instant::now() + Duration::from_secs(5),
+    );
     session
         .send_message(
-            "joe@foobar.com",
+            "joe@test.net",
             &["jdoe@example.com"],
-            "test:dkim",
+            "test:invalid_dkim",
             "550 5.7.1",
         )
         .await;
@@ -224,7 +234,7 @@ async fn dmarc() {
         .assert_contains("To: dmarc-failures@example.com")
         .assert_contains("Feedback-Type: auth-failure")
         .assert_contains("Auth-Failure: dmarc")
-        .assert_contains("dmarc=fail");
+        .assert_contains("dmarc=3Dnone");
 
     // Expect DMARC aggregate report
     let report = rr.read_report().await.unwrap_dmarc();
@@ -236,9 +246,9 @@ async fn dmarc() {
     // Second DMARC failure report should be rate limited
     session
         .send_message(
-            "joe@foobar.com",
+            "joe@test.net",
             &["jdoe@example.com"],
-            "test:dkim",
+            "test:invalid_dkim",
             "550 5.7.1",
         )
         .await;

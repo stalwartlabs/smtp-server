@@ -13,10 +13,11 @@ use crate::{
 };
 
 #[tokio::test]
+#[serial_test::serial]
 async fn smtp_delivery() {
     /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
-            .with_max_level(tracing::Level::TRACE)
+            .with_max_level(tracing::Level::DEBUG)
             .finish(),
     )
     .unwrap();*/
@@ -83,8 +84,8 @@ async fn smtp_delivery() {
     config.notify = "[{if = 'rcpt-domain', eq = 'foobar.org', then = ['100ms', '200ms']},
     {else = ['100ms']}]"
         .parse_if(&ConfigContext::default());
-    config.expire = "[{if = 'rcpt-domain', eq = 'foobar.org', then = '400ms'},
-    {else = '500ms'}]"
+    config.expire = "[{if = 'rcpt-domain', eq = 'foobar.org', then = '650ms'},
+    {else = '750ms'}]"
         .parse_if(&ConfigContext::default());
 
     let core = Arc::new(core);
@@ -109,10 +110,14 @@ async fn smtp_delivery() {
             "250",
         )
         .await;
-    DeliveryAttempt::from(local_qr.read_event().await.unwrap_message())
+    let message = local_qr.read_event().await.unwrap_message();
+    let num_domains = message.domains.len();
+    assert_eq!(num_domains, 3);
+    DeliveryAttempt::from(message)
         .try_deliver(core.clone(), &mut queue)
         .await;
     let mut dsn = Vec::new();
+    let mut domain_retries = vec![0; num_domains];
     loop {
         match local_qr.try_read_event().await {
             Some(Event::Queue(message)) => {
@@ -123,6 +128,9 @@ async fn smtp_delivery() {
                     break;
                 }
                 WorkerResult::Retry(retry) => {
+                    for (idx, domain) in retry.inner.domains.iter().enumerate() {
+                        domain_retries[idx] = domain.retry.inner;
+                    }
                     queue.main.push(retry);
                 }
                 WorkerResult::OnHold(_) => unreachable!(),
@@ -137,6 +145,15 @@ async fn smtp_delivery() {
                 .await;
         }
     }
+    assert_eq!(domain_retries[0], 0, "retries {:?}", domain_retries);
+    assert!(domain_retries[1] >= 5, "retries {:?}", domain_retries);
+    assert!(domain_retries[2] >= 5, "retries {:?}", domain_retries);
+    assert!(
+        domain_retries[1] > domain_retries[2],
+        "retries {:?}",
+        domain_retries
+    );
+
     assert!(queue.main.is_empty());
     assert_eq!(dsn.len(), 5);
 

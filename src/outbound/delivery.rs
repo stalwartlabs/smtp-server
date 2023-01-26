@@ -12,7 +12,7 @@ use mail_send::SmtpClient;
 use smtp_proto::MAIL_REQUIRETLS;
 
 use crate::{
-    config::{AggregateFrequency, TlsStrategy},
+    config::{AggregateFrequency, ServerProtocol, TlsStrategy},
     core::Core,
     queue::ErrorDetails,
     reporting::{tls::TlsRptOptions, PolicyType, TlsEvent},
@@ -135,6 +135,17 @@ impl DeliveryAttempt {
                     }
                 }
 
+                // Obtain next hop
+                let (mut remote_hosts, is_smtp) =
+                    if let Some(next_hop) = queue_config.next_hop.eval(&envelope).await {
+                        (
+                            vec![RemoteHost::Relay(next_hop)],
+                            next_hop.protocol == ServerProtocol::Smtp,
+                        )
+                    } else {
+                        (Vec::with_capacity(0), true)
+                    };
+
                 // Prepare TLS strategy
                 let mut tls_strategy = TlsStrategy {
                     mta_sts: *queue_config.tls.mta_sts.eval(&envelope).await,
@@ -145,7 +156,9 @@ impl DeliveryAttempt {
                 let tls_report = match core.report.config.tls.send.eval(&envelope).await {
                     interval @ (AggregateFrequency::Hourly
                     | AggregateFrequency::Daily
-                    | AggregateFrequency::Weekly) => {
+                    | AggregateFrequency::Weekly)
+                        if is_smtp =>
+                    {
                         match core
                             .resolvers
                             .dns
@@ -175,11 +188,11 @@ impl DeliveryAttempt {
                             }
                         }
                     }
-                    AggregateFrequency::Never => None,
+                    _ => None,
                 };
 
                 // Obtain MTA-STS policy for domain
-                let mta_sts_policy = if tls_strategy.try_mta_sts() {
+                let mta_sts_policy = if tls_strategy.try_mta_sts() && is_smtp {
                     match core
                         .lookup_mta_sts_policy(
                             envelope.domain,
@@ -260,11 +273,7 @@ impl DeliveryAttempt {
 
                 // Obtain remote hosts list
                 let mx_list;
-                let remote_hosts = if let Some(next_hop) =
-                    queue_config.next_hop.eval(&envelope).await
-                {
-                    vec![RemoteHost::Relay(next_hop)]
-                } else {
+                if is_smtp {
                     // Lookup MX
                     mx_list = match core.resolvers.dns.mx_lookup(&domain.domain).await {
                         Ok(mx) => mx,
@@ -280,10 +289,10 @@ impl DeliveryAttempt {
                         }
                     };
 
-                    if let Some(remote_hosts) = mx_list
+                    if let Some(remote_hosts_) = mx_list
                         .to_remote_hosts(&domain.domain, *queue_config.max_mx.eval(&envelope).await)
                     {
-                        remote_hosts
+                        remote_hosts = remote_hosts_;
                     } else {
                         tracing::info!(
                             parent: &span,
@@ -299,7 +308,7 @@ impl DeliveryAttempt {
                         );
                         continue 'next_domain;
                     }
-                };
+                }
 
                 // Try delivering message
                 let max_multihomed = *queue_config.max_multihomed.eval(&envelope).await;
@@ -366,7 +375,7 @@ impl DeliveryAttempt {
                     tls_strategy.tls = *queue_config.tls.start.eval(&envelope).await;
 
                     // Lookup DANE policy
-                    let dane_policy = if tls_strategy.try_dane() {
+                    let dane_policy = if tls_strategy.try_dane() && is_smtp {
                         match core
                             .resolvers
                             .tlsa_lookup(format!("_25._tcp.{}.", envelope.mx))
@@ -960,7 +969,10 @@ impl Domain {
     pub fn set_status(&mut self, status: impl Into<Status<(), Error>>, schedule: &[Duration]) {
         self.status = status.into();
         self.changed = true;
-        if matches!(&self.status, Status::TemporaryFailure(_)) {
+        if matches!(
+            &self.status,
+            Status::TemporaryFailure(_) | Status::Scheduled
+        ) {
             self.retry(schedule);
         }
     }

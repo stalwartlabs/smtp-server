@@ -23,12 +23,12 @@ pub static TLS_HTTP_REPORT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
 #[tokio::test]
 async fn report_tls() {
-    tracing::subscriber::set_global_default(
+    /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_max_level(tracing::Level::DEBUG)
             .finish(),
     )
-    .unwrap();
+    .unwrap();*/
 
     // Create scheduler
     let mut core = Core::test();

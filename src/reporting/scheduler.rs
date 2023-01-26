@@ -1,4 +1,4 @@
-use ahash::{AHashMap, AHasher};
+use ahash::{AHashMap, RandomState};
 use mail_auth::{
     common::{
         base32::{Base32Reader, Base32Writer},
@@ -10,7 +10,7 @@ use mail_auth::{
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     collections::{hash_map::Entry, BinaryHeap},
-    hash::{Hash, Hasher},
+    hash::Hash,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -540,17 +540,13 @@ pub trait ToHash {
 
 impl ToHash for Dmarc {
     fn to_hash(&self) -> u64 {
-        let mut hasher = AHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish()
+        RandomState::with_seeds(1, 9, 7, 9).hash_one(&self)
     }
 }
 
 impl ToHash for super::PolicyType {
     fn to_hash(&self) -> u64 {
-        let mut hasher = AHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish()
+        RandomState::with_seeds(1, 9, 7, 9).hash_one(&self)
     }
 }
 

@@ -198,7 +198,7 @@ impl Message {
 
             if params.is_smtp {
                 // Handle SMTP response
-                match read_data_response(&mut smtp_client, params.hostname, &bdat_cmd).await {
+                match read_smtp_data_respone(&mut smtp_client, params.hostname, &bdat_cmd).await {
                     Ok(response) => {
                         // Mark recipients as delivered
                         if response.code() == 250 {
@@ -248,8 +248,12 @@ impl Message {
                 }
             } else {
                 // Handle LMTP responses
-                match read_data_responses(&mut smtp_client, params.hostname, accepted_rcpts.len())
-                    .await
+                match read_lmtp_data_respone(
+                    &mut smtp_client,
+                    params.hostname,
+                    accepted_rcpts.len(),
+                )
+                .await
                 {
                     Ok(responses) => {
                         for ((rcpt, _), response) in accepted_rcpts.into_iter().zip(responses) {
@@ -454,20 +458,20 @@ pub async fn read_greeting<T: AsyncRead + AsyncWrite + Unpin>(
         .map_err(|err| Status::from_smtp_error(hostname, "", err))
 }
 
-pub async fn read_data_response<T: AsyncRead + AsyncWrite + Unpin>(
+pub async fn read_smtp_data_respone<T: AsyncRead + AsyncWrite + Unpin>(
     smtp_client: &mut SmtpClient<T>,
     hostname: &str,
     bdat_cmd: &Option<String>,
 ) -> Result<Response<String>, Status<(), Error>> {
     tokio::time::timeout(smtp_client.timeout, smtp_client.read())
         .await
-        .map_err(|_| Status::timeout(hostname, "reading DATA response"))?
+        .map_err(|_| Status::timeout(hostname, "reading SMTP DATA response"))?
         .map_err(|err| {
             Status::from_smtp_error(hostname, bdat_cmd.as_deref().unwrap_or("DATA"), err)
         })
 }
 
-pub async fn read_data_responses<T: AsyncRead + AsyncWrite + Unpin>(
+pub async fn read_lmtp_data_respone<T: AsyncRead + AsyncWrite + Unpin>(
     smtp_client: &mut SmtpClient<T>,
     hostname: &str,
     num_responses: usize,
@@ -476,8 +480,26 @@ pub async fn read_data_responses<T: AsyncRead + AsyncWrite + Unpin>(
         smtp_client.read_many(num_responses).await
     })
     .await
-    .map_err(|_| Status::timeout(hostname, "reading DATA"))?
+    .map_err(|_| Status::timeout(hostname, "reading LMTP DATA responses"))?
     .map_err(|err| Status::from_smtp_error(hostname, "", err))
+}
+
+pub async fn write_chunks<T: AsyncRead + AsyncWrite + Unpin>(
+    smtp_client: &mut SmtpClient<T>,
+    chunks: &[&[u8]],
+) -> Result<(), mail_send::Error> {
+    for chunk in chunks {
+        smtp_client
+            .stream
+            .write_all(chunk)
+            .await
+            .map_err(mail_send::Error::from)?;
+    }
+    smtp_client
+        .stream
+        .flush()
+        .await
+        .map_err(mail_send::Error::from)
 }
 
 pub async fn send_message<T: AsyncRead + AsyncWrite + Unpin>(
@@ -508,22 +530,9 @@ pub async fn send_message<T: AsyncRead + AsyncWrite + Unpin>(
     })?;
     tokio::time::timeout(params.timeout_data, async {
         if let Some(bdat_cmd) = bdat_cmd {
-            smtp_client
-                .stream
-                .write_all(bdat_cmd.as_bytes())
-                .await
-                .map_err(mail_send::Error::from)?;
-            smtp_client
-                .stream
-                .write_all(&raw_message)
-                .await
-                .map_err(mail_send::Error::from)
+            write_chunks(smtp_client, &[bdat_cmd.as_bytes(), &raw_message]).await
         } else {
-            smtp_client
-                .stream
-                .write_all(b"DATA\r\n")
-                .await
-                .map_err(mail_send::Error::from)?;
+            write_chunks(smtp_client, &[b"DATA\r\n"]).await?;
             smtp_client.read().await?.assert_code(354)?;
             smtp_client
                 .write_message(&raw_message)
@@ -549,6 +558,7 @@ pub async fn say_helo<T: AsyncRead + AsyncWrite + Unpin>(
     };
     tokio::time::timeout(params.timeout_ehlo, async {
         smtp_client.stream.write_all(cmd.as_bytes()).await?;
+        smtp_client.stream.flush().await?;
         smtp_client.read_ehlo().await
     })
     .await
@@ -558,7 +568,9 @@ pub async fn say_helo<T: AsyncRead + AsyncWrite + Unpin>(
 
 pub async fn quit<T: AsyncRead + AsyncWrite + Unpin>(mut smtp_client: SmtpClient<T>) {
     let _ = tokio::time::timeout(Duration::from_secs(10), async {
-        if smtp_client.stream.write_all(b"QUIT\r\n").await.is_ok() {
+        if smtp_client.stream.write_all(b"QUIT\r\n").await.is_ok()
+            && smtp_client.stream.flush().await.is_ok()
+        {
             let mut buf = [0u8; 128];
             let _ = smtp_client.stream.read(&mut buf).await;
         }
