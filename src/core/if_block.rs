@@ -296,8 +296,7 @@ mod tests {
                 .eval(&envelope)
                 .await,
                 &expected_result.parse::<bool>().unwrap(),
-                "failed for {:?}",
-                key
+                "failed for {key:?}"
             );
         }
     }

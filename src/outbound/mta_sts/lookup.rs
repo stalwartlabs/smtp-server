@@ -21,7 +21,7 @@ impl Core {
         let record = match self
             .resolvers
             .dns
-            .txt_lookup::<MtaSts>(format!("_mta-sts.{}.", domain))
+            .txt_lookup::<MtaSts>(format!("_mta-sts.{domain}."))
             .await
         {
             Ok(record) => record,
@@ -49,10 +49,7 @@ impl Core {
             .timeout(timeout)
             .redirect(reqwest::redirect::Policy::none())
             .build()?
-            .get(&format!(
-                "https://mta-sts.{}/.well-known/mta-sts.txt",
-                domain
-            ))
+            .get(&format!("https://mta-sts.{domain}/.well-known/mta-sts.txt"))
             .send()
             .await?
             .bytes()
@@ -110,12 +107,12 @@ impl Display for Error {
         match self {
             Error::Dns(err) => match err {
                 mail_auth::Error::DnsRecordNotFound(code) => {
-                    write!(f, "Record not found: {:?}", code)
+                    write!(f, "Record not found: {code:?}")
                 }
                 mail_auth::Error::InvalidRecordType => {
                     f.write_str("Failed to parse MTA-STS DNS record.")
                 }
-                _ => write!(f, "DNS lookup error: {}", err),
+                _ => write!(f, "DNS lookup error: {err}"),
             },
             Error::Http(err) => {
                 if err.is_timeout() {
@@ -132,7 +129,7 @@ impl Display for Error {
                     f.write_str("Failed to fetch policy.")
                 }
             }
-            Error::InvalidPolicy(err) => write!(f, "Failed to parse policy: {}", err),
+            Error::InvalidPolicy(err) => write!(f, "Failed to parse policy: {err}"),
         }
     }
 }

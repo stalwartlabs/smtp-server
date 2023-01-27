@@ -112,11 +112,13 @@ impl Server {
                                             if let Ok(mut session) = session.into_tls(tls_acceptor.unwrap()).await {
                                                 if session.write(&instance.greeting).await.is_ok() {
                                                     session.eval_session_params().await;
+                                                    session.verify_ip_dnsbl().await;
                                                     session.handle_conn(shutdown_rx).await;
                                                 }
                                             }
                                         } else if session.write(&instance.greeting).await.is_ok() {
                                             session.eval_session_params().await;
+                                            session.verify_ip_dnsbl().await;
                                             session.handle_conn(tls_acceptor, shutdown_rx).await;
                                         }
                                     });

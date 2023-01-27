@@ -32,15 +32,15 @@ impl Config {
                         op_str = key;
                     } else {
                         return Err(format!(
-                            "Multiple operations found for condition {:?}.",
-                            prefix
+                            "Multiple operations found for condition {prefix:?}.",
+                            
                         ));
                     }
                 }
             }
 
             if op_str.is_empty() {
-                return Err(format!("Missing operation for condition {:?}.", prefix));
+                return Err(format!("Missing operation for condition {prefix:?}." ));
             } else if ["any-of", "all-of", "none-of"].contains(&op_str) {
                 stack.push((
                     std::mem::replace(
@@ -87,8 +87,8 @@ impl Config {
                 let key = self.property_require::<EnvelopeKey>((&prefix, "if"))?;
                 if !available_keys.contains(&key) {
                     return Err(format!(
-                        "Envelope key {:?} is not available in this context for property {:?}",
-                        key, prefix
+                        "Envelope key {key:?} is not available in this context for property {prefix:?}",
+                         
                     ));
                 }
 
@@ -103,8 +103,7 @@ impl Config {
                     "ends-with" => (ConditionOp::EndsWith, false),
                     _ => {
                         return Err(format!(
-                            "Invalid operation {:?} for key {:?}.",
-                            op_str, prefix
+                            "Invalid operation {op_str:?} for key {prefix:?}."
                         ));
                     }
                 };
@@ -430,7 +429,7 @@ mod tests {
         ]);
 
         for (key, rule) in expected_rules {
-            assert_eq!(Some(rule), conditions.remove(&key), "failed for {}", key);
+            assert_eq!(Some(rule), conditions.remove(&key), "failed for {key}" );
         }
     }
 }

@@ -413,11 +413,7 @@ impl Error {
                 response.write_dsn_text(addr, dsn);
             }
             Error::DnsError(err) => {
-                let _ = write!(
-                    dsn,
-                    "<{}> (failed to lookup '{}': {})\r\n",
-                    addr, domain, err
-                );
+                let _ = write!(dsn, "<{addr}> (failed to lookup '{domain}': {err})\r\n",);
             }
             Error::ConnectionError(details) => {
                 let _ = write!(
@@ -443,22 +439,20 @@ impl Error {
             Error::MtaStsError(details) => {
                 let _ = write!(
                     dsn,
-                    "<{}> (MTA-STS failed to authenticate '{}': {})\r\n",
-                    addr, domain, details
+                    "<{addr}> (MTA-STS failed to authenticate '{domain}': {details})\r\n",
                 );
             }
             Error::RateLimited => {
-                let _ = write!(dsn, "<{}> (rate limited)\r\n", addr);
+                let _ = write!(dsn, "<{addr}> (rate limited)\r\n");
             }
             Error::ConcurrencyLimited => {
                 let _ = write!(
                     dsn,
-                    "<{}> (too many concurrent connections to remote server)\r\n",
-                    addr
+                    "<{addr}> (too many concurrent connections to remote server)\r\n",
                 );
             }
             Error::Io(err) => {
-                let _ = write!(dsn, "<{}> (queue error: {})\r\n", addr, err);
+                let _ = write!(dsn, "<{addr}> (queue error: {err})\r\n");
             }
         }
     }
@@ -466,12 +460,12 @@ impl Error {
 
 impl Message {
     fn write_dsn_headers(&self, dsn: &mut String, reporting_mta: &str) {
-        let _ = write!(dsn, "Reporting-MTA: dns;{}\r\n", reporting_mta);
+        let _ = write!(dsn, "Reporting-MTA: dns;{reporting_mta}\r\n");
         dsn.push_str("Arrival-Date: ");
         dsn.push_str(&DateTime::from_timestamp(self.created as i64).to_rfc822());
         dsn.push_str("\r\n");
         if let Some(env_id) = &self.env_id {
-            let _ = write!(dsn, "Original-Envelope-Id: {}\r\n", env_id);
+            let _ = write!(dsn, "Original-Envelope-Id: {env_id}\r\n");
         }
         dsn.push_str("\r\n");
     }
@@ -480,7 +474,7 @@ impl Message {
 impl Recipient {
     fn write_dsn(&self, dsn: &mut String) {
         if let Some(orcpt) = &self.orcpt {
-            let _ = write!(dsn, "Original-Recipient: rfc822;{}\r\n", orcpt);
+            let _ = write!(dsn, "Original-Recipient: rfc822;{orcpt}\r\n");
         }
         let _ = write!(dsn, "Final-Recipient: rfc822;{}\r\n", self.address);
     }

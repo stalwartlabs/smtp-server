@@ -35,15 +35,12 @@ impl Config {
             "cert",
         ))?))
         .map_err(|err| {
-            format!(
-                "Failed to read certificates in \"certificate.{}.cert\": {}",
-                cert_id, err
-            )
+            format!("Failed to read certificates in \"certificate.{cert_id}.cert\": {err}")
         })?
         .into_iter()
         .map(Certificate)
         .next()
-        .ok_or_else(|| format!("No certificates found in \"certificate.{}.cert\".", cert_id))
+        .ok_or_else(|| format!("No certificates found in \"certificate.{cert_id}.cert\"."))
     }
 
     pub fn rustls_private_key(&self, cert_id: &str) -> super::Result<PrivateKey> {
@@ -53,22 +50,17 @@ impl Config {
             "private-key",
         ))?))
         .map_err(|err| {
-            format!(
-                "Failed to read private keys in \"certificate.{}.private-key\": {}",
-                cert_id, err
-            )
+            format!("Failed to read private keys in \"certificate.{cert_id}.private-key\": {err}",)
         })?
         .into_iter()
         .next()
         {
             Some(Item::PKCS8Key(key) | Item::RSAKey(key) | Item::ECKey(key)) => Ok(PrivateKey(key)),
             Some(_) => Err(format!(
-                "Unsupported private keys found in \"certificate.{}.private-key\".",
-                cert_id
+                "Unsupported private keys found in \"certificate.{cert_id}.private-key\".",
             )),
             None => Err(format!(
-                "No private keys found in \"certificate.{}.private-key\".",
-                cert_id
+                "No private keys found in \"certificate.{cert_id}.private-key\".",
             )),
         }
     }

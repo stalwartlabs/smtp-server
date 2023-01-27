@@ -63,12 +63,11 @@ impl Config {
                                 found_else = array_pos;
                             } else {
                                 return Err(format!(
-                                    "Found 'else' before 'if' for property {:?}.",
-                                    key
+                                    "Found 'else' before 'if' for property {key:?}.",
                                 ));
                             }
                         } else if array_pos != found_else {
-                            return Err(format!("Multiple 'else' found for property {:?}.", key));
+                            return Err(format!("Multiple 'else' found for property {key:?}."));
                         }
                     } else if if_key == "then" {
                         if found_else.is_empty() {
@@ -86,14 +85,12 @@ impl Config {
                                 }
                             } else {
                                 return Err(format!(
-                                    "Found 'then' without 'if' for property {:?}.",
-                                    key
+                                    "Found 'then' without 'if' for property {key:?}.",
                                 ));
                             }
                         } else {
                             return Err(format!(
-                                "Found 'then' in 'else' block for property {:?}.",
-                                key
+                                "Found 'then' in 'else' block for property {key:?}.",
                             ));
                         }
                     }
@@ -102,7 +99,7 @@ impl Config {
                     if_block.default = T::parse_values(key.as_str(), self)?;
                     return Ok(Some(if_block));
                 } else {
-                    return Err(format!("Invalid property {:?} found in 'if' block.", item));
+                    return Err(format!("Invalid property {item:?} found in 'if' block."));
                 }
             } else if item == &key {
                 // There is a single value, parse and return
@@ -120,7 +117,7 @@ impl Config {
                 key
             ))
         } else if found_else.is_empty() && !T::is_multivalue() {
-            Err(format!("Missing 'else' for property {:?}.", key))
+            Err(format!("Missing 'else' for property {key:?}."))
         } else {
             Ok(Some(if_block))
         }
@@ -144,7 +141,7 @@ impl<T: Default> IfBlock<Option<T>> {
                 conditions: if_clause.conditions,
                 then: if_clause
                     .then
-                    .ok_or_else(|| format!("Property {:?} cannot contain null values.", key))?,
+                    .ok_or_else(|| format!("Property {key:?} cannot contain null values."))?,
             });
         }
 
@@ -152,7 +149,7 @@ impl<T: Default> IfBlock<Option<T>> {
             if_then,
             default: self
                 .default
-                .ok_or_else(|| format!("Property {:?} cannot contain null values.", key))?,
+                .ok_or_else(|| format!("Property {key:?} cannot contain null values."))?,
         })
     }
 }
@@ -190,8 +187,7 @@ impl IfBlock<Option<String>> {
                 Ok(Some(value.clone()))
             } else {
                 Err(format!(
-                    "Unable to find {} {:?} declared for {:?}",
-                    object_name, value, key_name
+                    "Unable to find {object_name} {value:?} declared for {key_name:?}",
                 ))
             }
         } else {
@@ -233,8 +229,7 @@ impl IfBlock<Vec<String>> {
                 result.push(value.clone());
             } else {
                 return Err(format!(
-                    "Unable to find {} {:?} declared for {:?}",
-                    object_name, value, key_name
+                    "Unable to find {object_name} {value:?} declared for {key_name:?}",
                 ));
             }
         }
@@ -428,7 +423,7 @@ mod tests {
             "bad-multiple-else",
         ] {
             if let Ok(value) = config.parse_if_block::<u32>(bad_rule, &context, &available_keys) {
-                panic!("Condition {:?} had unexpected result {:?}", bad_rule, value);
+                panic!("Condition {bad_rule:?} had unexpected result {value:?}");
             }
         }
     }

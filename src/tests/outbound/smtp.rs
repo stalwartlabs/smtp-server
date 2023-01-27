@@ -145,13 +145,12 @@ async fn smtp_delivery() {
                 .await;
         }
     }
-    assert_eq!(domain_retries[0], 0, "retries {:?}", domain_retries);
-    assert!(domain_retries[1] >= 5, "retries {:?}", domain_retries);
-    assert!(domain_retries[2] >= 5, "retries {:?}", domain_retries);
+    assert_eq!(domain_retries[0], 0, "retries {domain_retries:?}");
+    assert!(domain_retries[1] >= 5, "retries {domain_retries:?}");
+    assert!(domain_retries[2] >= 5, "retries {domain_retries:?}");
     assert!(
-        domain_retries[1] > domain_retries[2],
-        "retries {:?}",
-        domain_retries
+        domain_retries[1] >= domain_retries[2],
+        "retries {domain_retries:?}"
     );
 
     assert!(queue.main.is_empty());

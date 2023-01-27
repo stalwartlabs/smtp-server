@@ -48,7 +48,7 @@ async fn report_analyze() {
                 .send_message(
                     "john@test.org",
                     &[addresses[ac % addresses.len()]],
-                    &format!("report:{}{}", test, num_test),
+                    &format!("report:{test}{num_test}"),
                     "250",
                 )
                 .await;

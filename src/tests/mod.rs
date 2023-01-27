@@ -13,8 +13,8 @@ use tokio::sync::mpsc;
 use crate::{
     config::{
         utils::ParseValues, AggregateReport, ArcAuthConfig, Auth, Config, ConfigContext, Connect,
-        Data, DkimAuthConfig, DmarcAuthConfig, Dsn, Ehlo, EnvelopeKey, Extensions, IfBlock,
-        IpRevAuthConfig, Mail, MailAuthConfig, QueueConfig, QueueOutboundSourceIp,
+        Data, DkimAuthConfig, DmarcAuthConfig, DnsBlConfig, Dsn, Ehlo, EnvelopeKey, Extensions,
+        IfBlock, IpRevAuthConfig, Mail, MailAuthConfig, QueueConfig, QueueOutboundSourceIp,
         QueueOutboundTimeout, QueueOutboundTls, QueueQuotas, QueueThrottle, Rcpt, Report,
         ReportAnalysis, ReportConfig, SessionConfig, SessionThrottle, SpfAuthConfig, Throttle,
         VerifyStrategy,
@@ -42,7 +42,7 @@ pub trait ParseTestConfig {
 
 impl ParseTestConfig for &str {
     fn parse_if<T: Default + ParseValues>(&self, ctx: &ConfigContext) -> IfBlock<T> {
-        Config::parse(&format!("test = {}\n", self))
+        Config::parse(&format!("test = {self}\n"))
             .unwrap()
             .parse_if_block(
                 "test",
@@ -159,6 +159,7 @@ impl SessionConfig {
             ehlo: Ehlo {
                 script: IfBlock::new(None),
                 require: IfBlock::new(true),
+                reject_non_fqdn: IfBlock::new(false),
             },
             extensions: Extensions {
                 pipelining: IfBlock::new(true),
@@ -303,6 +304,11 @@ impl MailAuthConfig {
             },
             iprev: IpRevAuthConfig {
                 verify: IfBlock::new(VerifyStrategy::Relaxed),
+            },
+            dnsbl: DnsBlConfig {
+                verify: IfBlock::new(0),
+                ip_lookup: vec![],
+                domain_lookup: vec![],
             },
         }
     }

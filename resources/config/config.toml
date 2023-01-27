@@ -53,6 +53,8 @@ duration = "10m"
 
 [session.ehlo]
 require = true
+reject-non-fqdn = [ { if = "listener", eq = "smtp", then = true},
+                    { else = false } ]
 #script = ehlo.sieve
 
 [session.extensions]
@@ -132,6 +134,13 @@ concurrency = 5
 [[session.throttle]]
 key = ["sender-domain", "rcpt"]
 rate = "25/1h"
+
+[auth.dnsbl]
+verify = [ { if = "listener", eq = "smtp", then = ["ip", "iprev", "ehlo", "return-path", "from"] }, 
+           { else = [] } ]
+[auth.dnsbl.lookup]
+ip = ["zen.spamhaus.org", "bl.spamcop.net", "b.barracudacentral.org"]
+domain = ["dbl.spamhaus.org"]
 
 [auth.iprev]
 verify = [ { if = "listener", eq = "smtp", then = "relaxed" }, 

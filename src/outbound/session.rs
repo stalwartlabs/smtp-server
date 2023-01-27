@@ -348,7 +348,7 @@ impl Message {
                 mail_from.push_str(" RET=HDRS");
             }
             if let Some(env_id) = &self.env_id {
-                let _ = write!(mail_from, " ENVID={}", env_id);
+                let _ = write!(mail_from, " ENVID={env_id}");
             }
         }
 

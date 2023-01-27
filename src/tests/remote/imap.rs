@@ -93,7 +93,7 @@ async fn remote_imap() {
     }
     for (result, item, expected_result) in requests {
         let result = result.await.unwrap();
-        assert_eq!(result, Some(expected_result), "Failed for {:?}", item);
+        assert_eq!(result, Some(expected_result), "Failed for {item:?}");
     }
 
     // Shutdown
@@ -116,7 +116,7 @@ async fn remote_imap() {
     }
     for (result, item, expected_result) in requests {
         let result = result.await.unwrap();
-        assert_eq!(result, Some(expected_result), "Failed for {:?}", item);
+        assert_eq!(result, Some(expected_result), "Failed for {item:?}");
     }
 }
 
@@ -127,7 +127,7 @@ pub fn spawn_mock_imap_server(max_concurrency: u64) -> watch::Sender<bool> {
         let listener = TcpListener::bind("127.0.0.1:9998")
             .await
             .unwrap_or_else(|e| {
-                panic!("Failed to bind mock SMTP server to 127.0.0.1:9998: {}", e);
+                panic!("Failed to bind mock SMTP server to 127.0.0.1:9998: {e}");
             });
         let acceptor = dummy_tls_acceptor();
         let limited = ConcurrencyLimiter::new(max_concurrency);
@@ -141,7 +141,7 @@ pub fn spawn_mock_imap_server(max_concurrency: u64) -> watch::Sender<bool> {
                             tokio::spawn(accept_smtp(stream, acceptor, in_flight));
                         }
                         Err(err) => {
-                            panic!("Something went wrong: {}", err);
+                            panic!("Something went wrong: {err}" );
                         }
                     }
                 },
@@ -180,20 +180,19 @@ async fn accept_smtp(stream: TcpStream, acceptor: Arc<TlsAcceptor>, in_flight: O
         //print!("-> {}", buf);
         let response = if buf.starts_with("CAPABILITY") {
             format!(
-                "* CAPABILITY IMAP4rev2 IMAP4rev1 AUTH=PLAIN\r\n{} OK CAPABILITY completed\r\n",
-                op
+                "* CAPABILITY IMAP4rev2 IMAP4rev1 AUTH=PLAIN\r\n{op} OK CAPABILITY completed\r\n",
             )
         } else if buf.starts_with("NOOP") {
-            format!("{} OK NOOP completed\r\n", op)
+            format!("{op} OK NOOP completed\r\n")
         } else if buf.starts_with("AUTHENTICATE PLAIN") {
             let buf = base64_decode(buf.rsplit_once(' ').unwrap().1.as_bytes()).unwrap();
             if String::from_utf8_lossy(&buf).contains("ok") {
-                format!("{} OK Great success!\r\n", op)
+                format!("{op} OK Great success!\r\n")
             } else {
-                format!("{} BAD No soup for you!\r\n", op)
+                format!("{op} BAD No soup for you!\r\n")
             }
         } else if buf.starts_with("LOGOUT") {
-            format!("* BYE\r\n{} OK LOGOUT completed\r\n", op)
+            format!("* BYE\r\n{op} OK LOGOUT completed\r\n")
         } else {
             panic!("Unknown command: {}", buf.trim());
         };

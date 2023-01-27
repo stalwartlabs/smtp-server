@@ -71,7 +71,7 @@ impl Config {
                 .unwrap_or_else(|| IfBlock::new("Mail Delivery Subsystem".to_string())),
             address: self
                 .parse_if_block(("report", id, "from-address"), ctx, available_keys)?
-                .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{}", default_hostname))),
+                .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{default_hostname}"))),
             subject: self
                 .parse_if_block(("report", id, "subject"), ctx, available_keys)?
                 .unwrap_or_else(|| IfBlock::new(format!("{} Report", id.to_ascii_uppercase()))),
@@ -110,7 +110,7 @@ impl Config {
                     ctx,
                     &rcpt_envelope_keys,
                 )?
-                .unwrap_or_else(|| IfBlock::new(format!("noreply-{}@{}", id, default_hostname))),
+                .unwrap_or_else(|| IfBlock::new(format!("noreply-{id}@{default_hostname}"))),
             org_name: self
                 .parse_if_block(
                     ("report", id, "aggregate.org-name"),

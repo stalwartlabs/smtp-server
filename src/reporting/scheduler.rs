@@ -411,23 +411,21 @@ pub async fn json_write(path: &PathBuf, entry: &impl Serialize) -> usize {
 pub async fn json_append(path: &PathBuf, entry: &impl Serialize, bytes_left: usize) -> usize {
     let mut bytes = Vec::with_capacity(128);
     bytes.push(b',');
-    if serde_json::to_writer(&mut bytes, entry).is_ok() {
-        if bytes.len() <= bytes_left {
-            let err = match OpenOptions::new().append(true).open(&path).await {
-                Ok(mut file) => match file.write_all(&bytes).await {
-                    Ok(_) => return bytes.len(),
-                    Err(err) => err,
-                },
+    if serde_json::to_writer(&mut bytes, entry).is_ok() && bytes.len() <= bytes_left {
+        let err = match OpenOptions::new().append(true).open(&path).await {
+            Ok(mut file) => match file.write_all(&bytes).await {
+                Ok(_) => return bytes.len(),
                 Err(err) => err,
-            };
-            tracing::error!(
-                context = "report",
-                event = "error",
-                "Failed to append report to {}: {}",
-                path.display(),
-                err
-            );
-        }
+            },
+            Err(err) => err,
+        };
+        tracing::error!(
+            context = "report",
+            event = "error",
+            "Failed to append report to {}: {}",
+            path.display(),
+            err
+        );
     }
     0
 }
@@ -540,13 +538,13 @@ pub trait ToHash {
 
 impl ToHash for Dmarc {
     fn to_hash(&self) -> u64 {
-        RandomState::with_seeds(1, 9, 7, 9).hash_one(&self)
+        RandomState::with_seeds(1, 9, 7, 9).hash_one(self)
     }
 }
 
 impl ToHash for super::PolicyType {
     fn to_hash(&self) -> u64 {
-        RandomState::with_seeds(1, 9, 7, 9).hash_one(&self)
+        RandomState::with_seeds(1, 9, 7, 9).hash_one(self)
     }
 }
 

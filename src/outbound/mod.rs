@@ -103,11 +103,11 @@ impl Status<(), Error> {
             })),
             mail_send::Error::Tls(err) => Status::TemporaryFailure(Error::TlsError(ErrorDetails {
                 entity: hostname.to_string(),
-                details: format!("Handshake failed: {}", err),
+                details: format!("Handshake failed: {err}"),
             })),
             mail_send::Error::Io(err) => Status::TemporaryFailure(Error::TlsError(ErrorDetails {
                 entity: hostname.to_string(),
-                details: format!("I/O error: {}", err),
+                details: format!("I/O error: {err}"),
             })),
             _ => Status::PermanentFailure(Error::TlsError(ErrorDetails {
                 entity: hostname.to_string(),
@@ -119,7 +119,7 @@ impl Status<(), Error> {
     pub fn timeout(hostname: &str, stage: &str) -> Self {
         Status::TemporaryFailure(Error::ConnectionError(ErrorDetails {
             entity: hostname.to_string(),
-            details: format!("Timeout while {}", stage),
+            details: format!("Timeout while {stage}"),
         }))
     }
 }
@@ -128,7 +128,7 @@ impl From<mail_auth::Error> for Status<(), Error> {
     fn from(err: mail_auth::Error) -> Self {
         match &err {
             mail_auth::Error::DnsRecordNotFound(code) => {
-                Status::PermanentFailure(Error::DnsError(format!("Domain not found: {:?}", code)))
+                Status::PermanentFailure(Error::DnsError(format!("Domain not found: {code:?}")))
             }
             _ => Status::TemporaryFailure(Error::DnsError(err.to_string())),
         }
@@ -140,15 +140,14 @@ impl From<mta_sts::Error> for Status<(), Error> {
         match &err {
             mta_sts::Error::Dns(err) => match err {
                 mail_auth::Error::DnsRecordNotFound(code) => Status::PermanentFailure(
-                    Error::MtaStsError(format!("Record not found: {:?}", code)),
+                    Error::MtaStsError(format!("Record not found: {code:?}")),
                 ),
                 mail_auth::Error::InvalidRecordType => Status::PermanentFailure(
                     Error::MtaStsError("Failed to parse MTA-STS DNS record.".to_string()),
                 ),
-                _ => Status::TemporaryFailure(Error::MtaStsError(format!(
-                    "DNS lookup error: {}",
-                    err
-                ))),
+                _ => {
+                    Status::TemporaryFailure(Error::MtaStsError(format!("DNS lookup error: {err}")))
+                }
             },
             mta_sts::Error::Http(err) => {
                 if err.is_timeout() {
@@ -172,7 +171,7 @@ impl From<mta_sts::Error> for Status<(), Error> {
                 }
             }
             mta_sts::Error::InvalidPolicy(err) => Status::PermanentFailure(Error::MtaStsError(
-                format!("Failed to parse policy: {}", err),
+                format!("Failed to parse policy: {err}"),
             )),
         }
     }
@@ -207,22 +206,27 @@ impl<'x> RemoteHost<'x> {
     #[inline(always)]
     fn hostname(&self) -> &str {
         match self {
-            RemoteHost::MX(host) => host,
+            RemoteHost::MX(host) => {
+                if let Some(host) = host.strip_suffix('.') {
+                    host
+                } else {
+                    host
+                }
+            }
             RemoteHost::Relay(host) => host.address.as_str(),
         }
     }
 
     #[inline(always)]
     fn fqdn_hostname(&self) -> Cow<'_, str> {
-        match self {
-            RemoteHost::MX(host) => {
-                if !host.ends_with('.') {
-                    format!("{}.", host).into()
-                } else {
-                    (*host).into()
-                }
-            }
-            RemoteHost::Relay(host) => host.address.as_str().into(),
+        let host = match self {
+            RemoteHost::MX(host) => host,
+            RemoteHost::Relay(host) => host.address.as_str(),
+        };
+        if !host.ends_with('.') {
+            format!("{host}.").into()
+        } else {
+            (*host).into()
         }
     }
 

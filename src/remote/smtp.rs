@@ -37,7 +37,7 @@ impl SmtpClientBuilder {
                         sent_mail_from = true;
                     }
                     let reply = client
-                        .cmd(format!("RCPT TO:<{}>\r\n", rcpt_to).as_bytes())
+                        .cmd(format!("RCPT TO:<{rcpt_to}>\r\n").as_bytes())
                         .await?;
                     let result = match reply.severity() {
                         Severity::PositiveCompletion => {
@@ -73,9 +73,9 @@ impl SmtpClientBuilder {
                     let reply = client
                         .cmd(
                             if matches!(&lookup.item, Item::Verify(_)) {
-                                format!("VRFY {}\r\n", address)
+                                format!("VRFY {address}\r\n")
                             } else {
-                                format!("EXPN {}\r\n", address)
+                                format!("EXPN {address}\r\n")
                             }
                             .as_bytes(),
                         )

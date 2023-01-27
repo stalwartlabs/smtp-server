@@ -35,12 +35,12 @@ impl Policy {
                             "enforce" => Mode::Enforce,
                             "testing" => Mode::Testing,
                             "none" => Mode::None,
-                            _ => return Err(format!("Unsupported mode {:?}.", value)),
+                            _ => return Err(format!("Unsupported mode {value:?}.")),
                         };
                     }
                     "version" => {
                         if !value.eq_ignore_ascii_case("STSv1") {
-                            return Err(format!("Unsupported version {:?}.", value));
+                            return Err(format!("Unsupported version {value:?}."));
                         }
                     }
                     _ => (),

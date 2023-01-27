@@ -56,8 +56,7 @@ impl Config {
                     "TLSv1.3" | "0x0304" => tls_v3 = true,
                     protocol => {
                         return Err(format!(
-                            "Unsupported TLS protocol {:?} found in key {:?}",
-                            protocol, key
+                            "Unsupported TLS protocol {protocol:?} found in key {key:?}",
                         ))
                     }
                 }
@@ -77,7 +76,7 @@ impl Config {
                     ("server.listener", id, "tls.certificate"),
                     "server.tls.certificate",
                 )
-                .ok_or_else(|| format!("Undefined certificate id for listener {:?}.", id))?;
+                .ok_or_else(|| format!("Undefined certificate id for listener {id:?}."))?;
             let cert = self.rustls_certificate(cert_id)?;
             let pki = self.rustls_private_key(cert_id)?;
 
@@ -98,8 +97,7 @@ impl Config {
                                     key: any_supported_type(&self.rustls_private_key(sni_cert_id)?)
                                         .map_err(|err| {
                                             format!(
-                                                "Failed to sign SNI certificate for {:?}: {}",
-                                                key, err
+                                                "Failed to sign SNI certificate for {key:?}: {err}",
                                             )
                                         })?,
                                     ocsp: None,
@@ -107,19 +105,19 @@ impl Config {
                                 },
                                 _ => CertifiedKey {
                                     cert: vec![cert.clone()],
-                                    key: any_supported_type(&pki).map_err(|err| {
-                                        format!(
-                                            "Failed to sign SNI certificate for {:?}: {}",
-                                            key, err
-                                        )
-                                    })?,
+                                    key:
+                                        any_supported_type(&pki).map_err(|err| {
+                                            format!(
+                                                "Failed to sign SNI certificate for {key:?}: {err}",
+                                            )
+                                        })?,
                                     ocsp: None,
                                     sct_list: None,
                                 },
                             },
                         )
                         .map_err(|err| {
-                            format!("Failed to add SNI certificate for {:?}: {}", key, err)
+                            format!("Failed to add SNI certificate for {key:?}: {err}")
                         })?;
                 }
             }
@@ -127,9 +125,8 @@ impl Config {
             // Add default certificate
             let default_cert = Some(Arc::new(CertifiedKey {
                 cert: vec![cert],
-                key: any_supported_type(&pki).map_err(|err| {
-                    format!("Failed to sign certificate id {:?}: {}", cert_id, err)
-                })?,
+                key: any_supported_type(&pki)
+                    .map_err(|err| format!("Failed to sign certificate id {cert_id:?}: {err}"))?,
                 ocsp: None,
                 sct_list: None,
             }));
@@ -149,7 +146,7 @@ impl Config {
                 } else {
                     TLS12_VERSION
                 })
-                .map_err(|err| format!("Failed to build TLS config: {}", err))?
+                .map_err(|err| format!("Failed to build TLS config: {err}"))?
                 .with_client_cert_verifier(NoClientAuth::new())
                 .with_cert_resolver(Arc::new(CertificateResolver {
                     resolver: if has_sni { resolver.into() } else { None },
@@ -185,7 +182,7 @@ impl Config {
             } else {
                 TcpSocket::new_v6()
             }
-            .map_err(|err| format!("Failed to create socket: {}", err))?;
+            .map_err(|err| format!("Failed to create socket: {err}"))?;
             let mut backlog = None;
             let mut ttl = None;
 
@@ -225,10 +222,7 @@ impl Config {
                         _ => unreachable!(),
                     }
                     .map_err(|err| {
-                        format!(
-                            "Failed to set socket option '{}' for listener '{}': {}",
-                            option, id, err
-                        )
+                        format!("Failed to set socket option '{option}' for listener '{id}': {err}")
                     })?;
                 }
             }
@@ -242,10 +236,7 @@ impl Config {
         }
 
         if listeners.is_empty() {
-            return Err(format!(
-                "No 'bind' directive found for listener id {:?}",
-                id
-            ));
+            return Err(format!("No 'bind' directive found for listener id {id:?}"));
         }
 
         Ok(Server {

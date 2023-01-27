@@ -40,8 +40,7 @@ impl Config {
                 keys |= key;
             } else {
                 return Err(format!(
-                    "Throttle key {:?} is not available in this context for property {:?}",
-                    value, key_
+                    "Throttle key {value:?} is not available in this context for property {key_:?}"
                 ));
             }
         }
@@ -149,10 +148,7 @@ impl ParseTrottleKey for &str {
             "remote-ip" => Ok(THROTTLE_REMOTE_IP),
             "local-ip" => Ok(THROTTLE_LOCAL_IP),
             "helo-domain" => Ok(THROTTLE_HELO_DOMAIN),
-            _ => Err(format!(
-                "Invalid throttle key {:?} found in {:?}",
-                self, key
-            )),
+            _ => Err(format!("Invalid throttle key {self:?} found in {key:?}")),
         }
     }
 }

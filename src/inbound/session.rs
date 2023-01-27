@@ -171,21 +171,21 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                             }
                             Error::SyntaxError { syntax } => {
                                 self.write(
-                                    format!("501 5.5.2 Syntax error, expected: {}\r\n", syntax)
+                                    format!("501 5.5.2 Syntax error, expected: {syntax}\r\n")
                                         .as_bytes(),
                                 )
                                 .await?;
                             }
                             Error::InvalidParameter { param } => {
                                 self.write(
-                                    format!("501 5.5.4 Invalid parameter {:?}.\r\n", param)
+                                    format!("501 5.5.4 Invalid parameter {param:?}.\r\n")
                                         .as_bytes(),
                                 )
                                 .await?;
                             }
                             Error::UnsupportedParameter { param } => {
                                 self.write(
-                                    format!("504 5.5.4 Unsupported parameter {:?}.\r\n", param)
+                                    format!("504 5.5.4 Unsupported parameter {param:?}.\r\n")
                                         .as_bytes(),
                                 )
                                 .await?;
@@ -203,10 +203,10 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                             let num_rcpts = self.data.rcpt_to.len();
                             let message = self.queue_message().await;
                             if self.instance.is_smtp {
-                                self.write(message).await?;
+                                self.write(message.as_ref()).await?;
                             } else {
                                 for _ in 0..num_rcpts {
-                                    self.write(message).await?;
+                                    self.write(message.as_ref()).await?;
                                 }
                             }
                             self.reset();
@@ -225,10 +225,10 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                                 let num_rcpts = self.data.rcpt_to.len();
                                 let message = self.queue_message().await;
                                 if self.instance.is_smtp {
-                                    self.write(message).await?;
+                                    self.write(message.as_ref()).await?;
                                 } else {
                                     for _ in 0..num_rcpts {
-                                        self.write(message).await?;
+                                        self.write(message.as_ref()).await?;
                                     }
                                 }
                                 self.reset();

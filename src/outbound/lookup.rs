@@ -30,12 +30,12 @@ impl Core {
                 if let mail_auth::Error::DnsRecordNotFound(_) = &err {
                     Status::PermanentFailure(Error::ConnectionError(ErrorDetails {
                         entity: remote_host.hostname().to_string(),
-                        details: format!("record not found for MX"),
+                        details: "record not found for MX".to_string(),
                     }))
                 } else {
                     Status::TemporaryFailure(Error::ConnectionError(ErrorDetails {
                         entity: remote_host.hostname().to_string(),
-                        details: format!("lookup error: {}", err),
+                        details: format!("lookup error: {err}"),
                     }))
                 }
             })?;
@@ -226,7 +226,6 @@ mod tests {
         assert_eq!(hosts.len(), 7);
         for host in hosts {
             if let RemoteHost::MX(host) = host {
-                println!("host {}", host);
                 assert!((*host.as_bytes().last().unwrap() - b'0') <= 8);
             }
         }

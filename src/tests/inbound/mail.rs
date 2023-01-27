@@ -133,7 +133,7 @@ async fn mail() {
         "REQUIRETLS",
     ] {
         session
-            .ingest(format!("MAIL FROM:<params@foobar.org> {}\r\n", param).as_bytes())
+            .ingest(format!("MAIL FROM:<params@foobar.org> {param}\r\n").as_bytes())
             .await
             .unwrap();
         session.response().assert_code("501 5.5.4");

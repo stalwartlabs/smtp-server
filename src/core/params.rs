@@ -12,11 +12,13 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
         self.params.spf_ehlo = *self.core.mail_auth.spf.verify_ehlo.eval(self).await;
         self.params.spf_mail_from = *self.core.mail_auth.spf.verify_mail_from.eval(self).await;
         self.params.iprev = *self.core.mail_auth.iprev.verify.eval(self).await;
+        self.params.dnsbl_policy = *self.core.mail_auth.dnsbl.verify.eval(self).await;
 
         // Ehlo parameters
         let ec = &self.core.session.config.ehlo;
         self.params.ehlo_script = ec.script.eval(self).await.clone();
         self.params.ehlo_require = *ec.require.eval(self).await;
+        self.params.ehlo_reject_non_fqdn = *ec.reject_non_fqdn.eval(self).await;
 
         // Auth parameters
         let ac = &self.core.session.config.auth;

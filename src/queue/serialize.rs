@@ -317,7 +317,7 @@ impl QueueSerializer for Response<String> {
 
 impl QueueSerializer for usize {
     fn serialize(&self, buf: &mut String) {
-        let _ = write!(buf, "{} ", self);
+        let _ = write!(buf, "{self} ");
     }
 
     fn deserialize(bytes: &mut Iter<'_, u8>) -> Option<Self> {
@@ -340,7 +340,7 @@ impl QueueSerializer for usize {
 
 impl QueueSerializer for i16 {
     fn serialize(&self, buf: &mut String) {
-        let _ = write!(buf, "{} ", self);
+        let _ = write!(buf, "{self} ");
     }
 
     fn deserialize(bytes: &mut Iter<'_, u8>) -> Option<Self> {

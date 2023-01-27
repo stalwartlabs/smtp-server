@@ -1,8 +1,6 @@
-use mail_auth::{
-    sha1::Digest,
-    sha2::{Sha256, Sha512},
-};
 use rustls::Certificate;
+use sha1::Digest;
+use sha2::{Sha256, Sha512};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::queue::{Error, ErrorDetails, Status};
@@ -245,7 +243,7 @@ mod test {
             let mut certs = Vec::new();
             for num in 0..6 {
                 let mut file = path.clone();
-                file.push(format!("{}.{}.cert", host, num));
+                file.push(format!("{host}.{num}.cert"));
                 if file.exists() {
                     certs.push(Certificate(fs::read(file).unwrap()));
                 } else {
@@ -255,7 +253,7 @@ mod test {
 
             // Successful DANE verification
             let tlsa = r
-                .tlsa_lookup(format!("_25._tcp.{}.", host))
+                .tlsa_lookup(format!("_25._tcp.{host}."))
                 .await
                 .unwrap()
                 .unwrap();

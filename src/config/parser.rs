@@ -54,7 +54,7 @@ impl Config {
                                         last_array_name = table_name.to_string();
                                     }
                                     is_array = false;
-                                    write!(table_name, ".{}", last_array_pos).ok();
+                                    write!(table_name, ".{last_array_pos}").ok();
                                 } else {
                                     break;
                                 }
@@ -80,7 +80,7 @@ impl Config {
                 }
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '\"' => {
                     let key = parser.key(if !table_name.is_empty() {
-                        format!("{}.", table_name)
+                        format!("{table_name}.")
                     } else {
                         String::with_capacity(10)
                     })?;
@@ -233,11 +233,7 @@ impl<'x> TomlParser<'x> {
                 let mut array_pos = 0;
                 self.seek_next_char();
                 loop {
-                    match self.value(
-                        format!("{}.{}", key, array_pos),
-                        &[',', ']'],
-                        nest_level + 1,
-                    )? {
+                    match self.value(format!("{key}.{array_pos}"), &[',', ']'], nest_level + 1)? {
                         ',' => {
                             self.seek_next_char();
                             array_pos += 1;
@@ -253,7 +249,7 @@ impl<'x> TomlParser<'x> {
                 }
             }
             '{' => loop {
-                let sub_key = self.key(format!("{}.", key))?;
+                let sub_key = self.key(format!("{key}."))?;
                 self.seek_next_char();
 
                 match self.value(sub_key, &[',', '}'], nest_level + 1)? {

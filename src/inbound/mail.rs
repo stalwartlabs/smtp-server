@@ -4,9 +4,14 @@ use mail_auth::{IprevOutput, IprevResult, SpfOutput, SpfResult};
 use smtp_proto::{MailFrom, MAIL_BY_NOTIFY, MAIL_BY_RETURN, MAIL_REQUIRETLS};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::core::{Session, SessionAddress};
+use crate::{
+    config::{DNSBL_IPREV, DNSBL_RETURN_PATH},
+    core::{Session, SessionAddress},
+};
 
-impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
+use super::IsTls;
+
+impl<T: AsyncWrite + AsyncRead + Unpin + IsTls> Session<T> {
     pub async fn handle_mail_from(&mut self, from: MailFrom<String>) -> Result<(), ()> {
         if self.data.helo_domain.is_empty()
             && (self.params.ehlo_require
@@ -24,7 +29,12 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             return self
                 .write(b"503 5.5.1 You must authenticate first.\r\n")
                 .await;
-        } else if self.data.iprev.is_none() && self.params.iprev.verify() {
+        } else if self.has_dnsbl_error() {
+            // There was a previous DNSBL error
+            return self.write_dnsbl_error().await;
+        } else if self.data.iprev.is_none()
+            && (self.params.iprev.verify() || (self.params.dnsbl_policy & DNSBL_IPREV) != 0)
+        {
             let iprev = self
                 .core
                 .resolvers
@@ -38,6 +48,13 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     result = %iprev.result,
                     ptr = iprev.ptr.as_ref().and_then(|p| p.first()).map(|p| p.as_str()).unwrap_or_default()
             );
+
+            // Validate reverse hostname against DNSBL
+            if let Some(ptr) = iprev.ptr.as_ref().and_then(|l| l.first()) {
+                if !self.is_domain_dnsbl_allowed(ptr, "ptr", DNSBL_IPREV).await {
+                    return self.write_dnsbl_error().await;
+                }
+            }
 
             self.data.iprev = iprev.into();
         }
@@ -78,6 +95,17 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         } else {
             (String::new(), String::new(), String::new())
         };
+
+        // Validate domain against DNSBL
+        if !domain.is_empty()
+            && !self
+                .is_domain_dnsbl_allowed(&domain, "mail-from", DNSBL_RETURN_PATH)
+                .await
+        {
+            self.write_dnsbl_error().await?;
+            self.reset_dnsbl_error(); // Reset error in case a new MAIL-FROM is issued later
+            return Ok(());
+        }
 
         let has_dsn = from.env_id.is_some();
         self.data.mail_from = SessionAddress {
@@ -166,8 +194,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     return self
                         .write(
                             format!(
-                                "501 5.5.4 Requested hold time exceeds maximum of {} seconds.\r\n",
-                                max_hold
+                                "501 5.5.4 Requested hold time exceeds maximum of {max_hold} seconds.\r\n"
                             )
                             .as_bytes(),
                         )
@@ -262,7 +289,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             result => {
                 if strict {
                     self.write(
-                        format!("550 5.7.23 SPF validation failed, status: {}.\r\n", result)
+                        format!("550 5.7.23 SPF validation failed, status: {result}.\r\n")
                             .as_bytes(),
                     )
                     .await?;

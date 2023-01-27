@@ -139,6 +139,7 @@ pub struct SessionData {
     pub iprev: Option<IprevOutput>,
     pub spf_ehlo: Option<SpfOutput>,
     pub spf_mail_from: Option<SpfOutput>,
+    pub dnsbl_error: Option<Vec<u8>>,
 }
 
 pub struct SessionAddress {
@@ -157,6 +158,7 @@ pub struct SessionParameters {
     // Ehlo parameters
     pub ehlo_script: Option<Arc<Script>>,
     pub ehlo_require: bool,
+    pub ehlo_reject_non_fqdn: bool,
 
     // Auth parameters
     pub auth_script: Option<Arc<Script>>,
@@ -182,6 +184,7 @@ pub struct SessionParameters {
     pub iprev: VerifyStrategy,
     pub spf_ehlo: VerifyStrategy,
     pub spf_mail_from: VerifyStrategy,
+    pub dnsbl_policy: u32,
 }
 
 impl SessionData {
@@ -205,6 +208,7 @@ impl SessionData {
             iprev: None,
             spf_ehlo: None,
             spf_mail_from: None,
+            dnsbl_error: None,
         }
     }
 }

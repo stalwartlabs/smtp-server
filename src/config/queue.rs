@@ -147,7 +147,7 @@ impl Config {
                     .unwrap_or_else(|| IfBlock::new("Mail Delivery Subsystem".to_string())),
                 address: self
                     .parse_if_block("report.dsn.from-address", ctx, &sender_envelope_keys)?
-                    .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{}", default_hostname))),
+                    .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{default_hostname}" ))),
                 sign: self
                     .parse_if_block::<Vec<String>>("report.dsn.sign", ctx, &sender_envelope_keys)?
                     .unwrap_or_default()
@@ -282,8 +282,7 @@ impl Config {
                 keys |= key;
             } else {
                 return Err(format!(
-                    "Key {:?} is not available in this context for property {:?}",
-                    value, key_
+                    "Key {value:?} is not available in this context for property {key_:?}"
                 ));
             }
         }
@@ -345,8 +344,8 @@ impl IfBlock<Option<String>> {
                                     .get(&then)
                                     .ok_or_else(|| {
                                         format!(
-                                            "Host {:?} not found for property \"queue.next-hop\".",
-                                            then
+                                            "Host {then:?} not found for property \"queue.next-hop\".",
+                                            
                                         )
                                     })?
                                     .into(),
@@ -365,8 +364,7 @@ impl IfBlock<Option<String>> {
                         .get(&default)
                         .ok_or_else(|| {
                             format!(
-                                "Relay host {:?} not found for property \"queue.next-hop\".",
-                                default
+                                "Relay host {default:?} not found for property \"queue.next-hop\".",
                             )
                         })?
                         .into(),

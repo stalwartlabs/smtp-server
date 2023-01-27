@@ -191,14 +191,14 @@ async fn report_scheduler() {
                 assert_eq!(a.deliver_at, b.deliver_at);
                 assert_eq!(a.path.len(), b.path.len());
                 for p in &a.path {
-                    assert!(b.path.contains(&p));
+                    assert!(b.path.contains(p));
                 }
                 for p in &b.path {
-                    assert!(a.path.contains(&p));
+                    assert!(a.path.contains(p));
                 }
             }
             _ => {
-                assert_eq!(a, b, "failed for {:?}", key);
+                assert_eq!(a, b, "failed for {key:?}");
             }
         }
     }
@@ -245,7 +245,7 @@ fn report_strip_json() {
     d.records.push(r);
 
     assert_eq!(
-        serde_json::from_str::<DmarcFormat>(&format!("{},{}]}}", s, rs)).unwrap(),
+        serde_json::from_str::<DmarcFormat>(&format!("{s},{rs}]}}")).unwrap(),
         d
     );
 }

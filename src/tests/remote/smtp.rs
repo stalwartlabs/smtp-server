@@ -111,7 +111,7 @@ async fn remote_smtp() {
     }
     for (result, item, expected_result) in requests {
         let result = result.await.unwrap();
-        assert_eq!(result, Some(expected_result), "Failed for {:?}", item);
+        assert_eq!(result, Some(expected_result), "Failed for {item:?}");
     }
 
     // Shutdown
@@ -134,7 +134,7 @@ async fn remote_smtp() {
     }
     for (result, item, expected_result) in requests {
         let result = result.await.unwrap();
-        assert_eq!(result, Some(expected_result), "Failed for {:?}", item);
+        assert_eq!(result, Some(expected_result), "Failed for {item:?}");
     }
 }
 
@@ -145,7 +145,7 @@ pub fn spawn_mock_lmtp_server(max_concurrency: u64) -> watch::Sender<bool> {
         let listener = TcpListener::bind("127.0.0.1:9999")
             .await
             .unwrap_or_else(|e| {
-                panic!("Failed to bind mock SMTP server to 127.0.0.1:9999: {}", e);
+                panic!("Failed to bind mock SMTP server to 127.0.0.1:9999: {e}");
             });
         let acceptor = dummy_tls_acceptor();
         let limited = ConcurrencyLimiter::new(max_concurrency);
@@ -159,7 +159,7 @@ pub fn spawn_mock_lmtp_server(max_concurrency: u64) -> watch::Sender<bool> {
                             tokio::spawn(accept_smtp(stream, acceptor, in_flight));
                         }
                         Err(err) => {
-                            panic!("Something went wrong: {}", err);
+                            panic!("Something went wrong: {err}" );
                         }
                     }
                 },
@@ -220,7 +220,7 @@ async fn accept_smtp(stream: TcpStream, acceptor: Arc<TlsAcceptor>, in_flight: O
                     .split_once(' ')
                     .unwrap()
                     .1
-                    .split(",")
+                    .split(',')
                     .filter_map(|s| {
                         if !s.is_empty() {
                             s.to_string().into()

@@ -23,8 +23,8 @@ impl Config {
             "quad9-tls" => (ResolverConfig::quad9_tls(), ResolverOpts::default()),
             "google" => (ResolverConfig::google(), ResolverOpts::default()),
             "system" => read_system_conf()
-                .map_err(|err| format!("Failed to read system DNS config: {}", err))?,
-            other => return Err(format!("Unknown resolver type {:?}.", other)),
+                .map_err(|err| format!("Failed to read system DNS config: {err}"))?,
+            other => return Err(format!("Unknown resolver type {other:?}.")),
         };
         if let Some(concurrency) = self.property("resolver.concurrency")? {
             opts.num_concurrent_reqs = concurrency;
@@ -64,9 +64,9 @@ impl Config {
                 capacities[3],
                 capacities[4],
             )
-            .map_err(|err| format!("Failed to build DNS resolver: {}", err))?,
+            .map_err(|err| format!("Failed to build DNS resolver: {err}"))?,
             dnssec: DnssecResolver::with_capacity(config_dnssec, opts_dnssec)
-                .map_err(|err| format!("Failed to build DNSSEC resolver: {}", err))?,
+                .map_err(|err| format!("Failed to build DNSSEC resolver: {err}"))?,
             cache: crate::core::DnsCache {
                 tlsa: LruCache::with_capacity(
                     self.property("resolver.cache.tlsa")?.unwrap_or(1024),

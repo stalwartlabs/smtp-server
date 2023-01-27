@@ -182,5 +182,5 @@ fn assert_instant_eq(instant: Instant, other: Instant) {
         other - instant
     }
     .as_secs();
-    assert!(dur <= 1, "dur {}", dur);
+    assert!(dur <= 1, "dur {dur}");
 }

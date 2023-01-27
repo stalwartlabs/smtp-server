@@ -124,19 +124,13 @@ impl Config {
         if let Some(value) = self.keys.get(&key) {
             if let Some(value) = value.strip_prefix("file://") {
                 std::fs::read(value).map_err(|err| {
-                    format!(
-                        "Failed to read file {:?} for property {:?}: {}",
-                        value, key, err
-                    )
+                    format!("Failed to read file {value:?} for property {key:?}: {err}")
                 })
             } else {
                 Ok(value.to_string().into_bytes())
             }
         } else {
-            Err(format!(
-                "Property {:?} not found in configuration file.",
-                key
-            ))
+            Err(format!("Property {key:?} not found in configuration file."))
         }
     }
 }
@@ -362,7 +356,7 @@ impl AsKey for &str {
     }
 
     fn as_prefix(&self) -> String {
-        format!("{}.", self)
+        format!("{self}.")
     }
 }
 
@@ -372,7 +366,7 @@ impl AsKey for String {
     }
 
     fn as_prefix(&self) -> String {
-        format!("{}.", self)
+        format!("{self}.")
     }
 }
 

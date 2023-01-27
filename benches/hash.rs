@@ -204,7 +204,7 @@ fn to_key(t: &Throttle, e: &TestEnvelope) -> String {
         write!(result, "{}", rate_limit.requests).ok();
     }
     if let Some(concurrency) = &t.concurrency {
-        write!(result, "{}", concurrency).ok();
+        write!(result, "{concurrency}").ok();
     }
     result
 }

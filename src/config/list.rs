@@ -36,10 +36,7 @@ impl Config {
                     host.ref_count += 1;
                     Ok(List::Remote(host.channel_tx.clone().into()))
                 } else {
-                    Err(format!(
-                        "Remote host {:?} not found for list {:?}.",
-                        remote, id
-                    ))
+                    Err(format!("Remote host {remote:?} not found for list {id:?}.",))
                 }
             }
             "file" => {
@@ -47,23 +44,20 @@ impl Config {
 
                 for (_, value) in self.values(("list", id, "path")) {
                     for line in BufReader::new(File::open(value).map_err(|err| {
-                        format!("Failed to read file {:?} for list {:?}: {}", value, id, err)
+                        format!("Failed to read file {value:?} for list {id:?}: {err}")
                     })?)
                     .lines()
                     {
                         entries.insert(line.map_err(|err| {
-                            format!("Failed to read file {:?} for list {:?}: {}", value, id, err)
+                            format!("Failed to read file {value:?} for list {id:?}: {err}")
                         })?);
                     }
                 }
 
                 Ok(List::Local(entries))
             }
-            "" => Err(format!("Missing 'type' property for list {:?}.", id)),
-            invalid => Err(format!(
-                "Invalid list type {:?} for list {:?}.",
-                invalid, id
-            )),
+            "" => Err(format!("Missing 'type' property for list {id:?}.")),
+            invalid => Err(format!("Invalid list type {invalid:?} for list {id:?}.",)),
         }
     }
 }
@@ -141,12 +135,7 @@ mod tests {
         ]);
 
         for (key, list) in context.lists {
-            assert_eq!(
-                Some(list),
-                expected_lists.remove(&key),
-                "failed for {}",
-                key
-            );
+            assert_eq!(Some(list), expected_lists.remove(&key), "failed for {key}");
         }
     }
 }

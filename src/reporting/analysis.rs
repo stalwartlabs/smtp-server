@@ -263,8 +263,7 @@ impl AnalyzeReport for Arc<Core> {
                     // Build path
                     let mut report_path = report_path.clone();
                     report_path.push(format!(
-                        "{}_{}_{}.{}{}",
-                        report_format, now, id, extension, c_extension
+                        "{report_format}_{now}_{id}.{extension}{c_extension}"
                     ));
                     if let Err(err) = std::fs::write(&report_path, report.data) {
                         tracing::warn!(

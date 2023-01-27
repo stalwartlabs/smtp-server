@@ -129,22 +129,22 @@ pub fn dummy_tls_acceptor() -> Arc<TlsAcceptor> {
 impl Item {
     pub fn append(&self, append: usize) -> Self {
         match self {
-            Item::Exists(str) => Item::Exists(format!("{}{}", append, str)),
+            Item::Exists(str) => Item::Exists(format!("{append}{str}")),
             Item::Authenticate(str) => Item::Authenticate(match str {
                 Credentials::Plain { username, secret } => Credentials::Plain {
                     username: username.to_string(),
-                    secret: format!("{}{}", append, secret),
+                    secret: format!("{append}{secret}"),
                 },
                 Credentials::OAuthBearer { token } => Credentials::OAuthBearer {
-                    token: format!("{}{}", append, token),
+                    token: format!("{append}{token}"),
                 },
                 Credentials::XOauth2 { username, secret } => Credentials::XOauth2 {
                     username: username.to_string(),
-                    secret: format!("{}{}", append, secret),
+                    secret: format!("{append}{secret}"),
                 },
             }),
-            Item::Verify(str) => Item::Verify(format!("{}{}", append, str)),
-            Item::Expand(str) => Item::Expand(format!("{}{}", append, str)),
+            Item::Verify(str) => Item::Verify(format!("{append}{str}")),
+            Item::Expand(str) => Item::Expand(format!("{append}{str}")),
         }
     }
 }
@@ -158,7 +158,7 @@ impl LookupResult {
                 let mut r = Vec::with_capacity(v.len());
                 for (pos, val) in v.iter().enumerate() {
                     r.push(if pos == 0 {
-                        format!("{}{}", append, val)
+                        format!("{append}{val}")
                     } else {
                         val.to_string()
                     });

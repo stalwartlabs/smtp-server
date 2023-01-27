@@ -307,10 +307,7 @@ mod tests {
                 )
                 .to_rfc3339(),
                 expected,
-                "failed for {:?} {} {}",
-                freq,
-                date,
-                expected
+                "failed for {freq:?} {date} {expected}"
             );
         }
     }

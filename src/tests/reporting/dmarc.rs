@@ -104,6 +104,7 @@ async fn report_dmarc() {
         )
         .await;
     assert_eq!(scheduler.reports.len(), 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
     let report_path;
     match scheduler.reports.into_iter().next().unwrap() {
         (ReportType::Dmarc(domain), ReportType::Dmarc(path)) => {
@@ -152,7 +153,7 @@ async fn report_dmarc() {
             assert_eq!(record.count(), 1);
             assert_eq!(record.action_disposition(), ActionDisposition::Reject);
         } else {
-            panic!("unexpected ip {}", source_ip);
+            panic!("unexpected ip {source_ip}");
         }
     }
 

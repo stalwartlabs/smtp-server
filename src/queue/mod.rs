@@ -459,7 +459,7 @@ impl Display for Error {
                 )
             }
             Error::DnsError(err) => {
-                write!(f, "DNS lookup failed: {}", err)
+                write!(f, "DNS lookup failed: {err}")
             }
             Error::ConnectionError(details) => {
                 write!(
@@ -483,7 +483,7 @@ impl Display for Error {
                 )
             }
             Error::MtaStsError(details) => {
-                write!(f, "MTA-STS auth failed: {}", details)
+                write!(f, "MTA-STS auth failed: {details}")
             }
             Error::RateLimited => {
                 write!(f, "Rate limited")
@@ -492,7 +492,7 @@ impl Display for Error {
                 write!(f, "Too many concurrent connections to remote server")
             }
             Error::Io(err) => {
-                write!(f, "Queue error: {}", err)
+                write!(f, "Queue error: {err}")
             }
         }
     }
@@ -503,8 +503,8 @@ impl Display for Status<(), Error> {
         match self {
             Status::Scheduled => write!(f, "Scheduled"),
             Status::Completed(_) => write!(f, "Completed"),
-            Status::TemporaryFailure(err) => write!(f, "Temporary Failure: {}", err),
-            Status::PermanentFailure(err) => write!(f, "Permanent Failure: {}", err),
+            Status::TemporaryFailure(err) => write!(f, "Temporary Failure: {err}"),
+            Status::PermanentFailure(err) => write!(f, "Permanent Failure: {err}"),
         }
     }
 }

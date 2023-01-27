@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use mail_auth::{common::parse::TxtRecordParser, spf::Spf, SpfResult};
 
 use crate::{
-    config::ConfigContext,
+    config::{ConfigContext, IfBlock},
     core::{Core, Session},
     tests::{session::VerifyResponse, ParseTestConfig},
 };
@@ -35,16 +35,19 @@ async fn ehlo() {
     core.mail_auth.spf.verify_ehlo = r"[{if = 'remote-ip', eq = '10.0.0.2', then = 'strict'},
     {else = 'relaxed'}]"
         .parse_if(&ConfigContext::default());
+    config.ehlo.reject_non_fqdn = IfBlock::new(true);
 
-    // EHLO capabilities evaluation
+    // Reject non-FQDN domains
     let mut session = Session::test(core);
     session.data.remote_ip = "10.0.0.1".parse().unwrap();
     session.stream.tls = false;
     session.eval_session_params().await;
-    session.ingest(b"EHLO mx1.foobar.org\r\n").await.unwrap();
+    session.cmd("EHLO domain", "550 5.5.0").await;
+
+    // EHLO capabilities evaluation
     session
-        .response()
-        .assert_code("250")
+        .cmd("EHLO mx1.foobar.org", "250")
+        .await
         .assert_contains("SIZE 1024")
         .assert_contains("MT-PRIORITY NSEP")
         .assert_contains("FUTURERELEASE 3600")

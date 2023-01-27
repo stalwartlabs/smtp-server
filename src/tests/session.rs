@@ -112,14 +112,12 @@ impl Session<DummyIo> {
     }
 
     pub async fn cmd(&mut self, cmd: &str, expected_code: &str) -> Vec<String> {
-        self.ingest(format!("{}\r\n", cmd).as_bytes())
-            .await
-            .unwrap();
+        self.ingest(format!("{cmd}\r\n").as_bytes()).await.unwrap();
         self.response().assert_code(expected_code)
     }
 
     pub async fn ehlo(&mut self, host: &str) -> Vec<String> {
-        self.ingest(format!("EHLO {}\r\n", host).as_bytes())
+        self.ingest(format!("EHLO {host}\r\n").as_bytes())
             .await
             .unwrap();
         self.response().assert_code("250")
@@ -127,10 +125,10 @@ impl Session<DummyIo> {
 
     pub async fn mail_from(&mut self, from: &str, expected_code: &str) {
         self.ingest(
-            if !from.starts_with("<") {
-                format!("MAIL FROM:<{}>\r\n", from)
+            if !from.starts_with('<') {
+                format!("MAIL FROM:<{from}>\r\n")
             } else {
-                format!("MAIL FROM:{}\r\n", from)
+                format!("MAIL FROM:{from}\r\n")
             }
             .as_bytes(),
         )
@@ -141,10 +139,10 @@ impl Session<DummyIo> {
 
     pub async fn rcpt_to(&mut self, to: &str, expected_code: &str) {
         self.ingest(
-            if !to.starts_with("<") {
-                format!("RCPT TO:<{}>\r\n", to)
+            if !to.starts_with('<') {
+                format!("RCPT TO:<{to}>\r\n")
             } else {
-                format!("RCPT TO:{}\r\n", to)
+                format!("RCPT TO:{to}\r\n")
             }
             .as_bytes(),
         )
@@ -185,7 +183,7 @@ pub fn load_test_message(file: &str, test: &str) -> String {
     test_file.push("resources");
     test_file.push("tests");
     test_file.push(test);
-    test_file.push(format!("{}.eml", file));
+    test_file.push(format!("{file}.eml"));
     std::fs::read_to_string(test_file).unwrap()
 }
 

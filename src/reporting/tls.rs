@@ -340,7 +340,7 @@ impl Scheduler {
                                     .data
                                     .iter()
                                     .fold(String::with_capacity(64), |mut s, b| {
-                                        write!(s, "{:02X}", b).ok();
+                                        write!(s, "{b:02X}").ok();
                                         s
                                     })
                             ));
@@ -365,9 +365,9 @@ impl Scheduler {
                         for mx in &sts.mx {
                             let mx = match mx {
                                 MxPattern::Equals(mx) => mx.to_string(),
-                                MxPattern::StartsWith(mx) => format!("*.{}", mx),
+                                MxPattern::StartsWith(mx) => format!("*.{mx}"),
                             };
-                            policy.policy_string.push(format!("mx: {}", mx));
+                            policy.policy_string.push(format!("mx: {mx}"));
                             policy.mx_host.push(mx);
                         }
                     }

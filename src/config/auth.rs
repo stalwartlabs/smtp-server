@@ -9,8 +9,9 @@ use mail_parser::decoders::base64::base64_decode;
 use super::{
     utils::{AsKey, ParseValue},
     ArcAuthConfig, ArcSealer, Config, ConfigContext, DkimAuthConfig, DkimCanonicalization,
-    DkimSigner, DmarcAuthConfig, EnvelopeKey, IfBlock, IpRevAuthConfig, MailAuthConfig,
-    SpfAuthConfig, VerifyStrategy,
+    DkimSigner, DmarcAuthConfig, DnsBlConfig, EnvelopeKey, IfBlock, IfThen, IpRevAuthConfig,
+    MailAuthConfig, SpfAuthConfig, VerifyStrategy, DNSBL_EHLO, DNSBL_FROM, DNSBL_IP, DNSBL_IPREV,
+    DNSBL_RETURN_PATH,
 };
 
 impl Config {
@@ -67,6 +68,63 @@ impl Config {
                     .parse_if_block("auth.iprev.verify", ctx, &envelope_conn_keys)?
                     .unwrap_or_else(|| IfBlock::new(VerifyStrategy::Relaxed)),
             },
+            dnsbl: self.parse_dnsbl(ctx)?,
+        })
+    }
+
+    pub fn parse_dnsbl(&self, ctx: &ConfigContext) -> super::Result<DnsBlConfig> {
+        let verify = self
+            .parse_if_block::<Vec<String>>(
+                "auth.dnsbl.verify",
+                ctx,
+                &[EnvelopeKey::RemoteIp, EnvelopeKey::Listener],
+            )?
+            .unwrap_or_default();
+
+        Ok(DnsBlConfig {
+            verify: IfBlock {
+                if_then: {
+                    let mut if_then = Vec::with_capacity(verify.if_then.len());
+                    for cond in verify.if_then {
+                        if_then.push(IfThen {
+                            conditions: cond.conditions,
+                            then: cond.then.into_dnsbl("auth.dnsbl.verify.if")?,
+                        });
+                    }
+                    if_then
+                },
+                default: verify.default.into_dnsbl("auth.dnsbl.verify.else")?,
+            },
+            ip_lookup: self
+                .values("auth.dnsbl.lookup.ip")
+                .filter_map(|(_, v)| {
+                    if !v.is_empty() {
+                        if !v.ends_with('.') {
+                            format!("{v}.")
+                        } else {
+                            v.to_string()
+                        }
+                        .into()
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            domain_lookup: self
+                .values("auth.dnsbl.lookup.domain")
+                .filter_map(|(_, v)| {
+                    if !v.is_empty() {
+                        if !v.ends_with('.') {
+                            format!("{v}.")
+                        } else {
+                            v.to_string()
+                        }
+                        .into()
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
         })
     }
 
@@ -76,7 +134,7 @@ impl Config {
             let (signer, sealer) =
                 match self.property_require::<Algorithm>(("signature", id, "algorithm"))? {
                     Algorithm::RsaSha256 => {
-                        let key = RsaKey::<Sha256>::from_pkcs1_pem(
+                        let key = RsaKey::<Sha256>::from_rsa_pem(
                             &String::from_utf8(self.file_contents((
                                 "signature",
                                 id,
@@ -91,7 +149,7 @@ impl Config {
                                 err
                             )
                         })?;
-                        let key_clone = RsaKey::<Sha256>::from_pkcs1_pem(
+                        let key_clone = RsaKey::<Sha256>::from_rsa_pem(
                             &String::from_utf8(self.file_contents((
                                 "signature",
                                 id,
@@ -110,7 +168,7 @@ impl Config {
                         (DkimSigner::RsaSha256(signer), ArcSealer::RsaSha256(sealer))
                     }
                     Algorithm::Ed25519Sha256 => {
-                        let cert =
+                        let public_key =
                             base64_decode(&self.file_contents(("signature", id, "public-key"))?)
                                 .ok_or_else(|| {
                                     format!(
@@ -118,7 +176,7 @@ impl Config {
                                         ("signature", id, "public-key",).as_key(),
                                     )
                                 })?;
-                        let pk =
+                        let private_key =
                             base64_decode(&self.file_contents(("signature", id, "private-key"))?)
                                 .ok_or_else(|| {
                                 format!(
@@ -126,18 +184,17 @@ impl Config {
                                     ("signature", id, "private-key",).as_key(),
                                 )
                             })?;
-                        let key = Ed25519Key::from_bytes(&cert, &pk).map_err(|err| {
-                            format!(
-                                "Failed to build ED25519 key for signature {:?}: {}",
-                                id, err
-                            )
+                        let key = Ed25519Key::from_seed_and_public_key(&private_key, &public_key)
+                            .map_err(|err| {
+                            format!("Failed to build ED25519 key for signature {id:?}: {err}")
                         })?;
-                        let key_clone = Ed25519Key::from_bytes(&cert, &pk).map_err(|err| {
-                            format!(
-                                "Failed to build ED25519 key for signature {:?}: {}",
-                                id, err
-                            )
-                        })?;
+                        let key_clone =
+                            Ed25519Key::from_seed_and_public_key(&private_key, &public_key)
+                                .map_err(|err| {
+                                    format!(
+                                        "Failed to build ED25519 key for signature {id:?}: {err}"
+                                    )
+                                })?;
 
                         let (signer, sealer) = self.parse_signature(id, key_clone, key)?;
                         (
@@ -147,8 +204,7 @@ impl Config {
                     }
                     Algorithm::RsaSha1 => {
                         return Err(format!(
-                            "Could not build signature {:?}: SHA1 signatures are deprecated.",
-                            id
+                            "Could not build signature {id:?}: SHA1 signatures are deprecated.",
                         ))
                     }
                 };
@@ -329,5 +385,33 @@ impl ParseValue for HashAlgorithm {
                 key.as_key()
             )),
         }
+    }
+}
+
+trait IntoDnsbl {
+    fn into_dnsbl(self, key: impl AsKey) -> super::Result<u32>;
+}
+
+impl IntoDnsbl for Vec<String> {
+    fn into_dnsbl(self, key: impl AsKey) -> super::Result<u32> {
+        let mut dns_bl = 0;
+        for value in self {
+            dns_bl |= match value.as_str() {
+                "ip" => DNSBL_IP,
+                "iprev" => DNSBL_IPREV,
+                "ehlo" | "helo" => DNSBL_EHLO,
+                "return-path" | "sender" | "mail-from" => DNSBL_RETURN_PATH,
+                "from" => DNSBL_FROM,
+                _ => {
+                    return Err(format!(
+                        "Invalid DNSBL value {:?} for key {:?}.",
+                        value,
+                        key.as_key()
+                    ))
+                }
+            };
+        }
+
+        Ok(dns_bl)
     }
 }

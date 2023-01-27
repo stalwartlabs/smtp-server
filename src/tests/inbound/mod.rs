@@ -13,6 +13,7 @@ pub mod auth;
 pub mod basic;
 pub mod data;
 pub mod dmarc;
+pub mod dnsrbl;
 pub mod ehlo;
 pub mod limits;
 pub mod mail;
@@ -40,8 +41,8 @@ impl QueueReceiver {
     pub fn assert_empty_queue(&mut self) {
         match self.queue_rx.try_recv() {
             Err(TryRecvError::Empty) => (),
-            Ok(event) => panic!("Expected empty queue but got {:?}", event),
-            Err(err) => panic!("Queue error: {:?}", err),
+            Ok(event) => panic!("Expected empty queue but got {event:?}"),
+            Err(err) => panic!("Queue error: {err:?}"),
         }
     }
 }
@@ -65,8 +66,8 @@ impl ReportReceiver {
     pub fn assert_no_reports(&mut self) {
         match self.report_rx.try_recv() {
             Err(TryRecvError::Empty) => (),
-            Ok(event) => panic!("Expected no reports but got {:?}", event),
-            Err(err) => panic!("Report error: {:?}", err),
+            Ok(event) => panic!("Expected no reports but got {event:?}"),
+            Err(err) => panic!("Report error: {err:?}"),
         }
     }
 }
@@ -75,14 +76,14 @@ impl queue::Event {
     pub fn unwrap_message(self) -> Box<Message> {
         match self {
             queue::Event::Queue(message) => message.inner,
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 
     pub fn unwrap_schedule(self) -> Schedule<Box<Message>> {
         match self {
             queue::Event::Queue(message) => message,
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 
@@ -92,7 +93,7 @@ impl queue::Event {
             queue::Event::Queue(message) => {
                 panic!("Unexpected message: {}", message.inner.read_message());
             }
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 
@@ -102,7 +103,7 @@ impl queue::Event {
             queue::Event::Queue(message) => {
                 panic!("Unexpected message: {}", message.inner.read_message());
             }
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 
@@ -112,7 +113,7 @@ impl queue::Event {
             queue::Event::Queue(message) => {
                 panic!("Unexpected message: {}", message.inner.read_message());
             }
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 
@@ -122,7 +123,7 @@ impl queue::Event {
             queue::Event::Queue(message) => {
                 panic!("Unexpected message: {}", message.inner.read_message());
             }
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 }
@@ -131,14 +132,14 @@ impl reporting::Event {
     pub fn unwrap_dmarc(self) -> Box<DmarcEvent> {
         match self {
             reporting::Event::Dmarc(event) => event,
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 
     pub fn unwrap_tls(self) -> Box<TlsEvent> {
         match self {
             reporting::Event::Tls(event) => event,
-            e => panic!("Unexpected event: {:?}", e),
+            e => panic!("Unexpected event: {e:?}"),
         }
     }
 }

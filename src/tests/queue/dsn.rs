@@ -202,7 +202,7 @@ fn remove_ids(message: Vec<u8>) -> String {
     }
 
     if !found_dkim {
-        panic!("No DKIM signature found in: {}", old_message);
+        panic!("No DKIM signature found in: {old_message}");
     }
 
     message

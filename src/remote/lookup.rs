@@ -261,7 +261,7 @@ impl List {
                 let entry = match credentials {
                     Credentials::Plain { username, secret }
                     | Credentials::XOauth2 { username, secret } => {
-                        format!("{}:{}", username, secret)
+                        format!("{username}:{secret}")
                     }
                     Credentials::OAuthBearer { token } => token,
                 };

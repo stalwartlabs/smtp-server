@@ -236,7 +236,7 @@ fn parse_config() -> Config {
                 config_path = value.trim().to_string().into();
                 break;
             } else {
-                failed(&format!("Invalid command line argument: {}", key));
+                failed(&format!("Invalid command line argument: {key}"));
             }
         } else if found_param {
             config_path = arg.into();
@@ -244,7 +244,7 @@ fn parse_config() -> Config {
         } else if arg.starts_with("--config") {
             found_param = true;
         } else {
-            failed(&format!("Invalid command line argument: {}", arg));
+            failed(&format!("Invalid command line argument: {arg}"));
         }
     }
 
@@ -264,7 +264,7 @@ impl<T> UnwrapFailure<T> for Option<T> {
         match self {
             Some(result) => result,
             None => {
-                eprintln!("{}", message);
+                eprintln!("{message}");
                 std::process::exit(1);
             }
         }
@@ -276,7 +276,7 @@ impl<T, E: std::fmt::Display> UnwrapFailure<T> for Result<T, E> {
         match self {
             Ok(result) => result,
             Err(err) => {
-                eprintln!("{}: {}", message, err);
+                eprintln!("{message}: {err}");
                 std::process::exit(1);
             }
         }
@@ -284,6 +284,6 @@ impl<T, E: std::fmt::Display> UnwrapFailure<T> for Result<T, E> {
 }
 
 pub fn failed(message: &str) -> ! {
-    eprintln!("{}", message);
+    eprintln!("{message}");
     std::process::exit(1);
 }

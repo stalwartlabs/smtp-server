@@ -421,10 +421,10 @@ impl From<std::io::Error> for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Io(io) => write!(f, "I/O error: {}", io),
+            Error::Io(io) => write!(f, "I/O error: {io}"),
             Error::Timeout => f.write_str("Connection time-out"),
-            Error::InvalidResponse(response) => write!(f, "Unexpected response: {:?}", response),
-            Error::InvalidChallenge(response) => write!(f, "Invalid auth challenge: {}", response),
+            Error::InvalidResponse(response) => write!(f, "Unexpected response: {response:?}"),
+            Error::InvalidChallenge(response) => write!(f, "Invalid auth challenge: {response}"),
             Error::TLSInvalidName => f.write_str("Invalid TLS name"),
             Error::Disconnected => f.write_str("Connection disconnected by peer"),
             Error::AuthenticationFailed => f.write_str("Authentication failed"),

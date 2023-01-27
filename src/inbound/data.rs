@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -15,21 +16,18 @@ use smtp_proto::{
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
+    config::DNSBL_FROM,
     core::{Session, SessionAddress},
-    queue::{self, Message, SimpleEnvelope},
+    queue::{self, DomainPart, Message, SimpleEnvelope},
     reporting::analysis::AnalyzeReport,
 };
 
 use super::IsTls;
 
 impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
-    pub async fn queue_message(&mut self) -> &'static [u8] {
+    pub async fn queue_message(&mut self) -> Cow<'static, [u8]> {
         // Authenticate message
-        let dc = &self.core.session.config.data;
-        let ac = &self.core.mail_auth;
-        let rc = &self.core.report.config;
         let raw_message = Arc::new(std::mem::take(&mut self.data.message));
-
         let auth_message = if let Some(auth_message) = AuthenticatedMessage::parse(&raw_message) {
             auth_message
         } else {
@@ -38,10 +36,24 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     context = "data",
                     size = raw_message.len());
 
-            return &b"550 5.7.7 Failed to parse message.\r\n"[..];
+            return (&b"550 5.7.7 Failed to parse message.\r\n"[..]).into();
         };
 
+        // Validate DNSBL
+        let from = auth_message.from();
+        let from_domain = from.domain_part();
+        if !from_domain.is_empty()
+            && !self
+                .is_domain_dnsbl_allowed(from_domain, "from", DNSBL_FROM)
+                .await
+        {
+            return self.reset_dnsbl_error().unwrap().into();
+        }
+
         // Loop detection
+        let dc = &self.core.session.config.data;
+        let ac = &self.core.mail_auth;
+        let rc = &self.core.report.config;
         if auth_message.received_headers_count() > *dc.max_received_headers.eval(self).await {
             tracing::info!(parent: &self.span,
                 event = "loop-detected",
@@ -49,7 +61,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 return_path = self.data.mail_from.as_ref().unwrap().address,
                 from = auth_message.from(),
                 received_headers = auth_message.received_headers_count());
-            return b"450 4.4.6 Too many Received headers. Possible loop detected.\r\n";
+            return (&b"450 4.4.6 Too many Received headers. Possible loop detected.\r\n"[..])
+                .into();
         }
 
         // Verify DKIM
@@ -86,9 +99,9 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     .iter()
                     .any(|d| matches!(d.result(), DkimResult::TempError(_)))
                 {
-                    &b"451 4.7.20 No passing DKIM signatures found.\r\n"[..]
+                    (&b"451 4.7.20 No passing DKIM signatures found.\r\n"[..]).into()
                 } else {
-                    &b"550 5.7.20 No passing DKIM signatures found.\r\n"[..]
+                    (&b"550 5.7.20 No passing DKIM signatures found.\r\n"[..]).into()
                 };
             } else {
                 tracing::debug!(parent: &self.span,
@@ -121,9 +134,9 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     "ARC validation failed.");
 
                 return if matches!(arc_output.result(), DkimResult::TempError(_)) {
-                    &b"451 4.7.29 ARC validation failed.\r\n"[..]
+                    (&b"451 4.7.29 ARC validation failed.\r\n"[..]).into()
                 } else {
-                    &b"550 5.7.29 ARC validation failed.\r\n"[..]
+                    (&b"550 5.7.29 ARC validation failed.\r\n"[..]).into()
                 };
             } else {
                 tracing::debug!(parent: &self.span,
@@ -226,9 +239,9 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
                 if rejected {
                     return if is_temp_fail {
-                        &b"451 4.7.1 Email temporarily rejected per DMARC policy.\r\n"[..]
+                        (&b"451 4.7.1 Email temporarily rejected per DMARC policy.\r\n"[..]).into()
                     } else {
-                        &b"550 5.7.1 Email rejected per DMARC policy.\r\n"[..]
+                        (&b"550 5.7.1 Email rejected per DMARC policy.\r\n"[..]).into()
                     };
                 }
             }
@@ -240,7 +253,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             self.core.analyze_report(raw_message.clone());
             if !rc.analysis.forward {
                 self.data.messages_sent += 1;
-                return b"250 2.0.0 Message queued for delivery.\r\n";
+                return (b"250 2.0.0 Message queued for delivery.\r\n"[..]).into();
             }
         }
 
@@ -340,9 +353,9 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 .await
             {
                 self.data.messages_sent += 1;
-                b"250 2.0.0 Message queued for delivery.\r\n"
+                (b"250 2.0.0 Message queued for delivery.\r\n"[..]).into()
             } else {
-                b"451 4.3.5 Unable to accept message at this time.\r\n"
+                (b"451 4.3.5 Unable to accept message at this time.\r\n"[..]).into()
             }
         } else {
             tracing::warn!(
@@ -352,7 +365,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 from = message.return_path,
                 "Queue quota exceeded, rejecting message."
             );
-            b"452 4.3.1 Mail system full, try again later.\r\n"
+            (b"452 4.3.1 Mail system full, try again later.\r\n"[..]).into()
         }
     }
 
@@ -519,7 +532,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             .as_bytes(),
         );
         headers.extend_from_slice(b" id ");
-        headers.extend_from_slice(format!("{:X}", id).as_bytes());
+        headers.extend_from_slice(format!("{id:X}").as_bytes());
         headers.extend_from_slice(b";\r\n\t");
         headers.extend_from_slice(Date::now().to_rfc822().as_bytes());
         headers.extend_from_slice(b"\r\n");
