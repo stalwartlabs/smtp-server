@@ -261,6 +261,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     reply = ?ips,
                 );
             }
+            Err(mail_auth::Error::DnsRecordNotFound(_)) => (),
             Err(err) => {
                 tracing::debug!(parent: &self.span,
                     context = "dnsbl",

@@ -1633,6 +1633,7 @@ checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
 [[package]]
 name = "smtp-proto"
 version = "0.1.0"
+source = "git+https://github.com/stalwartlabs/smtp-proto#cf9640069dac6aec0eb8120b84e17e31d8bce958"
 
 [[package]]
 name = "smtp-server"

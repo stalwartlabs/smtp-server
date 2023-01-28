@@ -238,6 +238,7 @@ impl GenerateTlsReport for Arc<Core> {
                     message,
                     &config.sign,
                     &span,
+                    false,
                 ));
             } else {
                 tracing::info!(

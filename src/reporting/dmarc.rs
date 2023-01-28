@@ -206,6 +206,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         report,
                         &config.sign,
                         &self.span,
+                        true,
                     )
                     .await;
             } else {
@@ -379,7 +380,14 @@ impl GenerateDmarcReport for Arc<Core> {
             );
 
             // Send report
-            handle.block_on(core.send_report(from_addr, rua.iter(), message, &config.sign, &span));
+            handle.block_on(core.send_report(
+                from_addr,
+                rua.iter(),
+                message,
+                &config.sign,
+                &span,
+                false,
+            ));
 
             if let Err(err) = std::fs::remove_file(&path.path) {
                 tracing::warn!(

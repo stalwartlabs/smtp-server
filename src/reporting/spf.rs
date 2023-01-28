@@ -71,6 +71,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 report,
                 &config.sign,
                 &self.span,
+                true,
             )
             .await;
     }

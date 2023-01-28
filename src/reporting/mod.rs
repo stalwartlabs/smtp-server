@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use mail_auth::{
     common::headers::HeaderWriter,
@@ -9,6 +12,7 @@ use mail_auth::{
     },
 };
 use mail_parser::DateTime;
+use rand::Rng;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
@@ -104,6 +108,7 @@ impl Core {
         report: Vec<u8>,
         sign_config: &IfBlock<Vec<Arc<DkimSigner>>>,
         span: &tracing::Span,
+        deliver_now: bool,
     ) {
         // Build message
         let from_addr_lcase = from_addr.to_lowercase();
@@ -132,6 +137,19 @@ impl Core {
 
         // Sign message
         let signature = message.sign(sign_config, &report, span).await;
+
+        // Schedule delivery at a random time between now and the next 3 hours
+        if !deliver_now {
+            #[cfg(not(test))]
+            {
+                let delivery_time = Duration::from_secs(rand::thread_rng().gen_range(0..10800));
+                for domain in &mut message.domains {
+                    domain.retry.due += delivery_time;
+                    domain.expires += delivery_time;
+                    domain.notify.due += delivery_time;
+                }
+            }
+        }
 
         // Queue message
         self.queue

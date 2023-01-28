@@ -3,13 +3,12 @@ name = "smtp-server"
 version = "0.1.0"
 edition = "2021"
 
-
 [dependencies]
 mail-auth = { path = "/home/vagrant/code/mail-auth" }
 mail-send = { path = "/home/vagrant/code/mail-send", default-features = false, features = ["cram-md5", "skip-ehlo"] }
 mail-parser = { git = "https://github.com/stalwartlabs/mail-parser", features = ["full_encoding", "ludicrous_mode"] } 
 mail-builder = { path = "/home/vagrant/code/mail-builder", features = ["ludicrous_mode"] } 
-smtp-proto = { path = "/home/vagrant/code/smtp-proto" }
+smtp-proto = { git = "https://github.com/stalwartlabs/smtp-proto" }
 ahash = { version = "0.8" }
 rustls = "0.20"
 rustls-pemfile = "1.0"
