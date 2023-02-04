@@ -336,8 +336,23 @@ ttl = {positive = "1d", negative = "1h"}
 implicit = false
 allow-invalid-certs = true
 
-#[scripts]
-#ehlo = "this is my script"
+[sieve]
+from-name = "Mailer Daemon"
+from-addr = "MAILER-DAEMON@%%DOMAIN%%"
+return-path = ""
+#hostname = ""
+sign = ["rsa"]
+
+[sieve.limits]
+redirects = 3
+out-messages = 5
+received-headers = 50
+cpu = 10000
+nested-includes = 5
+duplicate-expiry = "7d"
+
+[sieve.scripts]
+ehlo = "this is my script"
 
 [list."local-domains"]
 type = "inline"

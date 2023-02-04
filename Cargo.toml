@@ -9,6 +9,7 @@ mail-send = { path = "/home/vagrant/code/mail-send", default-features = false, f
 mail-parser = { git = "https://github.com/stalwartlabs/mail-parser", features = ["full_encoding", "ludicrous_mode"] } 
 mail-builder = { path = "/home/vagrant/code/mail-builder", features = ["ludicrous_mode"] } 
 smtp-proto = { git = "https://github.com/stalwartlabs/smtp-proto" }
+sieve-rs = { path = "/home/vagrant/code/sieve-rs" }
 ahash = { version = "0.8" }
 rustls = "0.20"
 rustls-pemfile = "1.0"

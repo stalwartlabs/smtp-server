@@ -3,7 +3,10 @@ use smtp_proto::{
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::core::{Session, SessionAddress};
+use crate::{
+    core::{scripts::ScriptResult, Session, SessionAddress},
+    queue::DomainPart,
+};
 
 impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
     pub async fn handle_rcpt_to(&mut self, to: RcptTo<String>) -> Result<(), ()> {
@@ -37,11 +40,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         // Build RCPT
         let address_lcase = to.address.to_lowercase();
         let rcpt = SessionAddress {
-            domain: address_lcase
-                .rsplit_once('@')
-                .map(|(_, d)| d)
-                .unwrap_or_default()
-                .to_string(),
+            domain: address_lcase.domain_part().to_string(),
             address_lcase,
             address: to.address,
             flags: to.flags,
@@ -106,13 +105,30 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
         }
 
         if !self.data.rcpt_to.contains(&rcpt) {
-            tracing::debug!(parent: &self.span,
-            event = "success",
-            context = "rcpt",
-            address = &rcpt.address_lcase);
-
             self.data.rcpt_to.push(rcpt);
-            if !self.is_allowed().await {
+
+            // Sieve filtering
+            if let Some(script) = &self.params.rcpt_script {
+                match self.run_script(script.clone(), None).await {
+                    ScriptResult::Accept | ScriptResult::Replace(_) => (),
+                    ScriptResult::Reject(message) => {
+                        tracing::debug!(parent: &self.span,
+                            context = "rcpt",
+                            event = "sieve-reject",
+                            address = &self.data.rcpt_to.last().unwrap().address,
+                            reason = message);
+                        self.data.rcpt_to.pop();
+                        return self.write(message.as_bytes()).await;
+                    }
+                }
+            }
+
+            if self.is_allowed().await {
+                tracing::debug!(parent: &self.span,
+                    context = "rcpt",
+                    event = "success",
+                    address = &self.data.rcpt_to.last().unwrap().address);
+            } else {
                 self.data.rcpt_to.pop();
                 return self
                     .write(b"451 4.4.5 Rate limit exceeded, try again later.\r\n")

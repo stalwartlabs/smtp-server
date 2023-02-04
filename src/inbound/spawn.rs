@@ -9,7 +9,9 @@ use tokio_rustls::{server::TlsStream, TlsAcceptor};
 
 use crate::{
     config::{Server, ServerProtocol},
-    core::{Core, ServerInstance, Session, SessionData, SessionParameters, State},
+    core::{
+        scripts::ScriptResult, Core, ServerInstance, Session, SessionData, SessionParameters, State,
+    },
 };
 
 use super::IsTls;
@@ -110,15 +112,11 @@ impl Server {
                                     tokio::spawn(async move {
                                         if tls_implicit {
                                             if let Ok(mut session) = session.into_tls(tls_acceptor.unwrap()).await {
-                                                if session.write(&instance.greeting).await.is_ok() {
-                                                    session.eval_session_params().await;
-                                                    session.verify_ip_dnsbl().await;
+                                                if session.init_conn(&instance.greeting).await {
                                                     session.handle_conn(shutdown_rx).await;
                                                 }
                                             }
-                                        } else if session.write(&instance.greeting).await.is_ok() {
-                                            session.eval_session_params().await;
-                                            session.verify_ip_dnsbl().await;
+                                        } else if session.init_conn(&instance.greeting).await  {
                                             session.handle_conn(tls_acceptor, shutdown_rx).await;
                                         }
                                     });
@@ -207,6 +205,32 @@ impl Session<TlsStream<TcpStream>> {
 }
 
 impl<T: AsyncRead + AsyncWrite + IsTls + Unpin> Session<T> {
+    pub async fn init_conn(&mut self, greeting: &[u8]) -> bool {
+        if self.write(greeting).await.is_err() {
+            return false;
+        }
+        self.eval_session_params().await;
+        self.verify_ip_dnsbl().await;
+
+        // Sieve filtering
+        if let Some(script) = self.core.session.config.connect.script.eval(self).await {
+            match self.run_script(script.clone(), None).await {
+                ScriptResult::Accept | ScriptResult::Replace(_) => (),
+                ScriptResult::Reject(message) => {
+                    tracing::debug!(parent: &self.span,
+                        context = "connect",
+                        event = "sieve-reject",
+                        reason = message);
+
+                    let _ = self.write(message.as_bytes()).await;
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     pub async fn handle_conn_(
         &mut self,
         mut shutdown_rx: watch::Receiver<bool>,

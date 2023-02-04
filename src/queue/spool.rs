@@ -1,3 +1,4 @@
+use crate::queue::DomainPart;
 use mail_auth::common::base32::Base32Writer;
 use mail_auth::common::headers::Writer;
 use std::path::PathBuf;
@@ -168,7 +169,7 @@ impl Message {
         })
     }
 
-    pub async fn add_recipient(
+    pub async fn add_recipient_parts(
         &mut self,
         rcpt: impl Into<String>,
         rcpt_lcase: impl Into<String>,
@@ -203,6 +204,14 @@ impl Message {
             flags: 0,
             orcpt: None,
         });
+    }
+
+    pub async fn add_recipient(&mut self, rcpt: impl Into<String>, config: &QueueConfig) {
+        let rcpt = rcpt.into();
+        let rcpt_lcase = rcpt.to_lowercase();
+        let rcpt_domain = rcpt_lcase.domain_part().to_string();
+        self.add_recipient_parts(rcpt, rcpt_lcase, rcpt_domain, config)
+            .await;
     }
 
     pub async fn save_changes(&mut self) {

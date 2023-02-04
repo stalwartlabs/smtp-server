@@ -1,5 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
+use ahash::AHashMap;
 use dashmap::DashMap;
 use mail_auth::{
     common::lru::{DnsCache, LruCache},
@@ -7,6 +8,7 @@ use mail_auth::{
     IpLookupStrategy, Resolver,
 };
 use mail_send::smtp::tls::build_tls_connector;
+use sieve::Runtime;
 use smtp_proto::{AUTH_LOGIN, AUTH_PLAIN};
 use tokio::sync::mpsc;
 
@@ -21,7 +23,7 @@ use crate::{
     },
     core::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
-        Core, QueueCore, ReportCore, Resolvers, SessionCore, TlsConnectors,
+        Core, QueueCore, ReportCore, Resolvers, SessionCore, SieveConfig, SieveCore, TlsConnectors,
     },
     outbound::dane::DnssecResolver,
 };
@@ -124,6 +126,7 @@ impl Core {
             },
             mail_auth: MailAuthConfig::test(),
             report: ReportCore::test(),
+            sieve: SieveCore::test(),
         }
     }
 }
@@ -172,7 +175,6 @@ impl SessionConfig {
                 dsn: IfBlock::new(true),
             },
             auth: Auth {
-                script: IfBlock::new(None),
                 lookup: IfBlock::new(None),
                 mechanisms: IfBlock::new(AUTH_PLAIN | AUTH_LOGIN),
                 require: IfBlock::new(false),
@@ -366,6 +368,22 @@ impl AggregateReport {
             send: IfBlock::default(),
             sign: IfBlock::default(),
             max_size: IfBlock::default(),
+        }
+    }
+}
+
+impl SieveCore {
+    pub fn test() -> Self {
+        SieveCore {
+            runtime: Runtime::new(),
+            scripts: AHashMap::new(),
+            lists: AHashMap::new(),
+            config: SieveConfig {
+                from_addr: "MAILER-DAEMON@example.org".to_string(),
+                from_name: "Mailer Daemon".to_string(),
+                return_path: "".to_string(),
+                sign: vec![],
+            },
         }
     }
 }

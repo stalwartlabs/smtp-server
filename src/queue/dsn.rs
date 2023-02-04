@@ -25,7 +25,7 @@ impl QueueCore {
             if let Some(dsn) = attempt.build_dsn(&self.config).await {
                 let mut dsn_message = Message::new_boxed("", "", "");
                 dsn_message
-                    .add_recipient(
+                    .add_recipient_parts(
                         &attempt.message.return_path,
                         &attempt.message.return_path_lcase,
                         &attempt.message.return_path_domain,

@@ -197,10 +197,6 @@ impl Config {
             .unwrap_or_default();
 
         Ok(Auth {
-            script: self
-                .parse_if_block::<Option<String>>("session.auth.script", ctx, &available_keys)?
-                .unwrap_or_default()
-                .map_if_block(&ctx.scripts, "session.auth.script", "script")?,
             lookup: self
                 .parse_if_block::<Option<String>>("session.auth.lookup", ctx, &available_keys)?
                 .unwrap_or_default()

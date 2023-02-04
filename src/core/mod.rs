@@ -6,8 +6,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ahash::AHashMap;
 use dashmap::DashMap;
 use mail_auth::{common::lru::LruCache, IprevOutput, Resolver, SpfOutput};
+use sieve::{Runtime, Sieve};
 use smtp_proto::request::receiver::{
     BdatReceiver, DataReceiver, DummyDataReceiver, DummyLineReceiver, LineReceiver, RequestReceiver,
 };
@@ -20,7 +22,7 @@ use tracing::Span;
 
 use crate::{
     config::{
-        EnvelopeKey, List, MailAuthConfig, QueueConfig, ReportConfig, Script, SessionConfig,
+        DkimSigner, EnvelopeKey, List, MailAuthConfig, QueueConfig, ReportConfig, SessionConfig,
         VerifyStrategy,
     },
     inbound::auth::SaslToken,
@@ -38,6 +40,7 @@ use self::throttle::{
 
 pub mod if_block;
 pub mod params;
+pub mod scripts;
 pub mod throttle;
 pub mod worker;
 
@@ -48,6 +51,21 @@ pub struct Core {
     pub resolvers: Resolvers,
     pub mail_auth: MailAuthConfig,
     pub report: ReportCore,
+    pub sieve: SieveCore,
+}
+
+pub struct SieveCore {
+    pub runtime: Runtime,
+    pub scripts: AHashMap<String, Arc<Sieve>>,
+    pub lists: AHashMap<String, Arc<List>>,
+    pub config: SieveConfig,
+}
+
+pub struct SieveConfig {
+    pub from_addr: String,
+    pub from_name: String,
+    pub return_path: String,
+    pub sign: Vec<Arc<DkimSigner>>,
 }
 
 pub struct Resolvers {
@@ -156,19 +174,17 @@ pub struct SessionParameters {
     pub timeout: Duration,
 
     // Ehlo parameters
-    pub ehlo_script: Option<Arc<Script>>,
     pub ehlo_require: bool,
     pub ehlo_reject_non_fqdn: bool,
 
     // Auth parameters
-    pub auth_script: Option<Arc<Script>>,
     pub auth_lookup: Option<Arc<List>>,
     pub auth_require: bool,
     pub auth_errors_max: usize,
     pub auth_errors_wait: Duration,
 
     // Rcpt parameters
-    pub rcpt_script: Option<Arc<Script>>,
+    pub rcpt_script: Option<Arc<Sieve>>,
     pub rcpt_relay: bool,
     pub rcpt_errors_max: usize,
     pub rcpt_errors_wait: Duration,

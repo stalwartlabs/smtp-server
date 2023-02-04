@@ -16,13 +16,11 @@ impl<T: AsyncRead + AsyncWrite> Session<T> {
 
         // Ehlo parameters
         let ec = &self.core.session.config.ehlo;
-        self.params.ehlo_script = ec.script.eval(self).await.clone();
         self.params.ehlo_require = *ec.require.eval(self).await;
         self.params.ehlo_reject_non_fqdn = *ec.reject_non_fqdn.eval(self).await;
 
         // Auth parameters
         let ac = &self.core.session.config.auth;
-        self.params.auth_script = ac.script.eval(self).await.clone();
         self.params.auth_lookup = ac.lookup.eval(self).await.clone();
         self.params.auth_require = *ac.require.eval(self).await;
         self.params.auth_errors_max = *ac.errors_max.eval(self).await;

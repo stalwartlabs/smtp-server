@@ -6,7 +6,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     config::{DNSBL_IPREV, DNSBL_RETURN_PATH},
-    core::{Session, SessionAddress},
+    core::{scripts::ScriptResult, Session, SessionAddress},
+    queue::DomainPart,
 };
 
 use super::IsTls;
@@ -86,11 +87,7 @@ impl<T: AsyncWrite + AsyncRead + Unpin + IsTls> Session<T> {
 
         let (address, address_lcase, domain) = if !from.address.is_empty() {
             let address_lcase = from.address.to_lowercase();
-            let domain = address_lcase
-                .rsplit_once('@')
-                .map(|(_, d)| d)
-                .unwrap_or_default()
-                .to_string();
+            let domain = address_lcase.domain_part().to_string();
             (from.address, address_lcase, domain)
         } else {
             (String::new(), String::new(), String::new())
@@ -116,6 +113,22 @@ impl<T: AsyncWrite + AsyncRead + Unpin + IsTls> Session<T> {
             dsn_info: from.env_id,
         }
         .into();
+
+        // Sieve filtering
+        if let Some(script) = self.core.session.config.mail.script.eval(self).await {
+            match self.run_script(script.clone(), None).await {
+                ScriptResult::Accept | ScriptResult::Replace(_) => (),
+                ScriptResult::Reject(message) => {
+                    tracing::debug!(parent: &self.span,
+                        context = "mail-from",
+                        event = "sieve-reject",
+                        address = &self.data.mail_from.as_ref().unwrap().address,
+                        reason = message);
+                    self.data.mail_from = None;
+                    return self.write(message.as_bytes()).await;
+                }
+            }
+        }
 
         // Validate parameters
         let config = &self.core.session.config.extensions;

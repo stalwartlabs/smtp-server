@@ -8,6 +8,7 @@ pub mod queue;
 pub mod remote;
 pub mod report;
 pub mod resolver;
+pub mod scripts;
 pub mod server;
 pub mod session;
 pub mod throttle;
@@ -30,6 +31,7 @@ use mail_auth::{
 use mail_send::Credentials;
 use regex::Regex;
 use rustls::ServerConfig;
+use sieve::Sieve;
 use smtp_proto::MtPriority;
 use tokio::{net::TcpSocket, sync::mpsc};
 
@@ -75,9 +77,6 @@ pub struct Host {
     pub channel_rx: mpsc::Receiver<lookup::Event>,
     pub ref_count: usize,
 }
-
-#[derive(Debug, Default)]
-pub struct Script {}
 
 #[derive(Debug)]
 pub enum List {
@@ -236,11 +235,11 @@ pub enum IpAddrMask {
 }
 
 pub struct Connect {
-    pub script: IfBlock<Option<Arc<Script>>>,
+    pub script: IfBlock<Option<Arc<Sieve>>>,
 }
 
 pub struct Ehlo {
-    pub script: IfBlock<Option<Arc<Script>>>,
+    pub script: IfBlock<Option<Arc<Sieve>>>,
     pub require: IfBlock<bool>,
     pub reject_non_fqdn: IfBlock<bool>,
 }
@@ -257,7 +256,6 @@ pub struct Extensions {
 }
 
 pub struct Auth {
-    pub script: IfBlock<Option<Arc<Script>>>,
     pub lookup: IfBlock<Option<Arc<List>>>,
     pub mechanisms: IfBlock<u64>,
     pub require: IfBlock<bool>,
@@ -266,11 +264,11 @@ pub struct Auth {
 }
 
 pub struct Mail {
-    pub script: IfBlock<Option<Arc<Script>>>,
+    pub script: IfBlock<Option<Arc<Sieve>>>,
 }
 
 pub struct Rcpt {
-    pub script: IfBlock<Option<Arc<Script>>>,
+    pub script: IfBlock<Option<Arc<Sieve>>>,
     pub relay: IfBlock<bool>,
     pub lookup_domains: IfBlock<Option<Arc<List>>>,
     pub lookup_addresses: IfBlock<Option<Arc<List>>>,
@@ -286,7 +284,7 @@ pub struct Rcpt {
 }
 
 pub struct Data {
-    pub script: IfBlock<Option<Arc<Script>>>,
+    pub script: IfBlock<Option<Arc<Sieve>>>,
 
     // Limits
     pub max_messages: IfBlock<usize>,
@@ -551,7 +549,7 @@ pub struct Config {
 pub struct ConfigContext {
     pub servers: Vec<Server>,
     pub hosts: AHashMap<String, Host>,
-    pub scripts: AHashMap<String, Arc<Script>>,
+    pub scripts: AHashMap<String, Arc<Sieve>>,
     pub lists: AHashMap<String, Arc<List>>,
     pub signers: AHashMap<String, Arc<DkimSigner>>,
     pub sealers: AHashMap<String, Arc<ArcSealer>>,

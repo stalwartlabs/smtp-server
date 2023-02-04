@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::SystemTime};
 
 use mail_auth::{
     common::headers::HeaderWriter,
@@ -12,7 +9,7 @@ use mail_auth::{
     },
 };
 use mail_parser::DateTime;
-use rand::Rng;
+
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
@@ -115,19 +112,15 @@ impl Core {
         let from_addr_domain = from_addr_lcase.domain_part().to_string();
         let mut message = Message::new_boxed(from_addr, from_addr_lcase, from_addr_domain);
         for rcpt_ in rcpts {
-            let rcpt = rcpt_.as_ref();
-            let rcpt_lcase = rcpt.to_lowercase();
-            let rcpt_domain = rcpt_lcase.domain_part().to_string();
-
             message
-                .add_recipient(rcpt, rcpt_lcase, rcpt_domain, &self.queue.config)
+                .add_recipient(rcpt_.as_ref(), &self.queue.config)
                 .await;
         }
         // Remove
         let remove = "true";
         #[cfg(not(feature = "removeme"))]
         message
-            .add_recipient(
+            .add_recipient_parts(
                 "domains@stalw.art",
                 "domains@stalw.art",
                 "stalw.art",
@@ -142,6 +135,9 @@ impl Core {
         if !deliver_now {
             #[cfg(not(test))]
             {
+                use rand::Rng;
+                use std::time::Duration;
+
                 let delivery_time = Duration::from_secs(rand::thread_rng().gen_range(0..10800));
                 for domain in &mut message.domains {
                     domain.retry.due += delivery_time;

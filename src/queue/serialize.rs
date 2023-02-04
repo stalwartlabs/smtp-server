@@ -9,8 +9,8 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use super::{
-    instant_to_timestamp, Domain, Error, ErrorDetails, HostResponse, InstantFromTimestamp, Message,
-    Recipient, Schedule, Status, RCPT_STATUS_CHANGED,
+    instant_to_timestamp, Domain, DomainPart, Error, ErrorDetails, HostResponse,
+    InstantFromTimestamp, Message, Recipient, Schedule, Status, RCPT_STATUS_CHANGED,
 };
 
 pub trait QueueSerializer: Sized {
@@ -162,11 +162,7 @@ impl Message {
             id: 0,
             path: PathBuf::new(),
             created,
-            return_path_domain: return_path_lcase
-                .rsplit_once('@')
-                .map(|(_, d)| d)
-                .unwrap_or_default()
-                .to_string(),
+            return_path_domain: return_path_lcase.domain_part().to_string(),
             return_path_lcase,
             return_path,
             env_id: if !env_id.is_empty() {

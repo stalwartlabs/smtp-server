@@ -31,6 +31,9 @@ async fn main() -> std::io::Result<()> {
     config
         .parse_signatures(&mut config_context)
         .failed("Configuration error");
+    let sieve_config = config
+        .parse_sieve(&mut config_context)
+        .failed("Configuration error");
     let session_config = config
         .parse_session_config(&config_context)
         .failed("Configuration error");
@@ -118,6 +121,7 @@ async fn main() -> std::io::Result<()> {
             config: report_config,
         },
         mail_auth: mail_auth_config,
+        sieve: sieve_config,
     });
 
     // Bind ports before dropping privileges

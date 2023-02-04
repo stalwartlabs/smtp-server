@@ -17,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     config::DNSBL_FROM,
-    core::{Session, SessionAddress},
+    core::{scripts::ScriptResult, Session, SessionAddress},
     queue::{self, DomainPart, Message, SimpleEnvelope},
     reporting::analysis::AnalyzeReport,
 };
@@ -257,6 +257,28 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             }
         }
 
+        // Sieve filtering
+        let mut edited_message = None;
+        if let Some(script) = dc.script.eval(self).await {
+            match self
+                .run_script(script.clone(), Some(raw_message.clone()))
+                .await
+            {
+                ScriptResult::Accept => (),
+                ScriptResult::Replace(new_message) => {
+                    edited_message = Arc::new(new_message).into();
+                }
+                ScriptResult::Reject(message) => {
+                    tracing::debug!(parent: &self.span,
+                        context = "data",
+                        event = "sieve-reject",
+                        reason = message);
+
+                    return message.into_bytes().into();
+                }
+            }
+        }
+
         // Build message
         let rcpt_to = std::mem::take(&mut self.data.rcpt_to);
         let mut message = self.build_message(mail_from, rcpt_to).await;
@@ -325,6 +347,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         }
 
         // DKIM sign
+        let raw_message = edited_message.unwrap_or(raw_message);
         for signer in ac.dkim.sign.eval(self).await.iter() {
             match signer.sign_chained(&[headers.as_ref(), &raw_message]) {
                 Ok(signature) => {
@@ -335,7 +358,6 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                         event = "sign-failed",
                         context = "dkim",
                         return_path = message.return_path,
-                        from = auth_message.from(),
                         "Failed to sign message: {}", err);
                 }
             }
