@@ -2,7 +2,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     core::Session,
-    remote::lookup::{Item, LookupResult},
+    lookup::{Item, LookupResult},
 };
 use std::fmt::Write;
 

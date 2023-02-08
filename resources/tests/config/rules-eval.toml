@@ -164,6 +164,6 @@ nested-none-of-false = { none-of = [
     ]}
 ]}
 
-[list."domains"]
+[lookup."domains"]
 type = "inline"
 items = ["mydomain1.org", "foo.net", "otherdomain.net"]

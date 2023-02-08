@@ -6,59 +6,42 @@ use std::{
 
 use ahash::AHashSet;
 
-use super::{Config, ConfigContext, List};
+use crate::lookup::Lookup;
+
+use super::{Config, ConfigContext};
 
 impl Config {
     pub fn parse_lists(&self, ctx: &mut ConfigContext) -> super::Result<()> {
         for id in self.sub_keys("list") {
-            let list = self.parse_list(id, ctx)?;
-            ctx.lists.insert(id.to_string(), Arc::new(list));
+            ctx.lookup
+                .insert(format!("list/{id}"), Arc::new(self.parse_list(id)?));
         }
 
         Ok(())
     }
 
-    fn parse_list(&self, id: &str, ctx: &mut ConfigContext) -> super::Result<List> {
-        match self.value(("list", id, "type")).unwrap_or_default() {
-            "inline" => {
-                let mut entries = AHashSet::new();
-
-                for (_, value) in self.values(("list", id, "items")) {
-                    entries.insert(value.to_string());
-                }
-
-                Ok(List::Local(entries))
-            }
-            "remote" => {
-                let remote = self.value_require(("list", id, "host"))?;
-
-                if let Some(host) = ctx.hosts.get_mut(remote) {
-                    host.ref_count += 1;
-                    Ok(List::Remote(host.channel_tx.clone().into()))
-                } else {
-                    Err(format!("Remote host {remote:?} not found for list {id:?}.",))
-                }
-            }
-            "file" => {
-                let mut entries = AHashSet::new();
-
-                for (_, value) in self.values(("list", id, "path")) {
-                    for line in BufReader::new(File::open(value).map_err(|err| {
-                        format!("Failed to read file {value:?} for list {id:?}: {err}")
-                    })?)
-                    .lines()
-                    {
-                        entries.insert(line.map_err(|err| {
-                            format!("Failed to read file {value:?} for list {id:?}: {err}")
-                        })?);
+    fn parse_list(&self, id: &str) -> super::Result<Lookup> {
+        let mut entries = AHashSet::new();
+        for (_, value) in self.values(("list", id)) {
+            if let Some(path) = value.strip_prefix("file://") {
+                for line in BufReader::new(File::open(path).map_err(|err| {
+                    format!("Failed to read file {path:?} for list {id:?}: {err}")
+                })?)
+                .lines()
+                {
+                    let line_ = line.map_err(|err| {
+                        format!("Failed to read file {path:?} for list {id:?}: {err}")
+                    })?;
+                    let line = line_.trim();
+                    if !line.is_empty() {
+                        entries.insert(line.to_string());
                     }
                 }
-
-                Ok(List::Local(entries))
+            } else {
+                entries.insert(value.to_string());
             }
-            "" => Err(format!("Missing 'type' property for list {id:?}.")),
-            invalid => Err(format!("Invalid list type {invalid:?} for list {id:?}.",)),
         }
+        Ok(Lookup::Local(entries))
     }
 }
 
@@ -68,7 +51,10 @@ mod tests {
 
     use ahash::{AHashMap, AHashSet};
 
-    use crate::config::{Config, ConfigContext, List};
+    use crate::{
+        config::{Config, ConfigContext},
+        lookup::Lookup,
+    };
 
     #[test]
     fn parse_lists() {
@@ -99,28 +85,28 @@ mod tests {
 
         let mut expected_lists = AHashMap::from_iter([
             (
-                "local-domains".to_string(),
-                Arc::new(List::Local(AHashSet::from_iter([
+                "list/local-domains".to_string(),
+                Arc::new(Lookup::Local(AHashSet::from_iter([
                     "example.org".to_string(),
                     "example.net".to_string(),
                 ]))),
             ),
             (
-                "spammer-domains".to_string(),
-                Arc::new(List::Local(AHashSet::from_iter([
+                "list/spammer-domains".to_string(),
+                Arc::new(Lookup::Local(AHashSet::from_iter([
                     "thatdomain.net".to_string()
                 ]))),
             ),
             (
-                "local-users".to_string(),
-                Arc::new(List::Local(AHashSet::from_iter([
+                "list/local-users".to_string(),
+                Arc::new(Lookup::Local(AHashSet::from_iter([
                     "user1@domain.org".to_string(),
                     "user2@domain.org".to_string(),
                 ]))),
             ),
             (
-                "power-users".to_string(),
-                Arc::new(List::Local(AHashSet::from_iter([
+                "list/power-users".to_string(),
+                Arc::new(Lookup::Local(AHashSet::from_iter([
                     "user1@domain.org".to_string(),
                     "user2@domain.org".to_string(),
                     "user3@example.net".to_string(),
@@ -130,11 +116,11 @@ mod tests {
             ),
             (
                 "local-addresses".to_string(),
-                context.lists.get("local-addresses").unwrap().clone(),
+                context.lookup.get("local-addresses").unwrap().clone(),
             ),
         ]);
 
-        for (key, list) in context.lists {
+        for (key, list) in context.lookup {
             assert_eq!(Some(list), expected_lists.remove(&key), "failed for {key}");
         }
     }

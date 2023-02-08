@@ -200,7 +200,7 @@ impl Config {
             lookup: self
                 .parse_if_block::<Option<String>>("session.auth.lookup", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.lists, "session.auth.lookup", "lookup list")?,
+                .map_if_block(&ctx.lookup, "session.auth.lookup", "lookup list")?,
             mechanisms: IfBlock {
                 if_then: mechanisms
                     .if_then
@@ -269,7 +269,7 @@ impl Config {
                     &available_keys,
                 )?
                 .unwrap_or_default()
-                .map_if_block(&ctx.lists, "session.rcpt.lookup.domains", "lookup list")?,
+                .map_if_block(&ctx.lookup, "session.rcpt.lookup.domains", "lookup list")?,
             lookup_addresses: self
                 .parse_if_block::<Option<String>>(
                     "session.rcpt.lookup.addresses",
@@ -277,15 +277,15 @@ impl Config {
                     &available_keys,
                 )?
                 .unwrap_or_default()
-                .map_if_block(&ctx.lists, "session.rcpt.lookup.addresses", "lookup list")?,
+                .map_if_block(&ctx.lookup, "session.rcpt.lookup.addresses", "lookup list")?,
             lookup_expn: self
                 .parse_if_block::<Option<String>>("session.rcpt.lookup.expn", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.lists, "session.rcpt.lookup.expn", "lookup list")?,
+                .map_if_block(&ctx.lookup, "session.rcpt.lookup.expn", "lookup list")?,
             lookup_vrfy: self
                 .parse_if_block::<Option<String>>("session.rcpt.lookup.vrfy", ctx, &available_keys)?
                 .unwrap_or_default()
-                .map_if_block(&ctx.lists, "session.rcpt.lookup.vrfy", "lookup list")?,
+                .map_if_block(&ctx.lookup, "session.rcpt.lookup.vrfy", "lookup list")?,
             errors_max: self
                 .parse_if_block("session.rcpt.errors.max", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(10)),

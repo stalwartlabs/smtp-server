@@ -74,7 +74,7 @@ mt-priority = [ { if = "authenticated-as", ne = "", then = "mixer"},
 [session.auth]
 mechanisms = [ { if = "listener", ne = "smtp", then = ["plain", "login"]},
                { else = [] } ]
-lookup = [ { if = "listener", ne = "smtp", then = "authentication" }, 
+lookup = [ { if = "listener", ne = "smtp", then = "remote/imap" }, 
            { else = false } ]
 require = [ { if = "listener", ne = "smtp", then = true},
             { else = false } ]
@@ -93,11 +93,11 @@ relay = [ { if = "authenticated-as", ne = "", then = true },
 max-recipients = 25
 
 [session.rcpt.lookup]
-domains = "local-domains"
-addresses = "local-addresses"
-vrfy = [ { if = "authenticated-as", ne = "", then = "local-addresses" }, 
+domains = "list/domains"
+addresses = "remote/lmtp"
+vrfy = [ { if = "authenticated-as", ne = "", then = "remote/lmtp" }, 
          { else = false } ]
-expn = [ { if = "authenticated-as", ne = "", then = "local-addresses" }, 
+expn = [ { if = "authenticated-as", ne = "", then = "remote/lmtp" }, 
          { else = false } ]
 
 [session.rcpt.errors]
@@ -176,7 +176,7 @@ expire = "5d"
 
 [queue.outbound]
 #hostname = mx.domain.org
-next-hop = [ { if = "rcpt-domain", in-list = "local-domains", then = "lmtp" }, 
+next-hop = [ { if = "rcpt-domain", in-list = "list/domains", then = "lmtp" }, 
              { else = false } ]
 ip-strategy = "ipv4-then-ipv6"
 
@@ -305,6 +305,7 @@ address = "%LMTP_HOST%"
 port = 25
 protocol = "lmtp"
 timeout = "1m"
+lookup = true
 
 [remote."lmtp".cache]
 entries = 1000
@@ -336,12 +337,35 @@ ttl = {positive = "1d", negative = "1h"}
 implicit = false
 allow-invalid-certs = true
 
+[database."sql"]
+address = "postgres://postgres:password@localhost/test"
+max-connections = 10
+min-connections = 0
+idle-timeout = "5m"
+
+[database."sql".lookup]
+auth = "SELECT secret FROM users WHERE email=$1"
+rcpt = "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1 LIMIT 1)"
+vrfy = "SELECT id FROM users WHERE email LIKE '%$1%' LIMIT 5"
+expn = "SELECT member FROM mailing_lists WHERE id LIKE '%$1%'"
+domains = "SELECT EXISTS(SELECT 1 FROM domains WHERE name=$1 LIMIT 1)"
+#id.exists = "SELECT EXISTS(SELECT 1 FROM ids WHERE id=$1 AND expires > NOW() LIMIT 1)"
+#id.purge = "DELETE FROM ids WHERE expires <= NOW()"
+#id.init = "CREATE TABLE ids (id VARCHAR NOT NULL, expires TIMESTAMPTZ)"
+#id.insert = "INSERT INTO ids (id, expires) VALUES (?, ?)"
+
+[database."sql".cache]
+enable = ["rcpt", "domains"]
+entries = 1000
+ttl = {positive = "1d", negative = "1h"}
+
 [sieve]
 from-name = "Mailer Daemon"
 from-addr = "MAILER-DAEMON@%%DOMAIN%%"
 return-path = ""
 #hostname = ""
 sign = ["rsa"]
+use-database = "sql"
 
 [sieve.limits]
 redirects = 3
@@ -354,21 +378,9 @@ duplicate-expiry = "7d"
 [sieve.scripts]
 ehlo = "this is my script"
 
-[list."local-domains"]
-type = "inline"
-items = ["%%DOMAIN%%"]
-
-[list."local-addresses"]
-type = "remote"
-host = "lmtp"
-
-[list."authentication"]
-type = "remote"
-host = "imap"
-
-#[list."local-users"]
-#type = "file"
-#path = "/tmp/file.txt"
+[list]
+domains = ["%%DOMAIN%%"]
+#users = "file://users.txt"
 
 [certificate."default"]
 cert = '''

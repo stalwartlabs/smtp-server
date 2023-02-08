@@ -1,10 +1,10 @@
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{borrow::Cow, process::Command, sync::Arc, time::Duration};
 
 use ahash::AHashMap;
 use mail_auth::common::headers::HeaderWriter;
 use sieve::{
     compiler::grammar::actions::action_redirect::{ByMode, ByTime, Notify, NotifyItem, Ret},
-    Envelope, Event, Input, Recipient, Sieve,
+    CommandType, Envelope, Event, Input, MatchAs, Recipient, Sieve,
 };
 use smtp_proto::{
     MAIL_BY_NOTIFY, MAIL_BY_RETURN, MAIL_BY_TRACE, MAIL_RET_FULL, MAIL_RET_HDRS, RCPT_NOTIFY_DELAY,
@@ -16,9 +16,8 @@ use tokio::{
 };
 
 use crate::{
-    config::List,
+    lookup::Lookup,
     queue::{DomainPart, InstantFromTimestamp, Message},
-    remote::lookup::{Item, LookupResult},
 };
 
 use super::{Core, Session};
@@ -135,28 +134,23 @@ impl Core {
                             break;
                         }
                     }
-                    Event::ListContains { lists, values, .. } => {
+                    Event::ListContains {
+                        lists,
+                        values,
+                        match_as,
+                    } => {
                         input = false.into();
                         'outer: for list in lists {
-                            if let Some(list) = self.sieve.lists.get(&list) {
-                                match list.as_ref() {
-                                    List::Local(list) => {
-                                        for value in &values {
-                                            if list.contains(value) {
-                                                input = true.into();
-                                                break 'outer;
-                                            }
-                                        }
-                                    }
-                                    List::Remote(remote) => {
-                                        for value in &values {
-                                            if let Some(LookupResult::True) = handle.block_on(
-                                                remote.lookup(Item::Exists(value.clone())),
-                                            ) {
-                                                input = true.into();
-                                                break 'outer;
-                                            }
-                                        }
+                            if let Some(list) = self.sieve.lookup.get(&list) {
+                                for value in &values {
+                                    let result = if !matches!(match_as, MatchAs::Lowercase) {
+                                        handle.block_on(list.contains(value))
+                                    } else {
+                                        handle.block_on(list.contains(&value.to_lowercase()))
+                                    };
+                                    if let Some(true) = result {
+                                        input = true.into();
+                                        break 'outer;
                                     }
                                 }
                             } else {
@@ -169,11 +163,54 @@ impl Core {
                             }
                         }
                     }
-                    Event::DuplicateId { id, expiry, last } => todo!(),
-                    Event::Execute { .. } => {
-                        //TODO implememt
-                        input = false.into();
-                    }
+                    Event::Execute {
+                        command_type,
+                        command,
+                        arguments,
+                    } => match command_type {
+                        CommandType::Query => {
+                            if let Some(db) = &self.sieve.config.db {
+                                if command
+                                    .as_bytes()
+                                    .get(..6)
+                                    .map_or(false, |q| q.eq_ignore_ascii_case(b"SELECT"))
+                                {
+                                    input = handle
+                                        .block_on(db.exists(&command, arguments.into_iter()))
+                                        .unwrap_or(false)
+                                        .into();
+                                } else {
+                                    input = handle
+                                        .block_on(db.execute(&command, arguments.into_iter()))
+                                        .into();
+                                }
+                            } else {
+                                tracing::warn!(
+                                    parent: &span,
+                                    context = "sieve",
+                                    event = "config-error",
+                                    reason = "No database configured",
+                                );
+                                input = false.into();
+                            }
+                        }
+                        CommandType::Binary => {
+                            match Command::new(command).args(arguments).output() {
+                                Ok(result) => {
+                                    input = result.status.success().into();
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        parent: &span,
+                                        context = "sieve",
+                                        event = "execute-failed",
+                                        reason = %err,
+                                    );
+                                    input = false.into();
+                                }
+                            }
+                        }
+                    },
                     Event::Keep { message_id, .. } => {
                         keep_id = message_id;
                         input = true.into();
@@ -212,20 +249,36 @@ impl Core {
                                 }
                             }
                             Recipient::List(list) => {
-                                if let Some(list) = self.sieve.lists.get(&list) {
-                                    if let List::Local(items) = list.as_ref() {
-                                        for rcpt in items {
-                                            handle.block_on(
-                                                message.add_recipient(rcpt, &self.queue.config),
-                                            );
+                                if let Some(list) = self.sieve.lookup.get(&list) {
+                                    match list.as_ref() {
+                                        Lookup::Local(items) => {
+                                            for rcpt in items {
+                                                handle.block_on(
+                                                    message.add_recipient(rcpt, &self.queue.config),
+                                                );
+                                            }
                                         }
+                                        Lookup::Sql(sql) => {
+                                            if let Some(items) = handle.block_on(sql.fetch_many(""))
+                                            {
+                                                for rcpt in items {
+                                                    handle.block_on(
+                                                        message.add_recipient(
+                                                            rcpt,
+                                                            &self.queue.config,
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        _ => (),
                                     }
                                 } else {
                                     tracing::warn!(
                                         parent: &span,
                                         context = "sieve",
                                         event = "send-failed",
-                                        reason = format!("List {list:?} not found.")
+                                        reason = format!("Lookup {list:?} not found.")
                                     );
                                 }
                             }

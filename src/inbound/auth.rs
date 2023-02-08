@@ -3,7 +3,7 @@ use mail_send::Credentials;
 use smtp_proto::{IntoString, AUTH_LOGIN, AUTH_OAUTHBEARER, AUTH_PLAIN, AUTH_XOAUTH2};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::core::Session;
+use crate::{core::Session, lookup::Item};
 
 pub struct SaslToken {
     mechanism: u64,
@@ -157,7 +157,11 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                 | Credentials::XOauth2 { username, .. }
                 | Credentials::OAuthBearer { token: username } => username.to_string(),
             };
-            if let Some(is_authenticated) = lookup.authenticate(credentials).await {
+            if let Some(is_authenticated) = lookup
+                .lookup(Item::Authenticate(credentials))
+                .await
+                .map(bool::from)
+            {
                 tracing::debug!(
                     parent: &self.span,
                     context = "auth",

@@ -29,9 +29,9 @@ use crate::{
 };
 
 pub mod inbound;
+pub mod lookup;
 pub mod outbound;
 pub mod queue;
-pub mod remote;
 pub mod reporting;
 pub mod session;
 
@@ -377,12 +377,13 @@ impl SieveCore {
         SieveCore {
             runtime: Runtime::new(),
             scripts: AHashMap::new(),
-            lists: AHashMap::new(),
+            lookup: AHashMap::new(),
             config: SieveConfig {
                 from_addr: "MAILER-DAEMON@example.org".to_string(),
                 from_name: "Mailer Daemon".to_string(),
                 return_path: "".to_string(),
                 sign: vec![],
+                db: None,
             },
         }
     }

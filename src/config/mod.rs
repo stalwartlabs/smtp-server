@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod certificate;
 pub mod condition;
+pub mod database;
 pub mod if_block;
 pub mod list;
 pub mod parser;
@@ -22,7 +23,7 @@ use std::{
     time::Duration,
 };
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use mail_auth::{
     common::crypto::{Ed25519Key, RsaKey, Sha256},
     dkim::{Canonicalization, Done},
@@ -35,7 +36,7 @@ use sieve::Sieve;
 use smtp_proto::MtPriority;
 use tokio::{net::TcpSocket, sync::mpsc};
 
-use crate::remote::lookup::{self, LookupChannel};
+use crate::lookup::{self, Lookup, SqlDatabase};
 
 #[derive(Debug, Default)]
 pub struct Server {
@@ -75,19 +76,7 @@ pub struct Host {
     pub cache_ttl_negative: Duration,
     pub channel_tx: mpsc::Sender<lookup::Event>,
     pub channel_rx: mpsc::Receiver<lookup::Event>,
-    pub ref_count: usize,
-}
-
-#[derive(Debug)]
-pub enum List {
-    Local(AHashSet<String>),
-    Remote(LookupChannel),
-}
-
-impl Default for List {
-    fn default() -> Self {
-        List::Local(AHashSet::default())
-    }
+    pub lookup: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
@@ -128,7 +117,7 @@ pub enum ConditionValue {
     UInt(u16),
     Int(i16),
     IpAddrMask(IpAddrMask),
-    List(Arc<List>),
+    Lookup(Arc<Lookup>),
     Regex(Regex),
 }
 
@@ -140,7 +129,7 @@ impl PartialEq for ConditionValue {
             (Self::UInt(l0), Self::UInt(r0)) => l0 == r0,
             (Self::Int(l0), Self::Int(r0)) => l0 == r0,
             (Self::IpAddrMask(l0), Self::IpAddrMask(r0)) => l0 == r0,
-            (Self::List(l0), Self::List(r0)) => l0 == r0,
+            (Self::Lookup(l0), Self::Lookup(r0)) => l0 == r0,
             (Self::Regex(_), Self::Regex(_)) => false,
             _ => false,
         }
@@ -151,7 +140,7 @@ impl PartialEq for ConditionValue {
 impl Eq for ConditionValue {}
 
 #[cfg(test)]
-impl PartialEq for List {
+impl PartialEq for Lookup {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Local(l0), Self::Local(r0)) => l0 == r0,
@@ -256,7 +245,7 @@ pub struct Extensions {
 }
 
 pub struct Auth {
-    pub lookup: IfBlock<Option<Arc<List>>>,
+    pub lookup: IfBlock<Option<Arc<Lookup>>>,
     pub mechanisms: IfBlock<u64>,
     pub require: IfBlock<bool>,
     pub errors_max: IfBlock<usize>,
@@ -270,10 +259,10 @@ pub struct Mail {
 pub struct Rcpt {
     pub script: IfBlock<Option<Arc<Sieve>>>,
     pub relay: IfBlock<bool>,
-    pub lookup_domains: IfBlock<Option<Arc<List>>>,
-    pub lookup_addresses: IfBlock<Option<Arc<List>>>,
-    pub lookup_expn: IfBlock<Option<Arc<List>>>,
-    pub lookup_vrfy: IfBlock<Option<Arc<List>>>,
+    pub lookup_domains: IfBlock<Option<Arc<Lookup>>>,
+    pub lookup_addresses: IfBlock<Option<Arc<Lookup>>>,
+    pub lookup_expn: IfBlock<Option<Arc<Lookup>>>,
+    pub lookup_vrfy: IfBlock<Option<Arc<Lookup>>>,
 
     // Errors
     pub errors_max: IfBlock<usize>,
@@ -550,7 +539,8 @@ pub struct ConfigContext {
     pub servers: Vec<Server>,
     pub hosts: AHashMap<String, Host>,
     pub scripts: AHashMap<String, Arc<Sieve>>,
-    pub lists: AHashMap<String, Arc<List>>,
+    pub lookup: AHashMap<String, Arc<Lookup>>,
+    pub databases: AHashMap<String, SqlDatabase>,
     pub signers: AHashMap<String, Arc<DkimSigner>>,
     pub sealers: AHashMap<String, Arc<ArcSealer>>,
 }

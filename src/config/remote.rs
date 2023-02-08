@@ -1,6 +1,8 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use tokio::sync::mpsc;
+
+use crate::lookup::Lookup;
 
 use super::{Config, ConfigContext, Host};
 
@@ -8,6 +10,12 @@ impl Config {
     pub fn parse_remote_hosts(&self, ctx: &mut ConfigContext) -> super::Result<()> {
         for id in self.sub_keys("remote") {
             let host = self.parse_host(id)?;
+            if host.lookup {
+                ctx.lookup.insert(
+                    format!("remote/{id}"),
+                    Arc::new(Lookup::Remote(host.channel_tx.clone().into())),
+                );
+            }
             ctx.hosts.insert(id.to_string(), host);
         }
 
@@ -48,7 +56,7 @@ impl Config {
                 .unwrap_or(50),
             channel_tx,
             channel_rx,
-            ref_count: 0,
+            lookup: self.property(("remote", id, "lookup"))?.unwrap_or(false),
         })
     }
 }

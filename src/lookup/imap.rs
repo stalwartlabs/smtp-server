@@ -14,9 +14,9 @@ use tokio::{
 };
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
-use crate::remote::lookup::LoggedUnwrap;
+use crate::lookup::spawn::LoggedUnwrap;
 
-use super::lookup::{Event, Item, Lookup, LookupResult, RemoteLookup};
+use super::{Event, Item, LookupItem, RemoteLookup};
 
 pub struct ImapAuthClient<T: AsyncRead + AsyncWrite> {
     stream: T,
@@ -98,7 +98,7 @@ pub enum Error {
 }
 
 impl RemoteLookup for Arc<ImapAuthClientBuilder> {
-    fn spawn_lookup(&self, lookup: Lookup, tx: mpsc::Sender<Event>) {
+    fn spawn_lookup(&self, lookup: LookupItem, tx: mpsc::Sender<Event>) {
         let builder = self.clone();
         tokio::spawn(async move {
             if let Err(err) = builder.lookup(lookup, &tx).await {
@@ -117,7 +117,7 @@ impl RemoteLookup for Arc<ImapAuthClientBuilder> {
 }
 
 impl ImapAuthClientBuilder {
-    pub async fn lookup(&self, lookup: Lookup, tx: &mpsc::Sender<Event>) -> Result<(), Error> {
+    pub async fn lookup(&self, lookup: LookupItem, tx: &mpsc::Sender<Event>) -> Result<(), Error> {
         match &lookup.item {
             Item::Authenticate(credentials) => {
                 let mut client = self.connect().await?;
@@ -153,20 +153,20 @@ impl ImapAuthClientBuilder {
                 };
 
                 let result = match client.authenticate(mechanism, credentials).await {
-                    Ok(_) => LookupResult::True,
+                    Ok(_) => true,
                     Err(err) => match &err {
-                        Error::AuthenticationFailed => LookupResult::False,
+                        Error::AuthenticationFailed => false,
                         _ => return Err(err),
                     },
                 };
-                lookup.result.send(result.clone()).logged_unwrap();
                 tx.send(Event::WorkerReady {
                     item: lookup.item,
-                    result,
+                    result: Some(result),
                     next_lookup: None,
                 })
                 .await
                 .logged_unwrap();
+                lookup.result.send(result.into()).logged_unwrap();
             }
             _ => {
                 tracing::warn!(
@@ -434,7 +434,7 @@ impl Display for Error {
 
 #[cfg(test)]
 mod test {
-    use crate::remote::imap::ImapAuthClient;
+    use crate::lookup::imap::ImapAuthClient;
     use mail_send::smtp::tls::build_tls_connector;
     use smtp_proto::{AUTH_OAUTHBEARER, AUTH_PLAIN, AUTH_XOAUTH, AUTH_XOAUTH2};
     use std::time::Duration;

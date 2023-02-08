@@ -12,7 +12,7 @@ use tokio_rustls::TlsAcceptor;
 use crate::{
     config::{Config, ConfigContext},
     core::throttle::{ConcurrencyLimiter, InFlight},
-    remote::lookup::{Item, LookupResult},
+    lookup::{Item, LookupResult},
 };
 
 use super::dummy_tls_acceptor;
@@ -51,16 +51,16 @@ async fn remote_smtp() {
     // Basic lookup
     let tests = vec![
         (
-            Item::Exists("john-ok@domain".to_string()),
+            Item::IsAccount("john-ok@domain".to_string()),
             LookupResult::True,
         ),
         (
-            Item::Exists("john-bad@domain".to_string()),
+            Item::IsAccount("john-bad@domain".to_string()),
             LookupResult::False,
         ),
         (
             Item::Verify("john-ok@domain".to_string()),
-            LookupResult::Values(Arc::new(vec!["john-ok@domain".to_string()])),
+            LookupResult::Values(vec!["john-ok@domain".to_string()]),
         ),
         (
             Item::Verify("doesnot@exist.org".to_string()),
@@ -68,12 +68,12 @@ async fn remote_smtp() {
         ),
         (
             Item::Expand("sales-ok,item1,item2,item3".to_string()),
-            LookupResult::Values(Arc::new(vec![
+            LookupResult::Values(vec![
                 "sales-ok".to_string(),
                 "item1".to_string(),
                 "item2".to_string(),
                 "item3".to_string(),
-            ])),
+            ]),
         ),
         (Item::Expand("other".to_string()), LookupResult::False),
         (

@@ -1,22 +1,8 @@
-[list."local-domains"]
-type = "inline"
-items = ["example.org", "example.net"]
-
-[list."spammer-domains"]
-type = "inline"
-items = "thatdomain.net"
-
-[list."local-addresses"]
-type = "remote"
-host = "lmtp"
-
-[list."local-users"]
-type = "file"
-path = "{LIST1}"
-
-[list."power-users"]
-type = "file"
-path = ["{LIST1}", "{LIST2}"]
+[list]
+local-domains = ["example.org", "example.net"]
+spammer-domains = "thatdomain.net"
+local-users = "file://{LIST1}"
+power-users = ["file://{LIST1}", "file://{LIST2}"]
 
 [remote."lmtp"]
 address = 192.168.0.1

@@ -3,8 +3,9 @@ use std::sync::Arc;
 use ahash::AHashSet;
 
 use crate::{
-    config::{ConfigContext, List},
+    config::ConfigContext,
     core::{Core, Session},
+    lookup::Lookup,
     tests::{session::VerifyResponse, ParseTestConfig},
 };
 
@@ -12,16 +13,16 @@ use crate::{
 async fn vrfy_expn() {
     let mut core = Core::test();
     let mut ctx = ConfigContext::default();
-    ctx.lists.insert(
+    ctx.lookup.insert(
         "vrfy".to_string(),
-        Arc::new(List::Local(AHashSet::from_iter([
+        Arc::new(Lookup::Local(AHashSet::from_iter([
             "john@foobar.org:john@foobar.org".to_string(),
             "john:john@foobar.org".to_string(),
         ]))),
     );
-    ctx.lists.insert(
+    ctx.lookup.insert(
         "expn".to_string(),
-        Arc::new(List::Local(AHashSet::from_iter([
+        Arc::new(Lookup::Local(AHashSet::from_iter([
             "sales:john@foobar.org,bill@foobar.org,jane@foobar.org".to_string(),
             "support:mike@foobar.org".to_string(),
         ]))),
@@ -32,12 +33,12 @@ async fn vrfy_expn() {
     config.lookup_vrfy = r"[{if = 'remote-ip', eq = '10.0.0.1', then = 'vrfy'},
     {else = false}]"
         .parse_if::<Option<String>>(&ctx)
-        .map_if_block(&ctx.lists, "", "")
+        .map_if_block(&ctx.lookup, "", "")
         .unwrap();
     config.lookup_expn = r"[{if = 'remote-ip', eq = '10.0.0.1', then = 'expn'},
     {else = false}]"
         .parse_if::<Option<String>>(&ctx)
-        .map_if_block(&ctx.lists, "", "")
+        .map_if_block(&ctx.lookup, "", "")
         .unwrap();
 
     // EHLO should not avertise VRFY/EXPN to 10.0.0.2

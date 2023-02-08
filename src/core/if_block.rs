@@ -1,10 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 
-use crate::{
-    config::{
-        Condition, ConditionOp, ConditionValue, Conditions, EnvelopeKey, IfBlock, IpAddrMask, List,
-    },
-    remote::lookup::{self},
+use crate::config::{
+    Condition, ConditionOp, ConditionValue, Conditions, EnvelopeKey, IfBlock, IpAddrMask,
 };
 
 use super::Envelope;
@@ -79,21 +76,13 @@ impl Conditions {
                                 ConditionOp::StartsWith | ConditionOp::EndsWith => false,
                             }
                         }
-                        ConditionValue::List(value) => {
+                        ConditionValue::Lookup(lookup) => {
                             let ctx_value = envelope.key_to_string(key);
                             if matches!(op, ConditionOp::Equal) {
-                                match value.as_ref() {
-                                    List::Local(list) => list.contains(ctx_value.as_ref()),
-                                    List::Remote(tx) => {
-                                        if let Some(result) = tx
-                                            .lookup(lookup::Item::Exists(ctx_value.into_owned()))
-                                            .await
-                                        {
-                                            result.into()
-                                        } else {
-                                            return false;
-                                        }
-                                    }
+                                if let Some(result) = lookup.contains(ctx_value.as_ref()).await {
+                                    result
+                                } else {
+                                    return false;
                                 }
                             } else {
                                 false

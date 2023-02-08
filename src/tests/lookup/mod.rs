@@ -5,7 +5,7 @@ use rustls::{Certificate, PrivateKey, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use tokio_rustls::TlsAcceptor;
 
-use crate::remote::lookup::{Item, LookupResult};
+use crate::lookup::{Item, LookupResult};
 
 pub mod imap;
 pub mod smtp;
@@ -129,7 +129,7 @@ pub fn dummy_tls_acceptor() -> Arc<TlsAcceptor> {
 impl Item {
     pub fn append(&self, append: usize) -> Self {
         match self {
-            Item::Exists(str) => Item::Exists(format!("{append}{str}")),
+            Item::IsAccount(str) => Item::IsAccount(format!("{append}{str}")),
             Item::Authenticate(str) => Item::Authenticate(match str {
                 Credentials::Plain { username, secret } => Credentials::Plain {
                     username: username.to_string(),
@@ -163,7 +163,7 @@ impl LookupResult {
                         val.to_string()
                     });
                 }
-                LookupResult::Values(Arc::new(r))
+                LookupResult::Values(r)
             }
         }
     }

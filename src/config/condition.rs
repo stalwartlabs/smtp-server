@@ -155,11 +155,11 @@ impl Config {
                                 )
                             })?)
                         } else if op_str.contains("in-list") {
-                            if let Some(list) = ctx.lists.get(value_str) {
-                                ConditionValue::List(list.clone())
+                            if let Some(list) = ctx.lookup.get(value_str) {
+                                ConditionValue::Lookup(list.clone())
                             } else {
                                 return Err(format!(
-                                    "List {:?} not found for property {:?}.",
+                                    "Lookup {:?} not found for property {:?}.",
                                     value_str,
                                     (&prefix, value_str).as_key()
                                 ));
@@ -309,10 +309,10 @@ mod tests {
 
     use ahash::AHashMap;
 
-    use crate::config::{
+    use crate::{config::{
         Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
-        IpAddrMask, List, Server,
-    };
+        IpAddrMask, Server,
+    }, lookup::Lookup};
 
     #[test]
     fn parse_conditions() {
@@ -324,8 +324,8 @@ mod tests {
 
         let config = Config::parse(&fs::read_to_string(file).unwrap()).unwrap();
         let mut context = ConfigContext::default();
-        let list = Arc::new(List::default());
-        context.lists.insert("test-list".to_string(), list.clone());
+        let list = Arc::new(Lookup::default());
+        context.lookup.insert("test-list".to_string(), list.clone());
         context.servers.push(Server {
             id: "smtp".to_string(),
             internal_id: 123,
@@ -369,7 +369,7 @@ mod tests {
                         Condition::Match {
                             key: EnvelopeKey::Sender,
                             op: ConditionOp::Equal,
-                            value: ConditionValue::List(list),
+                            value: ConditionValue::Lookup(list),
                             not: false,
                         },
                     ],

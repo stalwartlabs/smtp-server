@@ -176,7 +176,7 @@ async fn main() -> std::io::Result<()> {
 
     // Spawn remote hosts
     for host in config_context.hosts.into_values() {
-        if host.ref_count != 0 {
+        if host.lookup {
             host.spawn(&config);
         }
     }

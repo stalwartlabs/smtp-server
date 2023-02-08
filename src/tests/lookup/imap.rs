@@ -12,7 +12,7 @@ use tokio_rustls::TlsAcceptor;
 use crate::{
     config::{Config, ConfigContext},
     core::throttle::{ConcurrencyLimiter, InFlight},
-    remote::lookup::{Item, LookupResult},
+    lookup::{Item, LookupResult},
 };
 
 use super::dummy_tls_acceptor;

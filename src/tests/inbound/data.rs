@@ -3,8 +3,9 @@ use std::sync::Arc;
 use ahash::AHashSet;
 
 use crate::{
-    config::{ConfigContext, IfBlock, List},
+    config::{ConfigContext, IfBlock},
     core::{Core, Session, SessionAddress},
+    lookup::Lookup,
     tests::{
         session::{load_test_message, DummyIo, VerifyResponse},
         ParseTestConfig,
@@ -19,12 +20,12 @@ async fn data() {
     let mut qr = core.init_test_queue("smtp_data_test");
 
     let mut config = &mut core.session.config.rcpt;
-    config.lookup_domains = IfBlock::new(Some(Arc::new(List::Local(AHashSet::from_iter([
+    config.lookup_domains = IfBlock::new(Some(Arc::new(Lookup::Local(AHashSet::from_iter([
         "foobar.org".to_string(),
         "domain.net".to_string(),
         "test.com".to_string(),
     ])))));
-    config.lookup_addresses = IfBlock::new(Some(Arc::new(List::Local(AHashSet::from_iter([
+    config.lookup_addresses = IfBlock::new(Some(Arc::new(Lookup::Local(AHashSet::from_iter([
         "bill@foobar.org".to_string(),
         "john@foobar.org".to_string(),
         "jane@domain.net".to_string(),

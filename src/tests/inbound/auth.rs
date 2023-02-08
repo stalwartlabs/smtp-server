@@ -4,8 +4,9 @@ use ahash::AHashSet;
 use smtp_proto::{AUTH_LOGIN, AUTH_PLAIN};
 
 use crate::{
-    config::{ConfigContext, List},
+    config::ConfigContext,
     core::{Core, Session, State},
+    lookup::Lookup,
     tests::{session::VerifyResponse, ParseTestConfig},
 };
 
@@ -13,9 +14,9 @@ use crate::{
 async fn auth() {
     let mut core = Core::test();
     let mut ctx = ConfigContext::default();
-    ctx.lists.insert(
+    ctx.lookup.insert(
         "plain".to_string(),
-        Arc::new(List::Local(AHashSet::from_iter([
+        Arc::new(Lookup::Local(AHashSet::from_iter([
             "john:secret".to_string(),
             "jane:p4ssw0rd".to_string(),
         ]))),
@@ -29,7 +30,7 @@ async fn auth() {
     config.lookup = r"[{if = 'remote-ip', eq = '10.0.0.1', then = 'plain'},
     {else = false}]"
         .parse_if::<Option<String>>(&ctx)
-        .map_if_block(&ctx.lists, "", "")
+        .map_if_block(&ctx.lookup, "", "")
         .unwrap();
     config.errors_max = r"[{if = 'remote-ip', eq = '10.0.0.1', then = 2},
     {else = 3}]"

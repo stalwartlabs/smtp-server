@@ -22,10 +22,11 @@ use tracing::Span;
 
 use crate::{
     config::{
-        DkimSigner, EnvelopeKey, List, MailAuthConfig, QueueConfig, ReportConfig, SessionConfig,
+        DkimSigner, EnvelopeKey, MailAuthConfig, QueueConfig, ReportConfig, SessionConfig,
         VerifyStrategy,
     },
     inbound::auth::SaslToken,
+    lookup::{Lookup, SqlDatabase},
     outbound::{
         dane::{DnssecResolver, Tlsa},
         mta_sts,
@@ -57,7 +58,7 @@ pub struct Core {
 pub struct SieveCore {
     pub runtime: Runtime,
     pub scripts: AHashMap<String, Arc<Sieve>>,
-    pub lists: AHashMap<String, Arc<List>>,
+    pub lookup: AHashMap<String, Arc<Lookup>>,
     pub config: SieveConfig,
 }
 
@@ -66,6 +67,7 @@ pub struct SieveConfig {
     pub from_name: String,
     pub return_path: String,
     pub sign: Vec<Arc<DkimSigner>>,
+    pub db: Option<SqlDatabase>,
 }
 
 pub struct Resolvers {
@@ -178,7 +180,7 @@ pub struct SessionParameters {
     pub ehlo_reject_non_fqdn: bool,
 
     // Auth parameters
-    pub auth_lookup: Option<Arc<List>>,
+    pub auth_lookup: Option<Arc<Lookup>>,
     pub auth_require: bool,
     pub auth_errors_max: usize,
     pub auth_errors_wait: Duration,
@@ -190,10 +192,10 @@ pub struct SessionParameters {
     pub rcpt_errors_wait: Duration,
     pub rcpt_max: usize,
     pub rcpt_dsn: bool,
-    pub rcpt_lookup_domain: Option<Arc<List>>,
-    pub rcpt_lookup_addresses: Option<Arc<List>>,
-    pub rcpt_lookup_expn: Option<Arc<List>>,
-    pub rcpt_lookup_vrfy: Option<Arc<List>>,
+    pub rcpt_lookup_domain: Option<Arc<Lookup>>,
+    pub rcpt_lookup_addresses: Option<Arc<Lookup>>,
+    pub rcpt_lookup_expn: Option<Arc<Lookup>>,
+    pub rcpt_lookup_vrfy: Option<Arc<Lookup>>,
     pub max_message_size: usize,
 
     // Mail authentication parameters

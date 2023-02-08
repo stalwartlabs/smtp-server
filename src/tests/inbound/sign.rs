@@ -10,8 +10,9 @@ use mail_auth::{
 };
 
 use crate::{
-    config::{Config, ConfigContext, IfBlock, List, VerifyStrategy},
+    config::{Config, ConfigContext, IfBlock, VerifyStrategy},
     core::{Core, Session},
+    lookup::Lookup,
     tests::{session::VerifyResponse, ParseTestConfig},
 };
 
@@ -112,10 +113,10 @@ async fn sign_and_seal() {
     );
 
     let mut config = &mut core.session.config.rcpt;
-    config.lookup_domains = IfBlock::new(Some(Arc::new(List::Local(AHashSet::from_iter([
+    config.lookup_domains = IfBlock::new(Some(Arc::new(Lookup::Local(AHashSet::from_iter([
         "example.com".to_string(),
     ])))));
-    config.lookup_addresses = IfBlock::new(Some(Arc::new(List::Local(AHashSet::from_iter([
+    config.lookup_addresses = IfBlock::new(Some(Arc::new(Lookup::Local(AHashSet::from_iter([
         "jdoe@example.com".to_string(),
     ])))));
 

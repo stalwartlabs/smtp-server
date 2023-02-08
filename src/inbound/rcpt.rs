@@ -52,9 +52,10 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             &self.params.rcpt_lookup_domain,
             &self.params.rcpt_lookup_addresses,
         ) {
-            if let Some(is_local_domain) = domain_lookup.exists(&rcpt.domain).await {
+            if let Some(is_local_domain) = domain_lookup.contains(&rcpt.domain).await {
                 if is_local_domain {
-                    if let Some(is_local_address) = address_lookup.exists(&rcpt.address_lcase).await
+                    if let Some(is_local_address) =
+                        address_lookup.contains(&rcpt.address_lcase).await
                     {
                         if !is_local_address {
                             tracing::debug!(parent: &self.span,

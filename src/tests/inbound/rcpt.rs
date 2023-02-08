@@ -4,8 +4,9 @@ use ahash::AHashSet;
 use smtp_proto::{RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_SUCCESS};
 
 use crate::{
-    config::{ConfigContext, IfBlock, List},
+    config::{ConfigContext, IfBlock},
     core::{Core, Session, State},
+    lookup::Lookup,
     tests::{session::VerifyResponse, ParseTestConfig},
 };
 
@@ -13,13 +14,13 @@ use crate::{
 async fn rcpt() {
     let mut core = Core::test();
 
-    let list_addresses = List::Local(AHashSet::from_iter([
+    let list_addresses = Lookup::Local(AHashSet::from_iter([
         "jane@foobar.org".to_string(),
         "bill@foobar.org".to_string(),
         "mike@foobar.org".to_string(),
         "john@foobar.org".to_string(),
     ]));
-    let list_domains = List::Local(AHashSet::from_iter(["foobar.org".to_string()]));
+    let list_domains = Lookup::Local(AHashSet::from_iter(["foobar.org".to_string()]));
 
     let mut config = &mut core.session.config.rcpt;
     let mut config_ext = &mut core.session.config.extensions;

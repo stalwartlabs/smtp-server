@@ -4,7 +4,7 @@ use mail_send::smtp::AssertReply;
 use smtp_proto::Severity;
 use tokio::sync::{mpsc, oneshot};
 
-use super::lookup::{Event, Item, LoggedUnwrap, Lookup, LookupResult, RemoteLookup};
+use super::{spawn::LoggedUnwrap, Event, Item, LookupItem, LookupResult, RemoteLookup};
 
 pub struct SmtpClientBuilder {
     pub builder: mail_send::SmtpClientBuilder<String>,
@@ -15,7 +15,7 @@ pub struct SmtpClientBuilder {
 impl SmtpClientBuilder {
     pub async fn lookup_smtp(
         &self,
-        mut lookup: Lookup,
+        mut lookup: LookupItem,
         tx: &mpsc::Sender<Event>,
     ) -> Result<(), mail_send::Error> {
         let mut client = self.builder.connect().await?;
@@ -28,7 +28,7 @@ impl SmtpClientBuilder {
 
         loop {
             let (result, is_reusable): (LookupResult, bool) = match &lookup.item {
-                Item::Exists(rcpt_to) => {
+                Item::IsAccount(rcpt_to) => {
                     if !sent_mail_from {
                         client
                             .cmd(b"MAIL FROM:<>\r\n")
@@ -99,13 +99,18 @@ impl SmtpClientBuilder {
             };
 
             // Try to reuse the connection with any queued requests
-            lookup.result.send(result.clone()).logged_unwrap();
+            let cached_result = match &result {
+                LookupResult::True => Some(true),
+                LookupResult::False => Some(false),
+                LookupResult::Values(_) => None,
+            };
+            lookup.result.send(result).logged_unwrap();
             if is_reusable {
-                let (next_lookup_tx, next_lookup_rx) = oneshot::channel::<Option<Lookup>>();
+                let (next_lookup_tx, next_lookup_rx) = oneshot::channel::<Option<LookupItem>>();
                 if tx
                     .send(Event::WorkerReady {
                         item: lookup.item,
-                        result,
+                        result: cached_result,
                         next_lookup: next_lookup_tx.into(),
                     })
                     .await
@@ -119,7 +124,7 @@ impl SmtpClientBuilder {
             } else {
                 tx.send(Event::WorkerReady {
                     item: lookup.item,
-                    result,
+                    result: cached_result,
                     next_lookup: None,
                 })
                 .await
@@ -133,7 +138,7 @@ impl SmtpClientBuilder {
 }
 
 impl RemoteLookup for Arc<SmtpClientBuilder> {
-    fn spawn_lookup(&self, lookup: Lookup, tx: mpsc::Sender<Event>) {
+    fn spawn_lookup(&self, lookup: LookupItem, tx: mpsc::Sender<Event>) {
         let builder = self.clone();
         tokio::spawn(async move {
             if let Err(err) = builder.lookup_smtp(lookup, &tx).await {
