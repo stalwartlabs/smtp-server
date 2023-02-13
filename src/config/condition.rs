@@ -2,9 +2,11 @@ use std::net::IpAddr;
 
 use regex::Regex;
 
+use crate::config::StringMatch;
+
 use super::{
     utils::{AsKey, ParseKey, ParseValue},
-    Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
+    Condition, ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey,
     IpAddrMask,
 };
 
@@ -92,15 +94,26 @@ impl Config {
                     ));
                 }
 
+                enum MatchType {
+                    Equal,
+                    Regex,
+                    Lookup,
+                    StartsWith,
+                    EndsWith,
+                }
+
                 let (op, op_is_not) = match op_str {
-                    "eq" | "equal-to" | "in-list" | "regex" | "regex-match" => {
-                        (ConditionOp::Equal, false)
+                    "eq" | "equal-to" | "ne" | "not-equal-to" => {
+                        (MatchType::Equal, op_str == "ne" || op_str == "not-equal-to")
                     }
-                    "ne" | "not-equal-to" | "not-in-list" | "not-regex" | "not-regex-match" => {
-                        (ConditionOp::Equal, true)
+                    "in-list" | "not-in-list" => {
+                        (MatchType::Lookup, op_str == "not-in-list")
                     }
-                    "starts-with" => (ConditionOp::StartsWith, false),
-                    "ends-with" => (ConditionOp::EndsWith, false),
+                    "regex" | "regex-match"| "not-regex" | "not-regex-match" => {
+                        (MatchType::Regex, op_str.starts_with("not-"))
+                    }
+                    "starts-with" | "not-starts-with" => (MatchType::StartsWith, op_str == "not-starts-with"),
+                    "ends-with" | "not-ends-with" => (MatchType::EndsWith, op_str == "not-ends-with"),
                     _ => {
                         return Err(format!(
                             "Invalid operation {op_str:?} for key {prefix:?}."
@@ -109,8 +122,8 @@ impl Config {
                 };
 
                 let value_str = self.value_require((&prefix, op_str))?;
-                let value = match (key, op) {
-                    (EnvelopeKey::Listener, ConditionOp::Equal) => ConditionValue::UInt(
+                let value = match (key, &op) {
+                    (EnvelopeKey::Listener, MatchType::Equal) => ConditionMatch::UInt(
                         ctx.servers
                             .iter()
                             .find_map(|s| {
@@ -128,11 +141,11 @@ impl Config {
                                 )
                             })?,
                     ),
-                    (EnvelopeKey::LocalIp | EnvelopeKey::RemoteIp, ConditionOp::Equal) => {
-                        ConditionValue::IpAddrMask(value_str.parse_key((&prefix, op_str))?)
+                    (EnvelopeKey::LocalIp | EnvelopeKey::RemoteIp, MatchType::Equal) => {
+                        ConditionMatch::IpAddrMask(value_str.parse_key((&prefix, op_str))?)
                     }
-                    (EnvelopeKey::Priority, ConditionOp::Equal) => {
-                        ConditionValue::Int(value_str.parse_key((&prefix, op_str))?)
+                    (EnvelopeKey::Priority, MatchType::Equal) => {
+                        ConditionMatch::Int(value_str.parse_key((&prefix, op_str))?)
                     }
                     (
                         EnvelopeKey::Recipient
@@ -145,28 +158,31 @@ impl Config {
                         | EnvelopeKey::RemoteIp,
                         _,
                     ) => {
-                        if op_str.contains("regex") {
-                            ConditionValue::Regex(Regex::new(value_str).map_err(|err| {
+                        match op {
+                            MatchType::Equal => ConditionMatch::String(StringMatch::Equal(value_str.to_string())),
+                            MatchType::StartsWith => ConditionMatch::String(StringMatch::StartsWith(value_str.to_string())),
+                            MatchType::EndsWith => ConditionMatch::String(StringMatch::EndsWith(value_str.to_string())),
+                            MatchType::Regex => ConditionMatch::Regex(Regex::new(value_str).map_err(|err| {
                                 format!(
                                     "Failed to compile regular expression {:?} for key {:?}: {}.",
                                     value_str,
                                     (&prefix, value_str).as_key(),
                                     err
                                 )
-                            })?)
-                        } else if op_str.contains("in-list") {
-                            if let Some(list) = ctx.lookup.get(value_str) {
-                                ConditionValue::Lookup(list.clone())
-                            } else {
-                                return Err(format!(
-                                    "Lookup {:?} not found for property {:?}.",
-                                    value_str,
-                                    (&prefix, value_str).as_key()
-                                ));
-                            }
-                        } else {
-                            ConditionValue::String(value_str.to_string())
+                            })?),
+                            MatchType::Lookup => {
+                                if let Some(list) = ctx.lookup.get(value_str) {
+                                    ConditionMatch::Lookup(list.clone())
+                                } else {
+                                    return Err(format!(
+                                        "Lookup {:?} not found for property {:?}.",
+                                        value_str,
+                                        (&prefix, value_str).as_key()
+                                    ));
+                                }
+                            },
                         }
+                        
                     }
                     _ => {
                         return Err(format!(
@@ -177,7 +193,6 @@ impl Config {
                 };
                 conditions.push(Condition::Match {
                     key,
-                    op,
                     value,
                     not: is_not ^ op_is_not,
                 });
@@ -310,8 +325,8 @@ mod tests {
     use ahash::AHashMap;
 
     use crate::{config::{
-        Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
-        IpAddrMask, Server,
+        Condition,  ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey,
+        IpAddrMask, Server, StringMatch,
     }, lookup::Lookup};
 
     #[test]
@@ -338,8 +353,7 @@ mod tests {
                 Conditions {
                     conditions: vec![Condition::Match {
                         key: EnvelopeKey::Listener,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::UInt(123),
+                        value: ConditionMatch::UInt(123),
                         not: false,
                     }],
                 },
@@ -349,8 +363,7 @@ mod tests {
                 Conditions {
                     conditions: vec![Condition::Match {
                         key: EnvelopeKey::AuthenticatedAs,
-                        op: ConditionOp::Equal,
-                        value: ConditionValue::String("".to_string()),
+                        value: ConditionMatch::String(StringMatch::Equal("".to_string())),
                         not: true,
                     }],
                 },
@@ -361,15 +374,13 @@ mod tests {
                     conditions: vec![
                         Condition::Match {
                             key: EnvelopeKey::SenderDomain,
-                            op: ConditionOp::StartsWith,
-                            value: ConditionValue::String("example".to_string()),
+                            value: ConditionMatch::String(StringMatch::StartsWith("example".to_string())),
                             not: false,
                         },
                         Condition::JumpIfFalse { positions: 1 },
                         Condition::Match {
                             key: EnvelopeKey::Sender,
-                            op: ConditionOp::Equal,
-                            value: ConditionValue::Lookup(list),
+                            value: ConditionMatch::Lookup(list),
                             not: false,
                         },
                     ],
@@ -381,15 +392,13 @@ mod tests {
                     conditions: vec![
                         Condition::Match {
                             key: EnvelopeKey::RecipientDomain,
-                            op: ConditionOp::Equal,
-                            value: ConditionValue::String("example.org".to_string()),
+                            value: ConditionMatch::String(StringMatch::Equal("example.org".to_string())),
                             not: false,
                         },
                         Condition::JumpIfTrue { positions: 9 },
                         Condition::Match {
                             key: EnvelopeKey::RemoteIp,
-                            op: ConditionOp::Equal,
-                            value: ConditionValue::IpAddrMask(IpAddrMask::V4 {
+                            value: ConditionMatch::IpAddrMask(IpAddrMask::V4 {
                                 addr: "192.168.0.0".parse().unwrap(),
                                 mask: u32::MAX << (32 - 24),
                             }),
@@ -398,29 +407,25 @@ mod tests {
                         Condition::JumpIfTrue { positions: 7 },
                         Condition::Match {
                             key: EnvelopeKey::Recipient,
-                            op: ConditionOp::StartsWith,
-                            value: ConditionValue::String("no-reply@".to_string()),
+                            value: ConditionMatch::String(StringMatch::StartsWith("no-reply@".to_string())),
                             not: false,
                         },
                         Condition::JumpIfFalse { positions: 5 },
                         Condition::Match {
                             key: EnvelopeKey::Sender,
-                            op: ConditionOp::EndsWith,
-                            value: ConditionValue::String("@domain.org".to_string()),
+                            value: ConditionMatch::String(StringMatch::EndsWith("@domain.org".to_string())),
                             not: false,
                         },
                         Condition::JumpIfFalse { positions: 3 },
                         Condition::Match {
                             key: EnvelopeKey::Priority,
-                            op: ConditionOp::Equal,
-                            value: ConditionValue::Int(1),
+                            value: ConditionMatch::Int(1),
                             not: true,
                         },
                         Condition::JumpIfTrue { positions: 1 },
                         Condition::Match {
                             key: EnvelopeKey::Priority,
-                            op: ConditionOp::Equal,
-                            value: ConditionValue::Int(-2),
+                            value: ConditionMatch::Int(-2),
                             not: false,
                         },
                     ],

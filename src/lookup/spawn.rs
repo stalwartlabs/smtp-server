@@ -195,7 +195,11 @@ impl From<bool> for LookupResult {
 
 impl From<Vec<String>> for LookupResult {
     fn from(value: Vec<String>) -> Self {
-        LookupResult::Values(value)
+        if !value.is_empty() {
+            LookupResult::Values(value)
+        } else {
+            LookupResult::False
+        }
     }
 }
 

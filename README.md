@@ -8,3 +8,5 @@ Stalwart SMTP Server
 - Antivirus
 - OpenTelemetry
 
+- Pyzor, Razor2, DCC, and iXhash
+- 

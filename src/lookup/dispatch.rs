@@ -30,7 +30,7 @@ impl Lookup {
                         sql.exists(&token).await.map(LookupResult::from)
                     }
                 },
-                Item::Verify(account) => sql.exists(&account).await.map(LookupResult::from),
+                Item::Verify(account) => sql.fetch_many(&account).await.map(LookupResult::from),
                 Item::Expand(list) => sql.fetch_many(&list).await.map(LookupResult::from),
             },
 

@@ -248,8 +248,8 @@ mod tests {
     use std::{fs, path::PathBuf, time::Duration};
 
     use crate::config::{
-        Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
-        IfBlock, IfThen,
+        Condition, ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey, IfBlock, IfThen,
+        StringMatch,
     };
 
     #[test]
@@ -287,8 +287,9 @@ mod tests {
                         conditions: Conditions {
                             conditions: vec![Condition::Match {
                                 key: EnvelopeKey::Sender,
-                                op: ConditionOp::Equal,
-                                value: ConditionValue::String("jdoe".to_string()),
+                                value: ConditionMatch::String(StringMatch::Equal(
+                                    "jdoe".to_string()
+                                )),
                                 not: false
                             }]
                         },
@@ -299,15 +300,15 @@ mod tests {
                             conditions: vec![
                                 Condition::Match {
                                     key: EnvelopeKey::Priority,
-                                    op: ConditionOp::Equal,
-                                    value: ConditionValue::Int(-1),
+                                    value: ConditionMatch::Int(-1),
                                     not: false
                                 },
                                 Condition::JumpIfTrue { positions: 1 },
                                 Condition::Match {
                                     key: EnvelopeKey::Recipient,
-                                    op: ConditionOp::StartsWith,
-                                    value: ConditionValue::String("jane".to_string()),
+                                    value: ConditionMatch::String(StringMatch::StartsWith(
+                                        "jane".to_string()
+                                    )),
                                     not: false
                                 }
                             ]
@@ -330,8 +331,9 @@ mod tests {
                         conditions: Conditions {
                             conditions: vec![Condition::Match {
                                 key: EnvelopeKey::Sender,
-                                op: ConditionOp::Equal,
-                                value: ConditionValue::String("jdoe".to_string()),
+                                value: ConditionMatch::String(StringMatch::Equal(
+                                    "jdoe".to_string()
+                                )),
                                 not: false
                             }]
                         },
@@ -342,15 +344,15 @@ mod tests {
                             conditions: vec![
                                 Condition::Match {
                                     key: EnvelopeKey::Priority,
-                                    op: ConditionOp::Equal,
-                                    value: ConditionValue::Int(-1),
+                                    value: ConditionMatch::Int(-1),
                                     not: false
                                 },
                                 Condition::JumpIfTrue { positions: 1 },
                                 Condition::Match {
                                     key: EnvelopeKey::Recipient,
-                                    op: ConditionOp::StartsWith,
-                                    value: ConditionValue::String("jane".to_string()),
+                                    value: ConditionMatch::String(StringMatch::StartsWith(
+                                        "jane".to_string()
+                                    )),
                                     not: false
                                 }
                             ]
@@ -373,8 +375,9 @@ mod tests {
                         conditions: Conditions {
                             conditions: vec![Condition::Match {
                                 key: EnvelopeKey::Sender,
-                                op: ConditionOp::Equal,
-                                value: ConditionValue::String("jdoe".to_string()),
+                                value: ConditionMatch::String(StringMatch::Equal(
+                                    "jdoe".to_string()
+                                )),
                                 not: false
                             }]
                         },
@@ -385,15 +388,15 @@ mod tests {
                             conditions: vec![
                                 Condition::Match {
                                     key: EnvelopeKey::Priority,
-                                    op: ConditionOp::Equal,
-                                    value: ConditionValue::Int(-1),
+                                    value: ConditionMatch::Int(-1),
                                     not: false
                                 },
                                 Condition::JumpIfTrue { positions: 1 },
                                 Condition::Match {
                                     key: EnvelopeKey::Recipient,
-                                    op: ConditionOp::StartsWith,
-                                    value: ConditionValue::String("jane".to_string()),
+                                    value: ConditionMatch::String(StringMatch::StartsWith(
+                                        "jane".to_string()
+                                    )),
                                     not: false
                                 }
                             ]

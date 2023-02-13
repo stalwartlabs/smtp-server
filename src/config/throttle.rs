@@ -158,8 +158,8 @@ mod tests {
     use std::{fs, path::PathBuf, time::Duration};
 
     use crate::config::{
-        Condition, ConditionOp, ConditionValue, Conditions, Config, ConfigContext, EnvelopeKey,
-        IpAddrMask, Rate, Throttle, THROTTLE_AUTH_AS, THROTTLE_REMOTE_IP, THROTTLE_SENDER_DOMAIN,
+        Condition, ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey, IpAddrMask,
+        Rate, Throttle, THROTTLE_AUTH_AS, THROTTLE_REMOTE_IP, THROTTLE_SENDER_DOMAIN,
     };
 
     #[test]
@@ -195,8 +195,7 @@ mod tests {
                     conditions: Conditions {
                         conditions: vec![Condition::Match {
                             key: EnvelopeKey::RemoteIp,
-                            op: ConditionOp::Equal,
-                            value: ConditionValue::IpAddrMask(IpAddrMask::V4 {
+                            value: ConditionMatch::IpAddrMask(IpAddrMask::V4 {
                                 addr: "127.0.0.1".parse().unwrap(),
                                 mask: u32::MAX
                             }),

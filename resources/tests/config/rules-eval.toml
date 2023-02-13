@@ -24,10 +24,10 @@ helo-domain = "hi-domain.net"
 "starts-with-false" = {if = "mx", starts-with = "enchilada"}
 "ends-with-true" = {if = "sender", ends-with = "@foo.net"}
 "ends-with-false" = {if = "sender", ends-with = "chimichanga"}
-"in-list-true" = {if = "sender-domain", in-list = "domains"}
-"in-list-false" = {if = "rcpt-domain", in-list = "domains"}
-"not-in-list-true" = {if = "rcpt-domain", not-in-list = "domains"}
-"not-in-list-false" = {if = "sender-domain", not-in-list = "domains"}
+"in-list-true" = {if = "sender-domain", in-list = "list/domains"}
+"in-list-false" = {if = "rcpt-domain", in-list = "list/domains"}
+"not-in-list-true" = {if = "rcpt-domain", not-in-list = "list/domains"}
+"not-in-list-false" = {if = "sender-domain", not-in-list = "list/domains"}
 "regex-true" = {if = "sender", regex-match = "^(.+)@(.+)$"}
 "regex-false" = {if = "mx", regex-match = "/^\\S+@\\S+\\.\\S+$/"}
 
@@ -164,6 +164,5 @@ nested-none-of-false = { none-of = [
     ]}
 ]}
 
-[lookup."domains"]
-type = "inline"
-items = ["mydomain1.org", "foo.net", "otherdomain.net"]
+[list]
+domains = ["mydomain1.org", "foo.net", "otherdomain.net"]

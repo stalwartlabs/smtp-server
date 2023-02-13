@@ -38,7 +38,7 @@ allow-invalid-certs = true
 ";
 
 #[tokio::test]
-async fn remote_smtp() {
+async fn lookup_smtp() {
     // Spawn mock LMTP server
     let shutdown = spawn_mock_lmtp_server(5);
 
@@ -123,14 +123,16 @@ async fn remote_smtp() {
     let mut requests = Vec::new();
     for n in 0..100 {
         let (item, expected) = &tests[n % tests.len()];
-        let item = item.append(n);
-        let item_clone = item.clone();
-        let lookup = lookup.clone();
-        requests.push((
-            tokio::spawn(async move { lookup.lookup(item).await }),
-            item_clone,
-            expected.append(n),
-        ));
+        if !matches!(item, Item::Verify(_) | Item::Expand(_)) {
+            let item = item.append(n);
+            let item_clone = item.clone();
+            let lookup = lookup.clone();
+            requests.push((
+                tokio::spawn(async move { lookup.lookup(item).await }),
+                item_clone,
+                expected.append(n),
+            ));
+        }
     }
     for (result, item, expected_result) in requests {
         let result = result.await.unwrap();

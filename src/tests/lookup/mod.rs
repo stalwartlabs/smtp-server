@@ -9,6 +9,7 @@ use crate::lookup::{Item, LookupResult};
 
 pub mod imap;
 pub mod smtp;
+pub mod sql;
 
 const CERT: &str = "-----BEGIN CERTIFICATE-----
 MIIFCTCCAvGgAwIBAgIUCgHGQYUqtelbHGVSzCVwBL3fyEUwDQYJKoZIhvcNAQEL

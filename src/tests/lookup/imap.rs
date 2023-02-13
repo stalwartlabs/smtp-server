@@ -38,7 +38,7 @@ allow-invalid-certs = true
 ";
 
 #[tokio::test]
-async fn remote_imap() {
+async fn lookup_imap() {
     // Enable logging
     /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()

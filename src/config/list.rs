@@ -115,8 +115,8 @@ mod tests {
                 ]))),
             ),
             (
-                "local-addresses".to_string(),
-                context.lookup.get("local-addresses").unwrap().clone(),
+                "remote/lmtp".to_string(),
+                context.lookup.get("remote/lmtp").unwrap().clone(),
             ),
         ]);
 

@@ -8,6 +8,7 @@ power-users = ["file://{LIST1}", "file://{LIST2}"]
 address = 192.168.0.1
 port = 25
 protocol = "lmtp"
+lookup = true
 
 [remote."lmtp".auth]
 username = "hello"

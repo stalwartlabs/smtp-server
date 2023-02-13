@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use crate::config::{
-    Condition, ConditionOp, ConditionValue, Conditions, EnvelopeKey, IfBlock, IpAddrMask,
+    Condition, ConditionMatch, Conditions, EnvelopeKey, IfBlock, IpAddrMask, StringMatch,
 };
 
 use super::Envelope;
@@ -25,70 +25,49 @@ impl Conditions {
 
         while let Some(rule) = conditions.next() {
             match rule {
-                Condition::Match {
-                    key,
-                    op,
-                    value,
-                    not,
-                } => {
+                Condition::Match { key, value, not } => {
                     matched = match value {
-                        ConditionValue::String(value) => {
+                        ConditionMatch::String(value) => {
                             let ctx_value = envelope.key_to_string(key);
-                            match op {
-                                ConditionOp::Equal => value.eq(ctx_value.as_ref()),
-                                ConditionOp::StartsWith => ctx_value.starts_with(value),
-                                ConditionOp::EndsWith => ctx_value.ends_with(value),
+                            match value {
+                                StringMatch::Equal(value) => value.eq(ctx_value.as_ref()),
+                                StringMatch::StartsWith(value) => ctx_value.starts_with(value),
+                                StringMatch::EndsWith(value) => ctx_value.ends_with(value),
                             }
                         }
-                        ConditionValue::IpAddrMask(value) => {
-                            let ctx_value = match key {
-                                EnvelopeKey::RemoteIp => envelope.remote_ip(),
-                                EnvelopeKey::LocalIp => envelope.local_ip(),
-                                _ => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                            };
-
-                            match op {
-                                ConditionOp::Equal => value.matches(&ctx_value),
-                                ConditionOp::StartsWith | ConditionOp::EndsWith => false,
-                            }
-                        }
-                        ConditionValue::UInt(value) => {
-                            let ctx_value = if key == &EnvelopeKey::Listener {
-                                envelope.listener_id()
-                            } else {
-                                debug_assert!(false, "Invalid value for UInt context key.");
-                                u16::MAX
-                            };
-                            match op {
-                                ConditionOp::Equal => *value == ctx_value,
-                                ConditionOp::StartsWith | ConditionOp::EndsWith => false,
-                            }
-                        }
-                        ConditionValue::Int(value) => {
-                            let ctx_value = if key == &EnvelopeKey::Listener {
-                                envelope.priority()
-                            } else {
-                                debug_assert!(false, "Invalid value for UInt context key.");
-                                i16::MAX
-                            };
-                            match op {
-                                ConditionOp::Equal => *value == ctx_value,
-                                ConditionOp::StartsWith | ConditionOp::EndsWith => false,
-                            }
-                        }
-                        ConditionValue::Lookup(lookup) => {
-                            let ctx_value = envelope.key_to_string(key);
-                            if matches!(op, ConditionOp::Equal) {
-                                if let Some(result) = lookup.contains(ctx_value.as_ref()).await {
-                                    result
+                        ConditionMatch::IpAddrMask(value) => value.matches(&match key {
+                            EnvelopeKey::RemoteIp => envelope.remote_ip(),
+                            EnvelopeKey::LocalIp => envelope.local_ip(),
+                            _ => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                        }),
+                        ConditionMatch::UInt(value) => {
+                            *value
+                                == if key == &EnvelopeKey::Listener {
+                                    envelope.listener_id()
                                 } else {
-                                    return false;
+                                    debug_assert!(false, "Invalid value for UInt context key.");
+                                    u16::MAX
                                 }
+                        }
+                        ConditionMatch::Int(value) => {
+                            *value
+                                == if key == &EnvelopeKey::Listener {
+                                    envelope.priority()
+                                } else {
+                                    debug_assert!(false, "Invalid value for UInt context key.");
+                                    i16::MAX
+                                }
+                        }
+                        ConditionMatch::Lookup(lookup) => {
+                            if let Some(result) =
+                                lookup.contains(envelope.key_to_string(key).as_ref()).await
+                            {
+                                result
                             } else {
-                                false
+                                return false;
                             }
                         }
-                        ConditionValue::Regex(value) => {
+                        ConditionMatch::Regex(value) => {
                             value.is_match(envelope.key_to_string(key).as_ref())
                         }
                     } ^ not;

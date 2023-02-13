@@ -92,8 +92,7 @@ pub enum ServerProtocol {
 pub enum Condition {
     Match {
         key: EnvelopeKey,
-        op: ConditionOp,
-        value: ConditionValue,
+        value: ConditionMatch,
         not: bool,
     },
     JumpIfTrue {
@@ -104,16 +103,16 @@ pub enum Condition {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum ConditionOp {
-    Equal,
-    StartsWith,
-    EndsWith,
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum StringMatch {
+    Equal(String),
+    StartsWith(String),
+    EndsWith(String),
 }
 
 #[derive(Debug, Clone)]
-pub enum ConditionValue {
-    String(String),
+pub enum ConditionMatch {
+    String(StringMatch),
     UInt(u16),
     Int(i16),
     IpAddrMask(IpAddrMask),
@@ -122,7 +121,7 @@ pub enum ConditionValue {
 }
 
 #[cfg(test)]
-impl PartialEq for ConditionValue {
+impl PartialEq for ConditionMatch {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::String(l0), Self::String(r0)) => l0 == r0,
@@ -137,7 +136,7 @@ impl PartialEq for ConditionValue {
 }
 
 #[cfg(test)]
-impl Eq for ConditionValue {}
+impl Eq for ConditionMatch {}
 
 #[cfg(test)]
 impl PartialEq for Lookup {
