@@ -152,7 +152,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         };
 
         // Build authentication results header
-        let mail_from = self.data.mail_from.take().unwrap();
+        let mail_from = self.data.mail_from.as_ref().unwrap();
         let mut auth_results = AuthenticationResults::new(&self.instance.hostname);
         if !dkim_output.is_empty() {
             auth_results = auth_results.with_dkim_results(&dkim_output, auth_message.from())
@@ -280,6 +280,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         }
 
         // Build message
+        let mail_from = self.data.mail_from.take().unwrap();
         let rcpt_to = std::mem::take(&mut self.data.rcpt_to);
         let mut message = self.build_message(mail_from, rcpt_to).await;
 

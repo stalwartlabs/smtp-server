@@ -18,6 +18,7 @@ pub mod ehlo;
 pub mod limits;
 pub mod mail;
 pub mod rcpt;
+pub mod scripts;
 pub mod sign;
 pub mod throttle;
 pub mod vrfy;

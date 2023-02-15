@@ -32,6 +32,7 @@ impl Config {
                 Capability::ImapSieve,
                 Capability::Duplicate,
             ])
+            .with_capability(Capability::Execute)
             .with_max_variable_size(102400)
             .with_max_header_size(10240)
             .with_valid_notification_uri("mailto")
@@ -69,7 +70,7 @@ impl Config {
                 id.to_string(),
                 compiler
                     .compile(&script)
-                    .unwrap_or_else(|err| panic!("Failed to compile Sieve script {id:?}: {err}"))
+                    .map_err(|err| format!("Failed to compile Sieve script {id:?}: {err}"))?
                     .into(),
             );
         }

@@ -2,11 +2,8 @@
 Stalwart SMTP Server
 
 # TODO
-- Greylist
-- Sieve
+- Queue manager
 - Spam filter
 - Antivirus
 - OpenTelemetry
 
-- Pyzor, Razor2, DCC, and iXhash
-- 

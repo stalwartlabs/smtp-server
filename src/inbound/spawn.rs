@@ -206,9 +206,6 @@ impl Session<TlsStream<TcpStream>> {
 
 impl<T: AsyncRead + AsyncWrite + IsTls + Unpin> Session<T> {
     pub async fn init_conn(&mut self, greeting: &[u8]) -> bool {
-        if self.write(greeting).await.is_err() {
-            return false;
-        }
         self.eval_session_params().await;
         self.verify_ip_dnsbl().await;
 
@@ -226,6 +223,10 @@ impl<T: AsyncRead + AsyncWrite + IsTls + Unpin> Session<T> {
                     return false;
                 }
             }
+        }
+
+        if self.write(greeting).await.is_err() {
+            return false;
         }
 
         true
