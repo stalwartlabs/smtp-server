@@ -10,21 +10,21 @@ fn queue_due() {
 
     let mut message = new_message();
     message.domains.push(domain("c", 3, 8, 9));
-    queue.main.push(Schedule {
+    queue.schedule(Schedule {
         due: message.next_delivery_event(),
         inner: message,
     });
 
     let mut message = new_message();
     message.domains.push(domain("b", 2, 6, 7));
-    queue.main.push(Schedule {
+    queue.schedule(Schedule {
         due: message.next_delivery_event(),
         inner: message,
     });
 
     let mut message = new_message();
     message.domains.push(domain("a", 1, 4, 5));
-    queue.main.push(Schedule {
+    queue.schedule(Schedule {
         due: message.next_delivery_event(),
         inner: message,
     });

@@ -6,9 +6,11 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use serde::{Deserialize, Serialize};
 use smtp_proto::Response;
 
 use crate::core::{
+    management,
     throttle::{ConcurrencyLimiter, InFlight},
     Envelope,
 };
@@ -20,9 +22,12 @@ pub mod serialize;
 pub mod spool;
 pub mod throttle;
 
+pub type QueueId = u64;
+
 #[derive(Debug)]
 pub enum Event {
     Queue(Schedule<Box<Message>>),
+    Manage(management::QueueRequest),
     Done(WorkerResult),
     Stop,
 }
@@ -31,14 +36,14 @@ pub enum Event {
 pub enum WorkerResult {
     Done,
     Retry(Schedule<Box<Message>>),
-    OnHold(OnHold),
+    OnHold(OnHold<Box<Message>>),
 }
 
 #[derive(Debug)]
-pub struct OnHold {
+pub struct OnHold<T> {
     pub next_due: Option<Instant>,
     pub limiters: Vec<ConcurrencyLimiter>,
-    pub message: Box<Message>,
+    pub message: T,
 }
 
 #[derive(Debug)]
@@ -49,7 +54,7 @@ pub struct Schedule<T> {
 
 #[derive(Debug)]
 pub struct Message {
-    pub id: u64,
+    pub id: QueueId,
     pub created: u64,
     pub path: PathBuf,
 
@@ -90,11 +95,15 @@ pub struct Recipient {
 pub const RCPT_DSN_SENT: u64 = 1 << 32;
 pub const RCPT_STATUS_CHANGED: u64 = 2 << 32;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Status<T, E> {
+    #[serde(rename = "scheduled")]
     Scheduled,
+    #[serde(rename = "completed")]
     Completed(T),
+    #[serde(rename = "temp_fail")]
     TemporaryFailure(E),
+    #[serde(rename = "perm_fail")]
     PermanentFailure(E),
 }
 

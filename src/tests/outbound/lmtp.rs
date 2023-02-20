@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    config::{Config, ConfigContext, IfBlock},
+    config::{Config, ConfigContext, IfBlock, ServerProtocol},
     core::{Core, Session},
     queue::{manager::Queue, DeliveryAttempt, Event, WorkerResult},
     tests::{outbound::start_test_server, session::VerifyResponse, ParseTestConfig},
@@ -37,7 +37,7 @@ async fn lmtp_delivery() {
     core.session.config.rcpt.relay = IfBlock::new(true);
     core.session.config.extensions.dsn = IfBlock::new(true);
     let mut remote_qr = core.init_test_queue("lmtp_delivery_remote");
-    let _rx = start_test_server(core.into(), false);
+    let _rx = start_test_server(core.into(), &[ServerProtocol::Lmtp]);
 
     // Add mock DNS entries
     let mut core = Core::test();
@@ -106,21 +106,22 @@ async fn lmtp_delivery() {
                     break;
                 }
                 WorkerResult::Retry(retry) => {
-                    queue.main.push(retry);
+                    queue.schedule(retry);
                 }
                 WorkerResult::OnHold(_) => unreachable!(),
             },
             None | Some(Event::Stop) => break,
+            Some(Event::Manage(_)) => unreachable!(),
         }
 
-        if !queue.main.is_empty() {
+        if !queue.scheduled.is_empty() {
             tokio::time::sleep(queue.wake_up_time()).await;
             DeliveryAttempt::from(queue.next_due().unwrap())
                 .try_deliver(core.clone(), &mut queue)
                 .await;
         }
     }
-    assert!(queue.main.is_empty());
+    assert!(queue.scheduled.is_empty());
     assert_eq!(dsn.len(), 4);
 
     let mut dsn = dsn.into_iter();

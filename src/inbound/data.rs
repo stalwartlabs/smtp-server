@@ -440,7 +440,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 let (notify, expires) = if self.data.delivery_by == 0 {
                     (
                         queue::Schedule::later(future_release + *notify_intervals.first().unwrap()),
-                        Instant::now() + *config.expire.eval(&envelope).await,
+                        Instant::now() + future_release + *config.expire.eval(&envelope).await,
                     )
                 } else if (message.flags & MAIL_BY_RETURN) != 0 {
                     (

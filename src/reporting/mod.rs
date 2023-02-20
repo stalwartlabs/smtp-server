@@ -14,11 +14,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     config::{AddressMatch, AggregateFrequency, DkimSigner, IfBlock},
-    core::{Core, Session},
+    core::{management, Core, Session},
     outbound::{dane::Tlsa, mta_sts::Policy},
     queue::{DomainPart, Message},
     USER_AGENT,
 };
+
+use self::scheduler::{ReportKey, ReportValue};
 
 pub mod analysis;
 pub mod dkim;
@@ -31,6 +33,7 @@ pub mod tls;
 pub enum Event {
     Dmarc(Box<DmarcEvent>),
     Tls(Box<TlsEvent>),
+    Manage(management::ReportRequest),
     Stop,
 }
 
@@ -276,6 +279,46 @@ impl From<(&Option<Arc<Policy>>, &Option<Arc<Tlsa>>)> for PolicyType {
             (Some(value), _) => PolicyType::Sts(Some(value.clone())),
             (_, Some(value)) => PolicyType::Tlsa(Some(value.clone())),
             _ => PolicyType::None,
+        }
+    }
+}
+
+impl ReportKey {
+    pub fn domain(&self) -> &str {
+        match self {
+            scheduler::ReportType::Dmarc(p) => &p.inner,
+            scheduler::ReportType::Tls(d) => d,
+        }
+    }
+}
+
+impl ReportValue {
+    pub async fn delete(&self) {
+        match self {
+            scheduler::ReportType::Dmarc(path) => {
+                if let Err(err) = tokio::fs::remove_file(&path.path).await {
+                    tracing::warn!(
+                        context = "report",
+                        event = "error",
+                        "Failed to remove report file {}: {}",
+                        path.path.display(),
+                        err
+                    );
+                }
+            }
+            scheduler::ReportType::Tls(path) => {
+                for path in &path.path {
+                    if let Err(err) = tokio::fs::remove_file(&path.inner).await {
+                        tracing::warn!(
+                            context = "report",
+                            event = "error",
+                            "Failed to remove report file {}: {}",
+                            path.inner.display(),
+                            err
+                        );
+                    }
+                }
+            }
         }
     }
 }

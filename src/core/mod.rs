@@ -40,6 +40,7 @@ use self::throttle::{
 };
 
 pub mod if_block;
+pub mod management;
 pub mod params;
 pub mod scripts;
 pub mod throttle;

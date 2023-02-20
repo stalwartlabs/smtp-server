@@ -108,7 +108,7 @@ impl queue::Event {
         }
     }
 
-    pub fn unwrap_on_hold(self) -> OnHold {
+    pub fn unwrap_on_hold(self) -> OnHold<Box<Message>> {
         match self {
             queue::Event::Done(WorkerResult::OnHold(value)) => value,
             queue::Event::Queue(message) => {

@@ -85,6 +85,7 @@ pub enum ServerProtocol {
     Smtp,
     Lmtp,
     Imap,
+    Http,
 }
 
 #[derive(Debug, Clone)]
@@ -343,6 +344,7 @@ pub struct QueueConfig {
     // Throttle and Quotas
     pub throttle: QueueThrottle,
     pub quota: QueueQuotas,
+    pub management_lookup: Arc<Lookup>,
 }
 
 pub struct QueueOutboundSourceIp {

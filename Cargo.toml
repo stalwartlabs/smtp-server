@@ -16,6 +16,9 @@ rustls-pemfile = "1.0"
 tokio = { version = "1.23", features = ["full"] }
 tokio-rustls = { version = "0.23"}
 webpki-roots = { version = "0.22"}
+hyper = { version = "1.0.0-rc.2", features = ["server", "http1", "http2"] }
+http-body-util = "0.1.0-rc.2"
+form_urlencoded = "1.1.0"
 sha1 = "0.10"
 sha2 = "0.10.6"
 rayon = "1.5"
@@ -47,3 +50,11 @@ harness = false
 
 [features]
 removeme = []
+
+#[[bin]]
+#name = "daemon"
+#path = "src/daemon/bin/main.rs"
+
+#[[bin]]
+#name = "client"
+#path = "src/client/bin/main.rs"

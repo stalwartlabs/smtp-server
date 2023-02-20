@@ -12,7 +12,7 @@ use mail_auth::{
 use parking_lot::Mutex;
 
 use crate::{
-    config::{AggregateFrequency, IfBlock, RequireOptional},
+    config::{AggregateFrequency, IfBlock, RequireOptional, ServerProtocol},
     core::{Core, Session},
     outbound::mta_sts::Policy,
     queue::{manager::Queue, DeliveryAttempt},
@@ -36,7 +36,7 @@ async fn mta_sts_verify() {
     let mut core = Core::test();
     core.session.config.rcpt.relay = IfBlock::new(true);
     let mut remote_qr = core.init_test_queue("smtp_mta_sts_remote");
-    let _rx = start_test_server(core.into(), true);
+    let _rx = start_test_server(core.into(), &[ServerProtocol::Smtp]);
 
     // Add mock DNS entries
     let mut core = Core::test();

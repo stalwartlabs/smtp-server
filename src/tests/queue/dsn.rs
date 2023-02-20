@@ -140,7 +140,7 @@ async fn generate_dsn() {
 
     // Load queue
     let queue = core.queue.read_queue().await;
-    assert_eq!(queue.main.len(), 4);
+    assert_eq!(queue.scheduled.len(), 4);
 }
 
 async fn compare_dsn(message: Box<Message>, test: &str) {

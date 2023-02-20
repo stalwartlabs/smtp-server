@@ -92,22 +92,23 @@ async fn queue_retry() {
             Some(Event::Done(wr)) => match wr {
                 WorkerResult::Done => break,
                 WorkerResult::Retry(retry) => {
-                    queue.main.push(retry);
+                    queue.schedule(retry);
                     num_retries += 1;
                 }
                 WorkerResult::OnHold(_) => unreachable!(),
             },
             None | Some(Event::Stop) => break,
+            Some(Event::Manage(_)) => unreachable!(),
         }
 
-        if !queue.main.is_empty() {
+        if !queue.scheduled.is_empty() {
             tokio::time::sleep(queue.wake_up_time()).await;
             DeliveryAttempt::from(queue.next_due().unwrap())
                 .try_deliver(core.clone(), &mut queue)
                 .await;
         }
     }
-    assert!(queue.main.is_empty());
+    assert!(queue.scheduled.is_empty());
     assert_eq!(num_retries, 3);
     assert_eq!(dsn.len(), 4);
     assert!(!path.exists());

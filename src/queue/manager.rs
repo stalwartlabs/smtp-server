@@ -4,17 +4,26 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ahash::AHashMap;
+use smtp_proto::Response;
 use tokio::sync::mpsc;
 
-use crate::core::{Core, QueueCore};
+use crate::core::{
+    management::{self},
+    Core, QueueCore,
+};
 
-use super::{DeliveryAttempt, Event, Message, OnHold, Schedule, Status, WorkerResult};
+use super::{
+    DeliveryAttempt, Event, HostResponse, Message, OnHold, QueueId, Schedule, Status, WorkerResult,
+    RCPT_STATUS_CHANGED,
+};
 
 pub struct Queue {
     short_wait: Duration,
     long_wait: Duration,
-    pub main: BinaryHeap<Schedule<Box<Message>>>,
-    pub on_hold: Vec<OnHold>,
+    pub scheduled: BinaryHeap<Schedule<QueueId>>,
+    pub on_hold: Vec<OnHold<QueueId>>,
+    pub messages: AHashMap<QueueId, Box<Message>>,
 }
 
 impl SpawnQueue for mpsc::Receiver<Event> {
@@ -45,7 +54,7 @@ impl SpawnQueue for mpsc::Receiver<Event> {
                                     .try_deliver(core.clone(), &mut queue)
                                     .await;
                             } else {
-                                queue.main.push(item);
+                                queue.schedule(item);
                             }
                         }
                         Event::Done(result) => {
@@ -58,13 +67,202 @@ impl SpawnQueue for mpsc::Receiver<Event> {
                             match result {
                                 WorkerResult::Done => (),
                                 WorkerResult::Retry(schedule) => {
-                                    queue.main.push(schedule);
+                                    queue.schedule(schedule);
                                 }
                                 WorkerResult::OnHold(on_hold) => {
-                                    queue.on_hold.push(on_hold);
+                                    queue.on_hold(on_hold);
                                 }
                             }
                         }
+                        Event::Manage(request) => match request {
+                            management::QueueRequest::List {
+                                from,
+                                to,
+                                before,
+                                after,
+                                result_tx,
+                            } => {
+                                let mut result = Vec::with_capacity(queue.messages.len());
+                                for message in queue.messages.values() {
+                                    if from
+                                        .as_ref()
+                                        .map_or(false, |from| from != &message.return_path_lcase)
+                                    {
+                                        continue;
+                                    }
+                                    if to.as_ref().map_or(false, |to| {
+                                        !message
+                                            .recipients
+                                            .iter()
+                                            .any(|rcpt| rcpt.address_lcase.contains(to))
+                                    }) {
+                                        continue;
+                                    }
+
+                                    if (before.is_some() || after.is_some())
+                                        && !message.domains.iter().any(|domain| {
+                                            matches!(
+                                                &domain.status,
+                                                Status::Scheduled | Status::TemporaryFailure(_)
+                                            ) && match (&before, &after) {
+                                                (Some(before), Some(after)) => {
+                                                    domain.retry.due.lt(before)
+                                                        && domain.retry.due.gt(after)
+                                                }
+                                                (Some(before), None) => domain.retry.due.lt(before),
+                                                (None, Some(after)) => domain.retry.due.gt(after),
+                                                (None, None) => false,
+                                            }
+                                        })
+                                    {
+                                        continue;
+                                    }
+
+                                    result.push(message.id);
+                                }
+                                result.sort_unstable_by_key(|id| *id & 0xFFFFFFFF);
+                                let _ = result_tx.send(result);
+                            }
+                            management::QueueRequest::Status {
+                                queue_ids,
+                                result_tx,
+                            } => {
+                                let mut result = Vec::with_capacity(queue_ids.len());
+                                for queue_id in queue_ids {
+                                    result.push(
+                                        queue
+                                            .messages
+                                            .get(&queue_id)
+                                            .map(|message| message.as_ref().into()),
+                                    );
+                                }
+                                let _ = result_tx.send(result);
+                            }
+                            management::QueueRequest::Cancel {
+                                queue_ids,
+                                item,
+                                result_tx,
+                            } => {
+                                let mut result = Vec::with_capacity(queue_ids.len());
+                                for queue_id in &queue_ids {
+                                    let mut found = false;
+                                    if let Some(item) = &item {
+                                        if let Some(message) = queue.messages.get_mut(queue_id) {
+                                            // Cancel delivery for all recipients that match
+                                            for rcpt in &mut message.recipients {
+                                                if rcpt.address_lcase.contains(item) {
+                                                    rcpt.flags |= RCPT_STATUS_CHANGED;
+                                                    rcpt.status = Status::Completed(HostResponse {
+                                                        hostname: String::new(),
+                                                        response: Response {
+                                                            code: 0,
+                                                            esc: [0, 0, 0],
+                                                            message: "Delivery canceled."
+                                                                .to_string(),
+                                                        },
+                                                    });
+                                                    found = true;
+                                                }
+                                            }
+                                            if found {
+                                                // Mark as completed domains without any pending deliveries
+                                                for (domain_idx, domain) in
+                                                    message.domains.iter_mut().enumerate()
+                                                {
+                                                    if matches!(
+                                                        domain.status,
+                                                        Status::TemporaryFailure(_)
+                                                            | Status::Scheduled
+                                                    ) {
+                                                        let mut total_rcpt = 0;
+                                                        let mut total_completed = 0;
+
+                                                        for rcpt in &message.recipients {
+                                                            if rcpt.domain_idx == domain_idx {
+                                                                total_rcpt += 1;
+                                                                if matches!(
+                                                                    rcpt.status,
+                                                                    Status::PermanentFailure(_)
+                                                                        | Status::Completed(_)
+                                                                ) {
+                                                                    total_completed += 1;
+                                                                }
+                                                            }
+                                                        }
+
+                                                        if total_rcpt == total_completed {
+                                                            domain.status = Status::Completed(());
+                                                            domain.changed = true;
+                                                        }
+                                                    }
+                                                }
+
+                                                // Delete message if there are no pending deliveries
+                                                if message.domains.iter().any(|domain| {
+                                                    matches!(
+                                                        domain.status,
+                                                        Status::TemporaryFailure(_)
+                                                            | Status::Scheduled
+                                                    )
+                                                }) {
+                                                    message.save_changes().await;
+                                                } else {
+                                                    message.remove().await;
+                                                    queue.messages.remove(queue_id);
+                                                }
+                                            }
+                                        }
+                                    } else if let Some(message) = queue.messages.remove(queue_id) {
+                                        message.remove().await;
+                                        found = true;
+                                    }
+                                    result.push(found);
+                                }
+                                let _ = result_tx.send(result);
+                            }
+                            management::QueueRequest::Retry {
+                                queue_ids,
+                                item,
+                                time,
+                                result_tx,
+                            } => {
+                                let mut result = Vec::with_capacity(queue_ids.len());
+                                for queue_id in &queue_ids {
+                                    let mut found = false;
+                                    if let Some(message) = queue.messages.get_mut(queue_id) {
+                                        for domain in &mut message.domains {
+                                            if matches!(
+                                                domain.status,
+                                                Status::Scheduled | Status::TemporaryFailure(_)
+                                            ) && item
+                                                .as_ref()
+                                                .map_or(true, |item| domain.domain.contains(item))
+                                            {
+                                                domain.retry.due = time;
+                                                if domain.expires > time {
+                                                    domain.expires = time + Duration::from_secs(10);
+                                                }
+                                                domain.changed = true;
+                                                found = true;
+                                            }
+                                        }
+
+                                        if found {
+                                            queue.on_hold.retain(|oh| &oh.message != queue_id);
+                                            message.save_changes().await;
+                                            if let Some(next_event) = message.next_event() {
+                                                queue.scheduled.push(Schedule {
+                                                    due: next_event,
+                                                    inner: *queue_id,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    result.push(found);
+                                }
+                                let _ = result_tx.send(result);
+                            }
+                        },
                         Event::Stop => break,
                     },
                     Ok(None) => break,
@@ -76,10 +274,29 @@ impl SpawnQueue for mpsc::Receiver<Event> {
 }
 
 impl Queue {
+    pub fn schedule(&mut self, message: Schedule<Box<Message>>) {
+        self.scheduled.push(Schedule {
+            due: message.due,
+            inner: message.inner.id,
+        });
+        self.messages.insert(message.inner.id, message.inner);
+    }
+
+    pub fn on_hold(&mut self, message: OnHold<Box<Message>>) {
+        self.on_hold.push(OnHold {
+            next_due: message.next_due,
+            limiters: message.limiters,
+            message: message.message.id,
+        });
+        self.messages.insert(message.message.id, message.message);
+    }
+
     pub fn next_due(&mut self) -> Option<Box<Message>> {
-        let item = self.main.peek()?;
+        let item = self.scheduled.peek()?;
         if item.due <= Instant::now() {
-            self.main.pop().map(|i| i.inner)
+            self.scheduled
+                .pop()
+                .and_then(|i| self.messages.remove(&i.inner))
         } else {
             None
         }
@@ -95,11 +312,11 @@ impl Queue {
                     .any(|l| l.concurrent.load(Ordering::Relaxed) < l.max_concurrent)
                     || o.next_due.map_or(false, |due| due <= now)
             })
-            .map(|pos| self.on_hold.remove(pos).message)
+            .and_then(|pos| self.messages.remove(&self.on_hold.remove(pos).message))
     }
 
     pub fn wake_up_time(&self) -> Duration {
-        self.main
+        self.scheduled
             .peek()
             .map(|item| {
                 item.due
@@ -273,7 +490,7 @@ impl QueueCore {
                     self.has_quota(&mut message).await;
 
                     // Schedule message
-                    queue.main.push(Schedule {
+                    queue.schedule(Schedule {
                         due: message.next_event().unwrap_or_else(|| {
                             tracing::warn!(
                                 context = "queue",
@@ -309,8 +526,9 @@ impl Default for Queue {
         Queue {
             short_wait: Duration::from_millis(1),
             long_wait: Duration::from_secs(86400 * 365),
-            main: BinaryHeap::with_capacity(128),
+            scheduled: BinaryHeap::with_capacity(128),
             on_hold: Vec::with_capacity(128),
+            messages: AHashMap::with_capacity(128),
         }
     }
 }

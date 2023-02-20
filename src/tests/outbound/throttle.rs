@@ -124,7 +124,7 @@ async fn throttle_outbound() {
     local_qr.assert_empty_queue();
     assert!([1799, 1800].contains(
         &queue
-            .main
+            .scheduled
             .pop()
             .unwrap()
             .due

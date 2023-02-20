@@ -72,6 +72,10 @@ impl Host {
                     )
                     .await;
                 }
+                ServerProtocol::Http => {
+                    eprintln!("HTTP lookups are not supported.");
+                    std::process::exit(0);
+                }
             }
         });
 

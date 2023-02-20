@@ -7,7 +7,7 @@ use mail_auth::MX;
 use smtp_proto::{MAIL_REQUIRETLS, MAIL_RET_HDRS, MAIL_SMTPUTF8, RCPT_NOTIFY_NEVER};
 
 use crate::{
-    config::IfBlock,
+    config::{IfBlock, ServerProtocol},
     core::{Core, Session},
     queue::{manager::Queue, DeliveryAttempt},
     tests::{outbound::start_test_server, session::VerifyResponse},
@@ -30,7 +30,7 @@ async fn extensions() {
     core.session.config.extensions.dsn = IfBlock::new(true);
     core.session.config.extensions.requiretls = IfBlock::new(true);
     let mut remote_qr = core.init_test_queue("smtp_ext_remote");
-    let _rx = start_test_server(core.into(), true);
+    let _rx = start_test_server(core.into(), &[ServerProtocol::Smtp]);
 
     // Add mock DNS entries
     let mut core = Core::test();

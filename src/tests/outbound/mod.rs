@@ -30,6 +30,10 @@ bind = ['127.0.0.1:9924']
 protocol = 'lmtp'
 tls.implicit = true
 
+[server.listener.management-debug]
+bind = ['127.0.0.1:9980']
+protocol = 'http'
+
 [server.socket]
 reuse-addr = true
 
@@ -43,26 +47,30 @@ cert = 'file://{CERT}'
 private-key = 'file://{PK}'
 ";
 
-pub fn start_test_server(core: Arc<Core>, smtp: bool) -> watch::Sender<bool> {
+pub fn start_test_server(core: Arc<Core>, protocols: &[ServerProtocol]) -> watch::Sender<bool> {
     // Spawn listeners
     let mut ctx = ConfigContext::default();
-    Config::parse(&add_test_certs(SERVER))
-        .unwrap()
-        .parse_servers(&mut ctx)
-        .unwrap();
+    let config = Config::parse(&add_test_certs(SERVER)).unwrap();
+    config.parse_servers(&mut ctx).unwrap();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     for server in ctx.servers {
-        for listener in &server.listeners {
-            listener
-                .socket
-                .bind(listener.addr)
-                .unwrap_or_else(|_| panic!("Failed to bind to {}", listener.addr));
-        }
+        if protocols.contains(&server.protocol) {
+            for listener in &server.listeners {
+                listener
+                    .socket
+                    .bind(listener.addr)
+                    .unwrap_or_else(|_| panic!("Failed to bind to {}", listener.addr));
+            }
 
-        if (smtp && server.protocol == ServerProtocol::Smtp)
-            || (!smtp && server.protocol == ServerProtocol::Lmtp)
-        {
-            server.spawn(core.clone(), shutdown_rx.clone()).unwrap();
+            match &server.protocol {
+                ServerProtocol::Smtp | ServerProtocol::Lmtp => {
+                    server.spawn(core.clone(), shutdown_rx.clone()).unwrap()
+                }
+                ServerProtocol::Http => server
+                    .spawn_management(core.clone(), shutdown_rx.clone())
+                    .unwrap(),
+                ServerProtocol::Imap => unreachable!(),
+            };
         }
     }
     shutdown_tx

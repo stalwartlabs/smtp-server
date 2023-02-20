@@ -11,7 +11,7 @@ use mail_auth::{
 };
 
 use crate::{
-    config::{AggregateFrequency, IfBlock, RequireOptional},
+    config::{AggregateFrequency, IfBlock, RequireOptional, ServerProtocol},
     core::{Core, Session},
     outbound::dane::{Tlsa, TlsaEntry},
     queue::{manager::Queue, DeliveryAttempt},
@@ -33,7 +33,7 @@ async fn dane_verify() {
     let mut core = Core::test();
     core.session.config.rcpt.relay = IfBlock::new(true);
     let mut remote_qr = core.init_test_queue("smtp_dane_remote");
-    let _rx = start_test_server(core.into(), true);
+    let _rx = start_test_server(core.into(), &[ServerProtocol::Smtp]);
 
     // Add mock DNS entries
     let mut core = Core::test();

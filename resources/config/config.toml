@@ -17,6 +17,11 @@ bind = ["0.0.0.0:587"]
 bind = ["0.0.0.0:465"]
 tls.implicit = true
 
+[server.listener."management"]
+bind = ["0.0.0.0:8080"]
+protocol = "http"
+tls.implicit = true
+
 [server.tls]
 enable = true
 implicit = false
@@ -328,6 +333,7 @@ address = "%IMAP_HOST%"
 port = 143
 protocol = "imap"
 timeout = "1m"
+lookup = true
 
 [remote."imap".cache]
 entries = 1000
@@ -349,10 +355,6 @@ rcpt = "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1 LIMIT 1)"
 vrfy = "SELECT id FROM users WHERE email LIKE '%$1%' LIMIT 5"
 expn = "SELECT member FROM mailing_lists WHERE id LIKE '%$1%'"
 domains = "SELECT EXISTS(SELECT 1 FROM domains WHERE name=$1 LIMIT 1)"
-#id.exists = "SELECT EXISTS(SELECT 1 FROM ids WHERE id=$1 AND expires > NOW() LIMIT 1)"
-#id.purge = "DELETE FROM ids WHERE expires <= NOW()"
-#id.init = "CREATE TABLE ids (id VARCHAR NOT NULL, expires TIMESTAMPTZ)"
-#id.insert = "INSERT INTO ids (id, expires) VALUES (?, ?)"
 
 [database."sql".cache]
 enable = ["rcpt", "domains"]
@@ -378,8 +380,12 @@ duplicate-expiry = "7d"
 [sieve.scripts]
 ehlo = "this is my script"
 
+[management.lookup]
+auth = ["list/admin"]
+
 [list]
 domains = ["%%DOMAIN%%"]
+admin = "admin:secret"
 #users = "file://users.txt"
 
 [certificate."default"]

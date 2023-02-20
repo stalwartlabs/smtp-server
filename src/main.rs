@@ -3,13 +3,15 @@ use std::{fs, sync::Arc, time::Duration};
 use dashmap::DashMap;
 use mail_send::smtp::tls::build_tls_connector;
 use smtp_server::{
-    config::{Config, ConfigContext},
+    config::{Config, ConfigContext, ServerProtocol},
     core::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
         Core, QueueCore, ReportCore, SessionCore, TlsConnectors,
     },
+    failed,
     queue::{self, manager::SpawnQueue},
     reporting::{self, scheduler::SpawnReport},
+    UnwrapFailure,
 };
 use tokio::sync::{mpsc, watch};
 use tracing_subscriber::EnvFilter;
@@ -184,9 +186,18 @@ async fn main() -> std::io::Result<()> {
     // Spawn listeners
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     for server in config_context.servers {
-        server
-            .spawn(core.clone(), shutdown_rx.clone())
-            .failed("Failed to start listener");
+        match server.protocol {
+            ServerProtocol::Smtp | ServerProtocol::Lmtp => server
+                .spawn(core.clone(), shutdown_rx.clone())
+                .failed("Failed to start listener"),
+            ServerProtocol::Http => server
+                .spawn_management(core.clone(), shutdown_rx.clone())
+                .failed("Failed to start management interface"),
+            ServerProtocol::Imap => {
+                eprintln!("Invalid protocol 'imap' for listener '{}'.", server.id);
+                std::process::exit(0);
+            }
+        }
     }
 
     // Wait for shutdown signal
@@ -257,37 +268,4 @@ fn parse_config() -> Config {
             .failed("Could not read configuration file"),
     )
     .failed("Invalid configuration file")
-}
-
-pub trait UnwrapFailure<T> {
-    fn failed(self, action: &str) -> T;
-}
-
-impl<T> UnwrapFailure<T> for Option<T> {
-    fn failed(self, message: &str) -> T {
-        match self {
-            Some(result) => result,
-            None => {
-                eprintln!("{message}");
-                std::process::exit(1);
-            }
-        }
-    }
-}
-
-impl<T, E: std::fmt::Display> UnwrapFailure<T> for Result<T, E> {
-    fn failed(self, message: &str) -> T {
-        match self {
-            Ok(result) => result,
-            Err(err) => {
-                eprintln!("{message}: {err}");
-                std::process::exit(1);
-            }
-        }
-    }
-}
-
-pub fn failed(message: &str) -> ! {
-    eprintln!("{message}");
-    std::process::exit(1);
 }

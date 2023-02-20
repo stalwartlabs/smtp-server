@@ -153,6 +153,16 @@ impl Config {
                     .unwrap_or_default()
                     .map_if_block(&ctx.signers, "report.dsn.sign", "signature")?,
             },
+            management_lookup: if let Some(lookup) = self.value("management.auth.lookup") {
+                ctx.lookup
+                .get(lookup)
+                .ok_or_else(|| format!(
+                    "Lookup {lookup:?} not found for key \"management.auth.lookup\"."
+                ))?
+                .clone()
+            } else {
+                Arc::new(Lookup::default())
+            }
         };
 
         if config.retry.has_empty_list() {

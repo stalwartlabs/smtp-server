@@ -44,7 +44,7 @@ impl DeliveryAttempt {
                 // Save changes to disk
                 self.message.save_changes().await;
 
-                queue.main.push(Schedule {
+                queue.schedule(Schedule {
                     due,
                     inner: self.message,
                 });
@@ -73,14 +73,14 @@ impl DeliveryAttempt {
 
                 match err {
                     throttle::Error::Concurrency { limiter } => {
-                        queue.on_hold.push(OnHold {
+                        queue.on_hold(OnHold {
                             next_due: self.message.next_event_after(Instant::now()),
                             limiters: vec![limiter],
                             message: self.message,
                         });
                     }
                     throttle::Error::Rate { retry_at } => {
-                        queue.main.push(Schedule {
+                        queue.schedule(Schedule {
                             due: retry_at,
                             inner: self.message,
                         });

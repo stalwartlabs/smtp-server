@@ -1,6 +1,6 @@
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use dashmap::DashMap;
 use mail_auth::{
     common::lru::{DnsCache, LruCache},
@@ -25,11 +25,13 @@ use crate::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
         Core, QueueCore, ReportCore, Resolvers, SessionCore, SieveConfig, SieveCore, TlsConnectors,
     },
+    lookup::Lookup,
     outbound::dane::DnssecResolver,
 };
 
 pub mod inbound;
 pub mod lookup;
+pub mod management;
 pub mod outbound;
 pub mod queue;
 pub mod reporting;
@@ -282,6 +284,7 @@ impl QueueConfig {
                 rcpt: vec![],
                 rcpt_domain: vec![],
             },
+            management_lookup: Arc::new(Lookup::Local(AHashSet::default())),
         }
     }
 }

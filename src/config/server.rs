@@ -268,6 +268,8 @@ impl ParseValue for ServerProtocol {
             Ok(Self::Lmtp)
         } else if value.eq_ignore_ascii_case("imap") {
             Ok(Self::Imap)
+        } else if value.eq_ignore_ascii_case("http") {
+            Ok(Self::Http)
         } else {
             Err(format!(
                 "Invalid server protocol type {:?} for property {:?}.",

@@ -23,7 +23,7 @@ use tokio::{
 
 use crate::{
     config::AggregateFrequency,
-    core::{worker::SpawnCleanup, Core, ReportCore},
+    core::{management::ReportRequest, worker::SpawnCleanup, Core, ReportCore},
     queue::{InstantFromTimestamp, Schedule},
 };
 
@@ -39,7 +39,7 @@ pub struct Scheduler {
     pub reports: AHashMap<ReportKey, ReportValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum ReportType<T, U> {
     Dmarc(T),
     Tls(U),
@@ -73,6 +73,66 @@ impl SpawnReport for mpsc::Receiver<Event> {
                         Event::Tls(event) => {
                             scheduler.schedule_tls(event, &core).await;
                         }
+                        Event::Manage(request) => match request {
+                            ReportRequest::List {
+                                type_,
+                                domain,
+                                result_tx,
+                            } => {
+                                let mut result = Vec::new();
+                                for key in scheduler.reports.keys() {
+                                    if domain
+                                        .as_ref()
+                                        .map_or(false, |domain| domain != key.domain())
+                                    {
+                                        continue;
+                                    }
+                                    if let Some(type_) = &type_ {
+                                        if !matches!(
+                                            (key, type_),
+                                            (ReportType::Dmarc(_), ReportType::Dmarc(_))
+                                                | (ReportType::Tls(_), ReportType::Tls(_))
+                                        ) {
+                                            continue;
+                                        }
+                                    }
+                                    result.push(key.to_string());
+                                }
+                                let _ = result_tx.send(result);
+                            }
+                            ReportRequest::Status {
+                                report_ids,
+                                result_tx,
+                            } => {
+                                let mut result = Vec::with_capacity(report_ids.len());
+                                for report_id in &report_ids {
+                                    result.push(
+                                        scheduler
+                                            .reports
+                                            .get(report_id)
+                                            .map(|report_value| (report_id, report_value).into()),
+                                    );
+                                }
+                                let _ = result_tx.send(result);
+                            }
+                            ReportRequest::Cancel {
+                                report_ids,
+                                result_tx,
+                            } => {
+                                let mut result = Vec::with_capacity(report_ids.len());
+                                for report_id in &report_ids {
+                                    result.push(
+                                        if let Some(report) = scheduler.reports.remove(report_id) {
+                                            report.delete().await;
+                                            true
+                                        } else {
+                                            false
+                                        },
+                                    );
+                                }
+                                let _ = result_tx.send(result);
+                            }
+                        },
                         Event::Stop => break,
                     },
                     Ok(None) => break,
