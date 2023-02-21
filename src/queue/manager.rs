@@ -18,6 +18,7 @@ use super::{
     RCPT_STATUS_CHANGED,
 };
 
+#[derive(Debug)]
 pub struct Queue {
     short_wait: Duration,
     long_wait: Duration,
@@ -84,10 +85,9 @@ impl SpawnQueue for mpsc::Receiver<Event> {
                             } => {
                                 let mut result = Vec::with_capacity(queue.messages.len());
                                 for message in queue.messages.values() {
-                                    if from
-                                        .as_ref()
-                                        .map_or(false, |from| from != &message.return_path_lcase)
-                                    {
+                                    if from.as_ref().map_or(false, |from| {
+                                        !message.return_path_lcase.contains(from)
+                                    }) {
                                         continue;
                                     }
                                     if to.as_ref().map_or(false, |to| {

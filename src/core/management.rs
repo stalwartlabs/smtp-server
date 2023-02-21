@@ -67,7 +67,7 @@ pub enum ReportRequest {
     },
     Status {
         report_ids: Vec<ReportKey>,
-        result_tx: oneshot::Sender<Vec<Option<ReportType<Report, Report>>>>,
+        result_tx: oneshot::Sender<Vec<Option<Report>>>,
     },
     Cancel {
         report_ids: Vec<ReportKey>,
@@ -121,12 +121,18 @@ pub struct Recipient {
     pub orcpt: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Report {
-    domain: String,
-    range_from: String,
-    range_to: String,
-    size: usize,
+    pub domain: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    #[serde(deserialize_with = "deserialize_datetime")]
+    #[serde(serialize_with = "serialize_datetime")]
+    pub range_from: DateTime,
+    #[serde(deserialize_with = "deserialize_datetime")]
+    #[serde(serialize_with = "serialize_datetime")]
+    pub range_to: DateTime,
+    pub size: usize,
 }
 
 impl Server {
@@ -164,11 +170,6 @@ impl Server {
                         stream = listener.accept() => {
                             match stream {
                                 Ok((stream, remote_addr)) => {
-                                    tracing::info!(
-                                        remote.ip = remote_addr.ip().to_string(),
-                                        remote.port = remote_addr.port(),
-                                    );
-
                                     // Enforce concurrency
                                     let in_flight = if let Some(in_flight) = limiter.is_allowed() {
                                         in_flight
@@ -850,27 +851,27 @@ impl From<&queue::Message> for Message {
     }
 }
 
-impl From<(&ReportKey, &ReportValue)> for ReportType<Report, Report> {
+impl From<(&ReportKey, &ReportValue)> for Report {
     fn from((key, value): (&ReportKey, &ReportValue)) -> Self {
         match (key, value) {
-            (ReportType::Dmarc(domain), ReportType::Dmarc(value)) => ReportType::Dmarc(Report {
+            (ReportType::Dmarc(domain), ReportType::Dmarc(value)) => Report {
                 domain: domain.inner.clone(),
-                range_from: DateTime::from_timestamp(value.created as i64).to_rfc3339(),
+                range_from: DateTime::from_timestamp(value.created as i64),
                 range_to: DateTime::from_timestamp(
                     (value.created + value.deliver_at.as_secs()) as i64,
-                )
-                .to_rfc3339(),
+                ),
                 size: value.size,
-            }),
-            (ReportType::Tls(domain), ReportType::Tls(value)) => ReportType::Tls(Report {
+                type_: "dmarc".to_string(),
+            },
+            (ReportType::Tls(domain), ReportType::Tls(value)) => Report {
                 domain: domain.clone(),
-                range_from: DateTime::from_timestamp(value.created as i64).to_rfc3339(),
+                range_from: DateTime::from_timestamp(value.created as i64),
                 range_to: DateTime::from_timestamp(
                     (value.created + value.deliver_at.as_secs()) as i64,
-                )
-                .to_rfc3339(),
+                ),
                 size: value.size,
-            }),
+                type_: "tls".to_string(),
+            },
             _ => unreachable!(),
         }
     }
@@ -879,8 +880,8 @@ impl From<(&ReportKey, &ReportValue)> for ReportType<Report, Report> {
 impl Display for ReportKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ReportType::Dmarc(policy) => write!(f, "d_{}_{}", policy.inner, policy.policy),
-            ReportType::Tls(domain) => write!(f, "t_{domain}"),
+            ReportType::Dmarc(policy) => write!(f, "d!{}!{}", policy.inner, policy.policy),
+            ReportType::Tls(domain) => write!(f, "t!{domain}"),
         }
     }
 }

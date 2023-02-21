@@ -22,12 +22,12 @@ use crate::{
 #[tokio::test]
 #[serial_test::serial]
 async fn manage_queue() {
-    tracing::subscriber::set_global_default(
+    /*tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_max_level(tracing::Level::DEBUG)
             .finish(),
     )
-    .unwrap();
+    .unwrap();*/
 
     // Start remote test server
     let mut core = Core::test();
@@ -336,6 +336,14 @@ async fn manage_queue() {
             "failed for {id}: {filter}"
         );
     }
+    assert_eq!(
+        send_manage_request::<Vec<QueueId>>("/queue/list")
+            .await
+            .unwrap()
+            .unwrap_data()
+            .len(),
+        3
+    );
     for (message, id) in get_messages(&[
         *id_map.get("a").unwrap(),
         *id_map.get("b").unwrap(),

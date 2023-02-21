@@ -55,7 +55,7 @@ async fn throttle_outbound() {
     .unwrap();*/
 
     // Build test message
-    let mut test_message = new_message();
+    let mut test_message = new_message(0);
     test_message.return_path_domain = "foobar.org".to_string();
     let mut core = Core::test();
     let mut local_qr = core.init_test_queue("smtp_throttle_outbound");

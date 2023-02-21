@@ -4,6 +4,7 @@ use hyper::header::AUTHORIZATION;
 use serde::{de::DeserializeOwned, Deserialize};
 
 pub mod queue;
+pub mod report;
 
 #[derive(Deserialize)]
 #[serde(untagged)]

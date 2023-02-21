@@ -8,21 +8,21 @@ use crate::queue::{manager::Queue, Domain, Message, Schedule, Status};
 fn queue_due() {
     let mut queue = Queue::default();
 
-    let mut message = new_message();
+    let mut message = new_message(0);
     message.domains.push(domain("c", 3, 8, 9));
     queue.schedule(Schedule {
         due: message.next_delivery_event(),
         inner: message,
     });
 
-    let mut message = new_message();
+    let mut message = new_message(1);
     message.domains.push(domain("b", 2, 6, 7));
     queue.schedule(Schedule {
         due: message.next_delivery_event(),
         inner: message,
     });
 
-    let mut message = new_message();
+    let mut message = new_message(2);
     message.domains.push(domain("a", 1, 4, 5));
     queue.schedule(Schedule {
         due: message.next_delivery_event(),
@@ -45,7 +45,7 @@ fn queue_due() {
 
 #[test]
 fn delivery_events() {
-    let mut message = new_message();
+    let mut message = new_message(0);
 
     message.domains.push(domain("a", 1, 2, 3));
     message.domains.push(domain("b", 4, 5, 6));
@@ -104,10 +104,10 @@ fn delivery_events() {
     assert!(message.next_event().is_none());
 }
 
-pub fn new_message() -> Box<Message> {
+pub fn new_message(id: u64) -> Box<Message> {
     Box::new(Message {
         size: 0,
-        id: 0,
+        id,
         path: Default::default(),
         created: 0,
         return_path: "sender@foobar.org".to_string(),
