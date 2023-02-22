@@ -1,5 +1,7 @@
+use std::path::PathBuf;
+
 use crate::{
-    config::{Config, ConfigContext, IfBlock},
+    config::{Config, ConfigContext, EnvelopeKey, IfBlock},
     core::{Core, Session},
     tests::session::VerifyResponse,
 };
@@ -13,6 +15,12 @@ idle-timeout = "5m"
 
 [list]
 invalid-ehlos = ["spammer.org", "spammer.net"]
+
+[session.data.pipe."test"]
+command = [ { if = "remote-ip", eq = "10.0.0.123", then = "/bin/bash" }, 
+            { else = false } ]
+arguments = ["%CFG_PATH%/pipe_me.sh", "hello", "world"]
+timeout = "10s"
 
 [sieve]
 from-name = "Sieve Daemon"
@@ -115,15 +123,24 @@ async fn sieve_scripts() {
     )
     .unwrap();*/
 
+    let mut pipe_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    pipe_path.push("resources");
+    pipe_path.push("tests");
+    pipe_path.push("pipe");
+
     // Prepare config
     let mut core = Core::test();
     let mut qr = core.init_test_queue("smtp_sieve_test");
     let mut ctx = ConfigContext::default().parse_signatures();
-    let config =
-        Config::parse(&CONFIG.replace("%PATH%", qr._temp_dir.temp_dir.as_path().to_str().unwrap()))
-            .unwrap();
+    let config = Config::parse(
+        &CONFIG
+            .replace("%PATH%", qr._temp_dir.temp_dir.as_path().to_str().unwrap())
+            .replace("%CFG_PATH%", pipe_path.as_path().to_str().unwrap()),
+    )
+    .unwrap();
     config.parse_lists(&mut ctx).unwrap();
     config.parse_databases(&mut ctx).unwrap();
+    let pipes = config.parse_pipes(&ctx, &[EnvelopeKey::RemoteIp]).unwrap();
     core.sieve = config.parse_sieve(&mut ctx).unwrap();
     let config = &mut core.session.config;
     config.connect.script = IfBlock::new(ctx.scripts.get("connect").cloned());
@@ -132,6 +149,7 @@ async fn sieve_scripts() {
     config.rcpt.script = IfBlock::new(ctx.scripts.get("rcpt").cloned());
     config.data.script = IfBlock::new(ctx.scripts.get("data").cloned());
     config.rcpt.relay = IfBlock::new(true);
+    config.data.pipe_commands = pipes;
 
     // Test connect script
     let mut session = Session::test(core);
@@ -259,5 +277,24 @@ async fn sieve_scripts() {
         .unwrap_message()
         .read_lines()
         .assert_contains("X-Part-Number: 5")
-        .assert_contains("THIS IS A PIECE OF HTML TEXT");
+        .assert_contains("THIS IS A PIECE OF HTML TEXT")
+        .assert_not_contains("X-My-Header: true");
+
+    // Test pipes
+    session.data.remote_ip = "10.0.0.123".parse().unwrap();
+    session
+        .send_message(
+            "test@example.net",
+            &["pipe@foobar.com"],
+            "test:no_dkim",
+            "250",
+        )
+        .await;
+    qr.read_event()
+        .await
+        .unwrap_message()
+        .read_lines()
+        .assert_contains("X-My-Header: true")
+        .assert_contains("Authentication-Results");
+    qr.assert_empty_queue();
 }

@@ -43,10 +43,20 @@ backlog = 1024
 #tos = 1
 
 [global]
-log-level = "trace"
 concurrency = 1024
 shared-map = {shard = 32, capacity = 10}
 #thread-pool = 8
+
+[global.tracing]
+method = "stdout"
+level = "trace"
+
+#[global.tracing]
+#method = "log"
+#path = "/var/log/smtp"
+#prefix = "smtp.log"
+#rotate = "daily"
+#level = "trace"
 
 [session]
 timeout = "5m"
@@ -111,6 +121,11 @@ wait = "5s"
 
 [session.data]
 #script = data.sieve
+
+#[session.data.pipe."spam-assassin"]
+#command = "spamc"
+#arguments = []
+#timeout = "10s"
 
 [session.data.limits]
 messages = 10

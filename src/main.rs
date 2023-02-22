@@ -14,6 +14,7 @@ use smtp_server::{
     UnwrapFailure,
 };
 use tokio::sync::{mpsc, watch};
+use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -148,23 +149,8 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
-    // Enable logging
-    let file_appender = tracing_appender::rolling::daily("/var/log/stalwart-smtp", "smtp.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(
-                EnvFilter::builder()
-                    .parse(&format!(
-                        "smtp_server={}",
-                        config.value("global.log-level").unwrap_or("info")
-                    ))
-                    .failed("Failed to log level"),
-            )
-            .with_writer(non_blocking)
-            .finish(),
-    )
-    .failed("Failed to set subscriber");
+    // Enable tracing
+    let _tracer = enable_tracing(&config).failed("Failed to enable tracing");
     tracing::info!(
         "Starting Stalwart SMTP server v{}...",
         env!("CARGO_PKG_VERSION")
@@ -239,6 +225,46 @@ async fn main() -> std::io::Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     Ok(())
+}
+
+fn enable_tracing(config: &Config) -> smtp_server::config::Result<Option<WorkerGuard>> {
+    let level = config.value("global.tracing.level").unwrap_or("info");
+    let env_filter = EnvFilter::builder()
+        .parse(format!("smtp_server={}", level))
+        .failed("Failed to log level");
+    match config.value("global.tracing.method").unwrap_or_default() {
+        "log" => {
+            let path = config.value_require("global.tracing.path")?;
+            let prefix = config.value_require("global.tracing.prefix")?;
+            let file_appender = match config.value("global.tracing.rotate").unwrap_or("daily") {
+                "daily" => tracing_appender::rolling::daily(path, prefix),
+                "hourly" => tracing_appender::rolling::hourly(path, prefix),
+                "minutely" => tracing_appender::rolling::minutely(path, prefix),
+                _ => tracing_appender::rolling::never(path, prefix),
+            };
+
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::FmtSubscriber::builder()
+                    .with_env_filter(env_filter)
+                    .with_writer(non_blocking)
+                    .finish(),
+            )
+            .failed("Failed to set subscriber");
+            Ok(guard.into())
+        }
+        "stdout" => {
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::FmtSubscriber::builder()
+                    .with_env_filter(env_filter)
+                    .finish(),
+            )
+            .failed("Failed to set subscriber");
+
+            Ok(None)
+        }
+        _ => Ok(None),
+    }
 }
 
 fn parse_config() -> Config {

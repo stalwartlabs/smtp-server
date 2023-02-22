@@ -274,6 +274,7 @@ pub struct Rcpt {
 
 pub struct Data {
     pub script: IfBlock<Option<Arc<Sieve>>>,
+    pub pipe_commands: Vec<Pipe>,
 
     // Limits
     pub max_messages: IfBlock<usize>,
@@ -287,6 +288,12 @@ pub struct Data {
     pub add_auth_results: IfBlock<bool>,
     pub add_message_id: IfBlock<bool>,
     pub add_date: IfBlock<bool>,
+}
+
+pub struct Pipe {
+    pub command: IfBlock<Option<String>>,
+    pub arguments: IfBlock<Vec<String>>,
+    pub timeout: IfBlock<Duration>,
 }
 
 pub struct SessionConfig {

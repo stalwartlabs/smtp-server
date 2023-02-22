@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     path::PathBuf,
+    process::Stdio,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
@@ -13,7 +14,10 @@ use mail_builder::headers::{date::Date, message_id::generate_message_id_header};
 use smtp_proto::{
     MAIL_BY_RETURN, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE, RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS,
 };
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    process::Command,
+};
 
 use crate::{
     config::DNSBL_FROM,
@@ -257,11 +261,101 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             }
         }
 
-        // Sieve filtering
+        // Pipe message
         let mut edited_message = None;
+        for pipe in &dc.pipe_commands {
+            if let Some(command_) = pipe.command.eval(self).await {
+                let piped_message = edited_message.as_ref().unwrap_or(&raw_message).clone();
+                let timeout = *pipe.timeout.eval(self).await;
+
+                let mut command = Command::new(command_);
+                for argument in pipe.arguments.eval(self).await {
+                    command.arg(argument);
+                }
+                match command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            match tokio::time::timeout(timeout, stdin.write_all(&piped_message))
+                                .await
+                            {
+                                Ok(Ok(_)) => {
+                                    drop(stdin);
+                                    match tokio::time::timeout(timeout, child.wait_with_output())
+                                        .await
+                                    {
+                                        Ok(Ok(output)) => {
+                                            if output.status.success()
+                                                && !output.stdout.is_empty()
+                                                && output.stdout[..] != piped_message[..]
+                                            {
+                                                edited_message = Arc::new(output.stdout).into();
+                                            }
+
+                                            tracing::debug!(parent: &self.span,
+                                                context = "pipe",
+                                                event = "success",
+                                                command = command_,
+                                                status = output.status.to_string());
+                                        }
+                                        Ok(Err(err)) => {
+                                            tracing::warn!(parent: &self.span,
+                                                context = "pipe",
+                                                event = "exec-error",
+                                                command = command_,
+                                                reason = %err);
+                                        }
+                                        Err(_) => {
+                                            tracing::warn!(parent: &self.span,
+                                                context = "pipe",
+                                                event = "timeout",
+                                                command = command_);
+                                        }
+                                    }
+                                }
+                                Ok(Err(err)) => {
+                                    tracing::warn!(parent: &self.span,
+                                        context = "pipe",
+                                        event = "write-error",
+                                        command = command_,
+                                        reason = %err);
+                                }
+                                Err(_) => {
+                                    tracing::warn!(parent: &self.span,
+                                        context = "pipe",
+                                        event = "stdin-timeout",
+                                        command = command_);
+                                }
+                            }
+                        } else {
+                            tracing::warn!(parent: &self.span,
+                                context = "pipe",
+                                event = "stdin-failed",
+                                command = command_);
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(parent: &self.span,
+                                context = "pipe",
+                                event = "spawn-error",
+                                command = command_,
+                                reason = %err);
+                    }
+                }
+            }
+        }
+
+        // Sieve filtering
         if let Some(script) = dc.script.eval(self).await {
             match self
-                .run_script(script.clone(), Some(raw_message.clone()))
+                .run_script(
+                    script.clone(),
+                    Some(edited_message.as_ref().unwrap_or(&raw_message).clone()),
+                )
                 .await
             {
                 ScriptResult::Accept => (),

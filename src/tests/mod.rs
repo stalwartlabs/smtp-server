@@ -208,6 +208,7 @@ impl SessionConfig {
                 add_auth_results: IfBlock::new(true),
                 add_message_id: IfBlock::new(true),
                 add_date: IfBlock::new(true),
+                pipe_commands: vec![],
             },
         }
     }

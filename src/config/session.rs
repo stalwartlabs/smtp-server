@@ -349,7 +349,30 @@ impl Config {
             add_date: self
                 .parse_if_block("session.data.add-headers.date", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
+            pipe_commands: self.parse_pipes(ctx, &available_keys)?,
         })
+    }
+
+    pub fn parse_pipes(
+        &self,
+        ctx: &ConfigContext,
+        available_keys: &[EnvelopeKey],
+    ) -> super::Result<Vec<Pipe>> {
+        let mut pipes = Vec::new();
+        for id in self.sub_keys("session.data.pipe") {
+            pipes.push(Pipe {
+                command: self
+                    .parse_if_block(("session.data.pipe", id, "command"), ctx, available_keys)?
+                    .unwrap_or_default(),
+                arguments: self
+                    .parse_if_block(("session.data.pipe", id, "arguments"), ctx, available_keys)?
+                    .unwrap_or_default(),
+                timeout: self
+                    .parse_if_block(("session.data.pipe", id, "timeout"), ctx, available_keys)?
+                    .unwrap_or_else(|| IfBlock::new(Duration::from_secs(30))),
+            })
+        }
+        Ok(pipes)
     }
 }
 
