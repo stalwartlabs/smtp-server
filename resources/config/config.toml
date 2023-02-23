@@ -1,5 +1,5 @@
 [server]
-hostname = "%%HOST%%"
+hostname = "__HOST__"
 #greeting = "Stalwart SMTP at your service"
 protocol = "smtp"
 
@@ -18,9 +18,8 @@ bind = ["0.0.0.0:465"]
 tls.implicit = true
 
 [server.listener."management"]
-bind = ["0.0.0.0:8080"]
+bind = ["127.0.0.1:8686"]
 protocol = "http"
-tls.implicit = true
 
 [server.tls]
 enable = true
@@ -51,20 +50,19 @@ shared-map = {shard = 32, capacity = 10}
 #method = "stdout"
 #level = "trace"
 
-[global.tracing]
-method = "open-telemetry"
-#transport = "http"
-#transport = "grpc"
-endpoint = ""
-headers = ["", ""]
-level = "trace"
-
 #[global.tracing]
-#method = "log"
-#path = "/var/log/smtp"
-#prefix = "smtp.log"
-#rotate = "daily"
-#level = "trace"
+#method = "open-telemetry"
+#transport = "http"
+#endpoint = "https://127.0.0.1/otel"
+#headers = ["Authorization: <place_auth_here>"]
+#level = "debug"
+
+[global.tracing]
+method = "log"
+path = "/usr/local/stalwart-smtp/logs"
+prefix = "smtp.log"
+rotate = "daily"
+level = "info"
 
 [session]
 timeout = "5m"
@@ -78,7 +76,7 @@ duration = "10m"
 require = true
 reject-non-fqdn = [ { if = "listener", eq = "smtp", then = true},
                     { else = false } ]
-#script = ehlo.sieve
+#script = "ehlo"
 
 [session.extensions]
 pipelining = true
@@ -107,10 +105,10 @@ total = 3
 wait = "5s"
 
 [session.mail]
-#script = mail-from.sieve
+#script = "mail-from"
 
 [session.rcpt]
-#script = rcpt-to.sieve
+#script = "rcpt-to"
 relay = [ { if = "authenticated-as", ne = "", then = true }, 
           { else = false } ]
 max-recipients = 25
@@ -128,7 +126,7 @@ total = 5
 wait = "5s"
 
 [session.data]
-#script = data.sieve
+#script = "data"
 
 #[session.data.pipe."spam-assassin"]
 #command = "spamc"
@@ -194,7 +192,7 @@ verify = [ { if = "listener", eq = "smtp", then = "relaxed" },
            { else = "disable" } ]
 
 [queue]
-path = "%%QUEUE_DIR%%"
+path = "/usr/local/stalwart-smtp/queue"
 hash = 64
 
 [queue.schedule]
@@ -203,7 +201,7 @@ notify = ["1d", "3d"]
 expire = "5d"
 
 [queue.outbound]
-#hostname = mx.domain.org
+#hostname = "__HOST__"
 next-hop = [ { if = "rcpt-domain", in-list = "list/domains", then = "lmtp" }, 
              { else = false } ]
 ip-strategy = "ipv4-then-ipv6"
@@ -243,7 +241,7 @@ key = ["rcpt-domain"]
 concurrency = 5
 
 [resolver]
-type = "cloudflare-tls"
+type = "system"
 #preserve-intermediates = true
 concurrency = 2
 timeout = "5s"
@@ -260,45 +258,45 @@ tlsa = 1024
 mta-sts = 1024
 
 [report]
-path = "%%QUEUE_DIR%%"
+path = "/usr/local/stalwart-smtp/reports"
 hash = 64
 #submitter = "mx.domain.org"
 
 [report.analysis]
 addresses = ["dmarc@*", "abuse@*"]
 forward = true
-#store = "/var/spool/report"
+#store = "/usr/local/stalwart-smtp/incoming"
 
 [report.dsn]
 from-name = "Mail Delivery Subsystem"
-from-address = "MAILER-DAEMON@%%DOMAIN%%"
+from-address = "MAILER-DAEMON@__DOMAIN__"
 sign = ["rsa"]
 
 [report.dkim]
 from-name = "Report Subsystem"
-from-address = "noreply-dkim@%%DOMAIN%%"
+from-address = "noreply-dkim@__DOMAIN__"
 subject = "DKIM Authentication Failure Report"
 sign = ["rsa"]
 send = "1/1d"
 
 [report.spf]
 from-name = "Report Subsystem"
-from-address = "noreply-spf@%%DOMAIN%%"
+from-address = "noreply-spf@__DOMAIN__"
 subject = "SPF Authentication Failure Report"
 send = "1/1d"
 sign = ["rsa"]
 
 [report.dmarc]
 from-name = "Report Subsystem"
-from-address = "noreply-dmarc@%%DOMAIN%%"
+from-address = "noreply-dmarc@__DOMAIN__"
 subject = "DMARC Authentication Failure Report"
 send = "1/1d"
 sign = ["rsa"]
 
 [report.dmarc.aggregate]
 from-name = "DMARC Report"
-from-address = "noreply-dmarc@%%DOMAIN%%"
-org-name = "%%DOMAIN%%"
+from-address = "noreply-dmarc@__DOMAIN__"
+org-name = "__DOMAIN__"
 #contact-info = ""
 send = "daily"
 max-size = 26214400 # 25mb
@@ -306,18 +304,18 @@ sign = ["rsa"]
 
 [report.tls.aggregate]
 from-name = "TLS Report"
-from-address = "noreply-tls@%%DOMAIN%%"
-org-name = "%%DOMAIN%%"
+from-address = "noreply-tls@__DOMAIN__"
+org-name = "__DOMAIN__"
 #contact-info = ""
 send = "daily"
 max-size = 26214400 # 25 mb
 sign = ["rsa"]
 
 [signature."rsa"]
-public-key = "%%DKIM_PUBLIC%%"
-private-key = "%%DKIM_PRIVATE%%"
-domain = "%%DOMAIN%%"
-selector = "%%DKIM_SELECTOR%%"
+#public-key = "file:///usr/local/stalwart-smtp/etc/certs/dkim.crt"
+private-key = "file:///usr/local/stalwart-smtp/etc/private/dkim.key"
+domain = "__DOMAIN__"
+selector = "stalwart_smtp"
 headers = ["From", "To", "Date", "Subject", "Message-ID"]
 algorithm = "rsa-sha256"
 canonicalization = "relaxed/relaxed"
@@ -329,8 +327,8 @@ set-body-length = false
 report = true
 
 [remote."lmtp"]
-address = "%LMTP_HOST%"
-port = 25
+address = "127.0.0.1"
+port = 24
 protocol = "lmtp"
 timeout = "1m"
 lookup = true
@@ -352,7 +350,7 @@ errors = 3
 requests = 50
 
 [remote."imap"]
-address = "%IMAP_HOST%"
+address = "127.0.0.1"
 port = 143
 protocol = "imap"
 timeout = "1m"
@@ -367,17 +365,18 @@ implicit = false
 allow-invalid-certs = true
 
 [database."sql"]
+#address = "sqlite:///usr/local/stalwart-smtp/etc/sqlite.db?mode=rwc"
 address = "postgres://postgres:password@localhost/test"
 max-connections = 10
 min-connections = 0
 idle-timeout = "5m"
 
 [database."sql".lookup]
-auth = "SELECT secret FROM users WHERE email=$1"
-rcpt = "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1 LIMIT 1)"
-vrfy = "SELECT id FROM users WHERE email LIKE '%$1%' LIMIT 5"
-expn = "SELECT member FROM mailing_lists WHERE id LIKE '%$1%'"
-domains = "SELECT EXISTS(SELECT 1 FROM domains WHERE name=$1 LIMIT 1)"
+auth = "SELECT secret FROM users WHERE email=?"
+rcpt = "SELECT EXISTS(SELECT 1 FROM users WHERE email=? LIMIT 1)"
+vrfy = "SELECT email FROM users WHERE email LIKE '%' || ? || '%' LIMIT 5"
+expn = "SELECT member FROM mailing_lists WHERE id = ?"
+domains = "SELECT EXISTS(SELECT 1 FROM domains WHERE name=? LIMIT 1)"
 
 [database."sql".cache]
 enable = ["rcpt", "domains"]
@@ -385,10 +384,10 @@ entries = 1000
 ttl = {positive = "1d", negative = "1h"}
 
 [sieve]
-from-name = "Mailer Daemon"
-from-addr = "MAILER-DAEMON@%%DOMAIN%%"
+from-name = "Automated Message"
+from-addr = "no-reply@__DOMAIN__"
 return-path = ""
-#hostname = ""
+#hostname = "__HOST__"
 sign = ["rsa"]
 use-database = "sql"
 
@@ -401,99 +400,16 @@ nested-includes = 5
 duplicate-expiry = "7d"
 
 [sieve.scripts]
-ehlo = "this is my script"
+#ehlo = ""
 
 [management.lookup]
 auth = ["list/admin"]
 
 [list]
-domains = ["%%DOMAIN%%"]
-admin = "admin:secret"
-#users = "file://users.txt"
+domains = ["__DOMAIN__"]
+admin = ["admin:__ADMIN_PASS__"]
+#users = "file:///usr/local/stalwart-smtp/etc/users.txt"
 
 [certificate."default"]
-cert = '''
------BEGIN CERTIFICATE-----
-MIIFCTCCAvGgAwIBAgIUCgHGQYUqtelbHGVSzCVwBL3fyEUwDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTIyMDUxNjExNDAzNFoXDTIzMDUx
-NjExNDAzNFowFDESMBAGA1UEAwwJbG9jYWxob3N0MIICIjANBgkqhkiG9w0BAQEF
-AAOCAg8AMIICCgKCAgEAtwS0Fzl3SjaCuKEXgZ/fdWbDoj/qDphyNCAKNevQ0+D0
-STNkWCO04aFSH0zcL8zoD9gokNos0i7OU9//ZhZQmex4V6EFdZn8bFwUWN/scUvW
-HEFXVjtHldO2isZgIxH9LuwRv7KAgkISuWahqerOVDhe7SeQUV0AJGNEh3cT9PZr
-gSY931BxB7n+5k8eoSk8Z1gtBzQzL62kVGpHDKfw8yX8m65owF9eLUBrNzgxmXfC
-xpuHwj7hmVhS09PPKeN/RsFS8PsYO7bo0u8jEKalteumjRT7RyUEbioqfo6ZFOGj
-FHPIq/uKXS9zN1fpoyNh3ur5hMznQhrqlwBM9KlM7GdBJ0pZ3ad0YjT8IL/GnGKR
-85J2WZdLqaQdUZo7nV67FhqdDlNE4MdwiykTMjfmLRXGAVhAzJHKyRKNwmkI2aqe
-S7aqeNgvuDBwY80Q9a2rb5py1Aw+L8yCkUBuHboToDpxSVRDNN8DrWNmmsXnxsOG
-wRDODy4GICKyxlP+RFSM8xWSQ6y9ktS2OfDBm+Eqcw+3pZKhdz2wgxLkUBJ8X1eh
-kJrCA/6LTuhy6m6mMjAfoSOFU7fu88jxaWPgvP7GKyH+LM/t9eucobz2ks5rtSjz
-V4Dc5DCS94/OpVRHwHdaFSPbJKBN9Ev8gnNrAyx/aBPGoHBPG/QUiU7dcUNIPt0C
-AwEAAaNTMFEwHQYDVR0OBBYEFI167IxBmErB11EqiPPqFLa31ZaMMB8GA1UdIwQY
-MBaAFI167IxBmErB11EqiPPqFLa31ZaMMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI
-hvcNAQELBQADggIBALU00IOiH5ubEauVCmakms5ermNTZfculnhnDfWTLMeh2+a7
-G4cqADErfMhm/mmLbrw33t9s6tCAhQltvewKR40ST9uMPSyiQbYaCXd5DXnuI6Ox
-JtNW+UOWIaMf8abnkdLvREOvb8dVQS1i3xq14tAjY5XgpGwCPP8m54b7N3Q7soLn
-e5PDhPNTnhRIn2RLuYoZmQmMA5fcqEUDYff4epUww7PhrM1QckZligI3566NlGOf
-j1G9JrivBtY0eaJtamIFnGMBT0ThDudxVja2Nv0C2Elry0p4T/o4nc4M67BJ/y1R
-vjNLAgFhbxssemU3lZqSd+pykpJBwDBjFSPrZZmQcbk7H6Uz8V1xr/xuzfw6fA13
-NWZ5vLgP/DQ13sM+XFlxThKfbPMPVe/UCTvfGtNW+3XyBgPntEkR+fNEawQmzbYl
-R+X1ymT9MZnEZqRMf7/UD/SYek1aUJefoew3upjMgxYVvh4F8dqJ+39F+xoFzIA2
-1dDAEMzXtjA3zKhZ2cycZbEzpJvYA3eGLuR16Suqfi4kPvfwK0mOhCxQmpayt7/X
-vuEzW6dPCH8Hgbb0WvsSppGOvhdbDaZFNfFc5eNSxhyKzu3H3ACNImZRtZE+yixx
-0fR8+xz9kDLf8xupV+X9heyFGHSyYU2Lveaevtr2Ij3weLRgJ6LbNALoeKXk
------END CERTIFICATE-----
-'''
-private-key = '''
------BEGIN PRIVATE KEY-----
-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
-XzVV5pwOxkIDBWDIqMUfwJDChBKfpw==
------END PRIVATE KEY-----
-'''
+cert = "file:///usr/local/stalwart-smtp/etc/certs/tls.crt"
+private-key = "file:///usr/local/stalwart-smtp/etc/private/tls.key"

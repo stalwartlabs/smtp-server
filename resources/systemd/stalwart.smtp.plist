@@ -4,16 +4,14 @@
 <plist version="1.0">
     <dict>
         <key>Label</key>
-        <string>stalwart.jmap</string>
+        <string>stalwart.smtp</string>
         <key>ServiceDescription</key>
-        <string>Stalwart JMAP Server</string>
+        <string>Stalwart SMTP Server</string>
         <key>ProgramArguments</key>
         <array>
-            <string>/usr/local/stalwart-jmap/bin/stalwart-jmap</string>
-            <string>--config=/usr/local/stalwart-jmap/etc/config.yml</string>
+            <string>/usr/local/stalwart-smtp/bin/stalwart-smtp</string>
+            <string>--config=/usr/local/stalwart-smtp/etc/config.toml</string>
         </array>
-        <key>UserName</key>
-        <string>_stalwart-jmap</string>
         <key>RunAtLoad</key>
         <true/>
         <key>KeepAlive</key>
