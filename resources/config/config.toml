@@ -47,8 +47,16 @@ concurrency = 1024
 shared-map = {shard = 32, capacity = 10}
 #thread-pool = 8
 
+#[global.tracing]
+#method = "stdout"
+#level = "trace"
+
 [global.tracing]
-method = "stdout"
+method = "open-telemetry"
+#transport = "http"
+#transport = "grpc"
+endpoint = ""
+headers = ["", ""]
 level = "trace"
 
 #[global.tracing]

@@ -278,8 +278,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin + IsTls> Session<T> {
             }
 
             tracing::debug!(parent: &self.span,
-                event = "success",
                 context = "mail-from",
+                event = "success",
                 address = &self.data.mail_from.as_ref().unwrap().address);
 
             self.eval_rcpt_params().await;

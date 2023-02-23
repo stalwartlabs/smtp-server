@@ -59,8 +59,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     {
                         if !is_local_address {
                             tracing::debug!(parent: &self.span,
-                                            event = "error",
                                             context = "rcpt", 
+                                            event = "error",
                                             address = &rcpt.address_lcase,
                                             "Mailbox does not exist.");
                             return self
@@ -69,8 +69,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                         }
                     } else {
                         tracing::debug!(parent: &self.span,
-                            event = "error",
                             context = "rcpt", 
+                            event = "error",
                             address = &rcpt.address_lcase,
                             "Temporary address verification failure.");
                         return self
@@ -79,16 +79,16 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
                     }
                 } else if !self.params.rcpt_relay {
                     tracing::debug!(parent: &self.span,
-                        event = "error",
                         context = "rcpt", 
+                        event = "error",
                         address = &rcpt.address_lcase,
                         "Relay not allowed.");
                     return self.rcpt_error(b"550 5.1.2 Relay not allowed.\r\n").await;
                 }
             } else {
                 tracing::debug!(parent: &self.span,
-                    event = "error",
                     context = "rcpt", 
+                    event = "error",
                     address = &rcpt.address_lcase,
                     "Temporary address verification failure.");
 
@@ -98,8 +98,8 @@ impl<T: AsyncWrite + AsyncRead + Unpin> Session<T> {
             }
         } else if !self.params.rcpt_relay {
             tracing::debug!(parent: &self.span,
-                event = "error",
                 context = "rcpt", 
+                event = "error",
                 address = &rcpt.address_lcase,
                 "Relay not allowed.");
             return self.rcpt_error(b"550 5.1.2 Relay not allowed.\r\n").await;

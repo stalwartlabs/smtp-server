@@ -1,7 +1,16 @@
-use std::{fs, sync::Arc, time::Duration};
+use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 use mail_send::smtp::tls::build_tls_connector;
+use opentelemetry::{
+    sdk::{
+        trace::{self, Sampler},
+        Resource,
+    },
+    KeyValue,
+};
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_VERSION};
 use smtp_server::{
     config::{Config, ConfigContext, ServerProtocol},
     core::{
@@ -15,7 +24,7 @@ use smtp_server::{
 };
 use tokio::sync::{mpsc, watch};
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -240,7 +249,10 @@ fn enable_tracing(config: &Config) -> smtp_server::config::Result<Option<WorkerG
                 "daily" => tracing_appender::rolling::daily(path, prefix),
                 "hourly" => tracing_appender::rolling::hourly(path, prefix),
                 "minutely" => tracing_appender::rolling::minutely(path, prefix),
-                _ => tracing_appender::rolling::never(path, prefix),
+                "never" => tracing_appender::rolling::never(path, prefix),
+                rotate => {
+                    return Err(format!("Unsupported log rotation strategy {rotate:?}"));
+                }
             };
 
             let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
@@ -258,6 +270,62 @@ fn enable_tracing(config: &Config) -> smtp_server::config::Result<Option<WorkerG
                 tracing_subscriber::FmtSubscriber::builder()
                     .with_env_filter(env_filter)
                     .finish(),
+            )
+            .failed("Failed to set subscriber");
+
+            Ok(None)
+        }
+        "otel" | "open-telemetry" => {
+            let tracer = match config.value_require("global.tracing.transport")? {
+                "grpc" => {
+                    let mut exporter = opentelemetry_otlp::new_exporter().tonic();
+                    if let Some(endpoint) = config.value("global.tracing.endpoint") {
+                        exporter = exporter.with_endpoint(endpoint);
+                    }
+                    opentelemetry_otlp::new_pipeline()
+                        .tracing()
+                        .with_exporter(exporter)
+                }
+                "http" => {
+                    let mut headers = HashMap::new();
+                    for (_, value) in config.values("global.tracing.headers") {
+                        if let Some((key, value)) = value.split_once(':') {
+                            headers.insert(key.trim().to_string(), value.trim().to_string());
+                        } else {
+                            return Err(format!("Invalid open-telemetry header {value:?}"));
+                        }
+                    }
+                    let mut exporter = opentelemetry_otlp::new_exporter()
+                        .http()
+                        .with_endpoint(config.value_require("global.tracing.endpoint")?);
+                    if !headers.is_empty() {
+                        exporter = exporter.with_headers(headers);
+                    }
+                    opentelemetry_otlp::new_pipeline()
+                        .tracing()
+                        .with_exporter(exporter)
+                }
+                transport => {
+                    return Err(format!(
+                        "Unsupported open-telemetry transport {transport:?}"
+                    ));
+                }
+            }
+            .with_trace_config(
+                trace::config()
+                    .with_resource(Resource::new(vec![
+                        KeyValue::new(SERVICE_NAME, "stalwart-smtp".to_string()),
+                        KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION").to_string()),
+                    ]))
+                    .with_sampler(Sampler::AlwaysOn),
+            )
+            .install_batch(opentelemetry::runtime::Tokio)
+            .failed("Failed to create tracer");
+
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::Registry::default()
+                    .with(tracing_opentelemetry::layer().with_tracer(tracer))
+                    .with(env_filter),
             )
             .failed("Failed to set subscriber");
 

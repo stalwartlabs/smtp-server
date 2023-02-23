@@ -119,17 +119,6 @@ impl Core {
                 .add_recipient(rcpt_.as_ref(), &self.queue.config)
                 .await;
         }
-        // Remove
-        let remove = "true";
-        #[cfg(not(feature = "removeme"))]
-        message
-            .add_recipient_parts(
-                "domains@stalw.art",
-                "domains@stalw.art",
-                "stalw.art",
-                &self.queue.config,
-            )
-            .await;
 
         // Sign message
         let signature = message.sign(sign_config, &report, span).await;

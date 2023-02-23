@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-mail-auth = { path = "/home/vagrant/code/mail-auth" }
-mail-send = { path = "/home/vagrant/code/mail-send", default-features = false, features = ["cram-md5", "skip-ehlo"] }
+mail-auth = { git = "https://github.com/stalwartlabs/mail-auth" }
+mail-send = { git = "https://github.com/stalwartlabs/mail-send", default-features = false, features = ["cram-md5", "skip-ehlo"] }
 mail-parser = { git = "https://github.com/stalwartlabs/mail-parser", features = ["full_encoding", "ludicrous_mode"] } 
-mail-builder = { path = "/home/vagrant/code/mail-builder", features = ["ludicrous_mode"] } 
+mail-builder = { git = "https://github.com/stalwartlabs/mail-builder", features = ["ludicrous_mode"] } 
 smtp-proto = { git = "https://github.com/stalwartlabs/smtp-proto" }
-sieve-rs = { path = "/home/vagrant/code/sieve-rs" }
+sieve-rs = { git = "https://github.com/stalwartlabs/sieve" }
 ahash = { version = "0.8" }
 rustls = "0.20"
 rustls-pemfile = "1.0"
@@ -26,6 +26,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 tracing-opentelemetry = "0.18.0"
+opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.11.0", features = ["http-proto", "reqwest-client", "reqwest-rustls"] }
+opentelemetry-semantic-conventions = { version = "0.10.0" }
 parking_lot = "0.12"
 regex = "1.7.0"
 dashmap = "5.4"
@@ -41,7 +44,7 @@ num_cpus = "1.15.0"
 privdrop = "0.5.3"
 
 [dev-dependencies]
-mail-auth = { path = "/home/vagrant/code/mail-auth", features = ["test"] }
+mail-auth = { git = "https://github.com/stalwartlabs/mail-auth", features = ["test"] }
 criterion = "0.4.0"
 serial_test = "1.0.0"
 

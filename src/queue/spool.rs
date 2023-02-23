@@ -99,8 +99,8 @@ impl QueueCore {
 
         tracing::info!(
             parent: span,
-            event = "scheduled",
             context = "queue",
+            event = "scheduled",
             id = message.id,
             from = if !message.return_path.is_empty() {
                 message.return_path.as_str()

@@ -36,8 +36,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
             auth_message
         } else {
             tracing::info!(parent: &self.span,
-                    event = "parse-failed",
                     context = "data",
+                    event = "parse-failed",
                     size = raw_message.len());
 
             return (&b"550 5.7.7 Failed to parse message.\r\n"[..]).into();
@@ -60,8 +60,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         let rc = &self.core.report.config;
         if auth_message.received_headers_count() > *dc.max_received_headers.eval(self).await {
             tracing::info!(parent: &self.span,
-                event = "loop-detected",
                 context = "data",
+                event = "loop-detected",
                 return_path = self.data.mail_from.as_ref().unwrap().address,
                 from = auth_message.from(),
                 received_headers = auth_message.received_headers_count());
@@ -91,8 +91,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
             if rejected {
                 tracing::info!(parent: &self.span,
-                    event = "failed",
                     context = "dkim",
+                    event = "failed",
                     return_path = self.data.mail_from.as_ref().unwrap().address,
                     from = auth_message.from(),
                     result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>(),
@@ -109,8 +109,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 };
             } else {
                 tracing::debug!(parent: &self.span,
-                    event = "verify",
                     context = "dkim",
+                    event = "verify",
                     return_path = self.data.mail_from.as_ref().unwrap().address,
                     from = auth_message.from(),
                     result = ?dkim_output.iter().map(|d| d.result().to_string()).collect::<Vec<_>>());
@@ -130,8 +130,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 && !matches!(arc_output.result(), DkimResult::Pass | DkimResult::None)
             {
                 tracing::info!(parent: &self.span,
-                    event = "auth-failed",
                     context = "arc",
+                    event = "auth-failed",
                     return_path = self.data.mail_from.as_ref().unwrap().address,
                     from = auth_message.from(),
                     result = %arc_output.result(),
@@ -144,8 +144,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 };
             } else {
                 tracing::debug!(parent: &self.span,
-                    event = "verify",
                     context = "arc",
+                    event = "verify",
                     return_path = self.data.mail_from.as_ref().unwrap().address,
                     from = auth_message.from(),
                     result = %arc_output.result());
@@ -212,16 +212,16 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
 
                 if !rejected {
                     tracing::debug!(parent: &self.span,
-                    event = "verify",
                     context = "dmarc",
+                    event = "verify",
                     return_path = mail_from.address,
                     from = auth_message.from(),
                     dkim_result = %dmarc_output.dkim_result(),
                     spf_result = %dmarc_output.spf_result());
                 } else {
                     tracing::info!(parent: &self.span,
-                    event = "auth-failed",
                     context = "dmarc",
+                    event = "auth-failed",
                     return_path = mail_from.address,
                     from = auth_message.from(),
                     dkim_result = %dmarc_output.dkim_result(),
@@ -412,8 +412,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                     }
                     Err(err) => {
                         tracing::info!(parent: &self.span,
-                            event = "seal-failed",
                             context = "arc",
+                            event = "seal-failed",
                             return_path = message.return_path,
                             from = auth_message.from(),
                             "Failed to seal message: {}", err);
@@ -450,8 +450,8 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
                 }
                 Err(err) => {
                     tracing::info!(parent: &self.span,
-                        event = "sign-failed",
                         context = "dkim",
+                        event = "sign-failed",
                         return_path = message.return_path,
                         "Failed to sign message: {}", err);
                 }
