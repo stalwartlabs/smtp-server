@@ -1,7 +1,15 @@
 [package]
-name = "smtp-server"
+name = "stalwart-smtp"
+description = "Stalwart SMTP Server"
+authors = [ "Stalwart Labs Ltd. <hello@stalw.art>"]
+repository = "https://github.com/stalwartlabs/smtp-server"
+homepage = "https://stalw.art/smtp"
+keywords = ["smtp", "email", "mail", "server"]
+categories = ["email"]
+license = "AGPL-3.0-only"
 version = "0.1.0"
 edition = "2021"
+resolver = "2"
 
 [dependencies]
 mail-auth = { git = "https://github.com/stalwartlabs/mail-auth" }
@@ -51,14 +59,3 @@ serial_test = "1.0.0"
 [[bench]]
 name = "hash"
 harness = false
-
-[features]
-removeme = []
-
-#[[bin]]
-#name = "daemon"
-#path = "src/daemon/bin/main.rs"
-
-#[[bin]]
-#name = "client"
-#path = "src/client/bin/main.rs"

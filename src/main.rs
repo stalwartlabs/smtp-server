@@ -34,7 +34,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_VERSION};
-use smtp_server::{
+use stalwart_smtp::{
     config::{Config, ConfigContext, ServerProtocol},
     core::{
         throttle::{ConcurrencyLimiter, ThrottleKeyHasherBuilder},
@@ -259,7 +259,7 @@ async fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-fn enable_tracing(config: &Config) -> smtp_server::config::Result<Option<WorkerGuard>> {
+fn enable_tracing(config: &Config) -> stalwart_smtp::config::Result<Option<WorkerGuard>> {
     let level = config.value("global.tracing.level").unwrap_or("info");
     let env_filter = EnvFilter::builder()
         .parse(format!("smtp_server={}", level))

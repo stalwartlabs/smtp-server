@@ -29,7 +29,7 @@ use std::{
 use ahash::RandomState;
 use criterion::{criterion_group, criterion_main, Criterion};
 use dashmap::DashMap;
-use smtp_server::{
+use stalwart_smtp::{
     config::*,
     core::{
         throttle::{ThrottleKey, ThrottleKeyHasherBuilder},

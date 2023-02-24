@@ -2476,52 +2476,6 @@ version = "0.1.1"
 source = "git+https://github.com/stalwartlabs/smtp-proto#94c16ce6d76edaed9f002c03c6850cb020a57e58"
 
 [[package]]
-name = "smtp-server"
-version = "0.1.0"
-dependencies = [
- "ahash 0.8.3",
- "blake3",
- "criterion",
- "dashmap",
- "form_urlencoded",
- "http-body-util",
- "hyper 1.0.0-rc.2",
- "lru-cache",
- "mail-auth",
- "mail-builder",
- "mail-parser",
- "mail-send",
- "num_cpus",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
- "parking_lot 0.12.1",
- "privdrop",
- "rand",
- "rayon",
- "regex",
- "reqwest",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "serial_test",
- "sha1",
- "sha2",
- "sieve-rs",
- "smtp-proto",
- "sqlx",
- "tokio",
- "tokio-rustls",
- "tracing",
- "tracing-appender",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "webpki-roots",
- "x509-parser",
-]
-
-[[package]]
 name = "socket2"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2668,6 +2622,52 @@ dependencies = [
  "once_cell",
  "tokio",
  "tokio-rustls",
+]
+
+[[package]]
+name = "stalwart-smtp"
+version = "0.1.0"
+dependencies = [
+ "ahash 0.8.3",
+ "blake3",
+ "criterion",
+ "dashmap",
+ "form_urlencoded",
+ "http-body-util",
+ "hyper 1.0.0-rc.2",
+ "lru-cache",
+ "mail-auth",
+ "mail-builder",
+ "mail-parser",
+ "mail-send",
+ "num_cpus",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "parking_lot 0.12.1",
+ "privdrop",
+ "rand",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "sha1",
+ "sha2",
+ "sieve-rs",
+ "smtp-proto",
+ "sqlx",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "tracing-appender",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "webpki-roots",
+ "x509-parser",
 ]
 
 [[package]]
