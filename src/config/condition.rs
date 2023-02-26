@@ -132,7 +132,7 @@ impl Config {
                     "in-list" | "not-in-list" => {
                         (MatchType::Lookup, op_str == "not-in-list")
                     }
-                    "regex" | "regex-match"| "not-regex" | "not-regex-match" => {
+                    "matches" | "not-matches"  => {
                         (MatchType::Regex, op_str.starts_with("not-"))
                     }
                     "starts-with" | "not-starts-with" => (MatchType::StartsWith, op_str == "not-starts-with"),

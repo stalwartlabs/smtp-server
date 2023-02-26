@@ -28,8 +28,8 @@ helo-domain = "hi-domain.net"
 "in-list-false" = {if = "rcpt-domain", in-list = "list/domains"}
 "not-in-list-true" = {if = "rcpt-domain", not-in-list = "list/domains"}
 "not-in-list-false" = {if = "sender-domain", not-in-list = "list/domains"}
-"regex-true" = {if = "sender", regex-match = "^(.+)@(.+)$"}
-"regex-false" = {if = "mx", regex-match = "/^\\S+@\\S+\\.\\S+$/"}
+"regex-true" = {if = "sender", matches = "^(.+)@(.+)$"}
+"regex-false" = {if = "mx", matches = "/^\\S+@\\S+\\.\\S+$/"}
 
 "any-of-true" = { any-of = [
     {if = "authenticated-as", ne = "john@foobar.org"},

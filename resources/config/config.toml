@@ -327,9 +327,10 @@ set-body-length = false
 report = true
 
 [remote."lmtp"]
-address = "127.0.0.1"
-port = 24
+address = "__LMTP_HOST__"
+port = __LMTP_PORT__
 protocol = "lmtp"
+concurrency = 10
 timeout = "1m"
 lookup = true
 
@@ -350,9 +351,10 @@ errors = 3
 requests = 50
 
 [remote."imap"]
-address = "127.0.0.1"
+address = "localhost"
 port = 143
 protocol = "imap"
+concurrency = 10
 timeout = "1m"
 lookup = true
 

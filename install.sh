@@ -180,10 +180,16 @@ configure() {
     read -p "Enter your domain name [yourdomain.org]: " domain
     local domain=${domain:-yourdomain.org}
 
-    read -p "Enter the SMTP server's admininstrator password [changeme]: " pass
+    read -p "Enter the SMTP server's administrator password [changeme]: " pass
     local pass=${pass:-changeme}
 
-    ignore sed -i -r "s/__HOST__/${hostname}/g; s/__DOMAIN__/${domain}/g; s/__ADMIN_PASS__/${pass}/g;" ${CFG_PATH}/config.toml
+    read -p "Enter your LMTP server's hostname [localhost]: " lmtp_address
+    local lmtp_address=${lmtp_address:-localhost}
+
+    read -p "Enter your LMTP server's port [24]: " lmtp_port
+    local lmtp_port=${lmtp_port:-24}
+
+    ignore sed -i -r "s/__HOST__/${hostname}/g; s/__DOMAIN__/${domain}/g; s/__ADMIN_PASS__/${pass}/g; s/__LMTP_HOST__/${lmtp_address}/g; s/__LMTP_PORT__/${lmtp_port}/g;" ${CFG_PATH}/config.toml
 
     # Create self-signed certificates
     say "🔑  Creating TLS and DKIM certificates..."
