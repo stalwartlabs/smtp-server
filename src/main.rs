@@ -61,6 +61,9 @@ async fn main() -> std::io::Result<()> {
         .parse_remote_hosts(&mut config_context)
         .failed("Configuration error");
     config
+        .parse_databases(&mut config_context)
+        .failed("Configuration error");
+    config
         .parse_lists(&mut config_context)
         .failed("Configuration error");
     config
@@ -262,7 +265,7 @@ async fn main() -> std::io::Result<()> {
 fn enable_tracing(config: &Config) -> stalwart_smtp::config::Result<Option<WorkerGuard>> {
     let level = config.value("global.tracing.level").unwrap_or("info");
     let env_filter = EnvFilter::builder()
-        .parse(format!("smtp_server={}", level))
+        .parse(format!("stalwart_smtp={}", level))
         .failed("Failed to log level");
     match config.value("global.tracing.method").unwrap_or_default() {
         "log" => {

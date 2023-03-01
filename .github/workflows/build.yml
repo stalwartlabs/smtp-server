@@ -59,13 +59,23 @@ jobs:
         run: echo "LIBCLANG_PATH=$((gcm clang).source -replace "clang.exe")" >> $env:GITHUB_ENV
         if: ${{ contains(matrix.host_os, 'windows') }}
 
-      - name: Install LLVM and Clang (Linux)
+      - name: Install protoc, LLVM and Clang (Linux)
         if: ${{ contains(matrix.host_os, 'ubuntu') }}
         run: |
           sudo apt-get update -y
+          sudo apt-get install protobuf-compiler
           sudo wget https://apt.llvm.org/llvm.sh
           sudo chmod +x llvm.sh
           sudo ./llvm.sh 14 all 
+
+      - name: Install protoc (MacOs)
+        if: ${{ contains(matrix.host_os, 'macos') }}
+        run: |
+          brew install protobuf
+
+      - name: Install protoc (Windows)
+        if: ${{ contains(matrix.host_os, 'windows') }}
+        uses: arduino/setup-protoc@v1
 
       - name: Install ARM64 Linux build tools
         if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
@@ -99,7 +109,7 @@ jobs:
       - name: XCode Version
         if: ${{ matrix.target == 'aarch64-apple-darwin' }}
         run: |
-          sudo xcode-select -s /Applications/Xcode_12.4.app &&
+          sudo xcode-select -s /Applications/Xcode_13.4.app &&
           sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*
           
       - name: ARM64 Windows setup

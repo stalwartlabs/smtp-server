@@ -29,8 +29,7 @@ use crate::config::StringMatch;
 
 use super::{
     utils::{AsKey, ParseKey, ParseValue},
-    Condition, ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey,
-    IpAddrMask,
+    Condition, ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey, IpAddrMask,
 };
 
 impl Config {
@@ -58,14 +57,13 @@ impl Config {
                     } else {
                         return Err(format!(
                             "Multiple operations found for condition {prefix:?}.",
-                            
                         ));
                     }
                 }
             }
 
             if op_str.is_empty() {
-                return Err(format!("Missing operation for condition {prefix:?}." ));
+                return Err(format!("Missing operation for condition {prefix:?}."));
             } else if ["any-of", "all-of", "none-of"].contains(&op_str) {
                 stack.push((
                     std::mem::replace(
@@ -113,7 +111,6 @@ impl Config {
                 if !available_keys.contains(&key) {
                     return Err(format!(
                         "Envelope key {key:?} is not available in this context for property {prefix:?}",
-                         
                     ));
                 }
 
@@ -129,18 +126,16 @@ impl Config {
                     "eq" | "equal-to" | "ne" | "not-equal-to" => {
                         (MatchType::Equal, op_str == "ne" || op_str == "not-equal-to")
                     }
-                    "in-list" | "not-in-list" => {
-                        (MatchType::Lookup, op_str == "not-in-list")
+                    "in-list" | "not-in-list" => (MatchType::Lookup, op_str == "not-in-list"),
+                    "matches" | "not-matches" => (MatchType::Regex, op_str.starts_with("not-")),
+                    "starts-with" | "not-starts-with" => {
+                        (MatchType::StartsWith, op_str == "not-starts-with")
                     }
-                    "matches" | "not-matches"  => {
-                        (MatchType::Regex, op_str.starts_with("not-"))
+                    "ends-with" | "not-ends-with" => {
+                        (MatchType::EndsWith, op_str == "not-ends-with")
                     }
-                    "starts-with" | "not-starts-with" => (MatchType::StartsWith, op_str == "not-starts-with"),
-                    "ends-with" | "not-ends-with" => (MatchType::EndsWith, op_str == "not-ends-with"),
                     _ => {
-                        return Err(format!(
-                            "Invalid operation {op_str:?} for key {prefix:?}."
-                        ));
+                        return Err(format!("Invalid operation {op_str:?} for key {prefix:?}."));
                     }
                 };
 
@@ -180,33 +175,38 @@ impl Config {
                         | EnvelopeKey::LocalIp
                         | EnvelopeKey::RemoteIp,
                         _,
-                    ) => {
-                        match op {
-                            MatchType::Equal => ConditionMatch::String(StringMatch::Equal(value_str.to_string())),
-                            MatchType::StartsWith => ConditionMatch::String(StringMatch::StartsWith(value_str.to_string())),
-                            MatchType::EndsWith => ConditionMatch::String(StringMatch::EndsWith(value_str.to_string())),
-                            MatchType::Regex => ConditionMatch::Regex(Regex::new(value_str).map_err(|err| {
+                    ) => match op {
+                        MatchType::Equal => {
+                            ConditionMatch::String(StringMatch::Equal(value_str.to_string()))
+                        }
+                        MatchType::StartsWith => {
+                            ConditionMatch::String(StringMatch::StartsWith(value_str.to_string()))
+                        }
+                        MatchType::EndsWith => {
+                            ConditionMatch::String(StringMatch::EndsWith(value_str.to_string()))
+                        }
+                        MatchType::Regex => {
+                            ConditionMatch::Regex(Regex::new(value_str).map_err(|err| {
                                 format!(
                                     "Failed to compile regular expression {:?} for key {:?}: {}.",
                                     value_str,
                                     (&prefix, value_str).as_key(),
                                     err
                                 )
-                            })?),
-                            MatchType::Lookup => {
-                                if let Some(list) = ctx.lookup.get(value_str) {
-                                    ConditionMatch::Lookup(list.clone())
-                                } else {
-                                    return Err(format!(
-                                        "Lookup {:?} not found for property {:?}.",
-                                        value_str,
-                                        (&prefix, value_str).as_key()
-                                    ));
-                                }
-                            },
+                            })?)
                         }
-                        
-                    }
+                        MatchType::Lookup => {
+                            if let Some(list) = ctx.lookup.get(value_str) {
+                                ConditionMatch::Lookup(list.clone())
+                            } else {
+                                return Err(format!(
+                                    "Lookup {:?} not found for property {:?}.",
+                                    value_str,
+                                    (&prefix, value_str).as_key()
+                                ));
+                            }
+                        }
+                    },
                     _ => {
                         return Err(format!(
                             "Invalid 'op'/'value' combination for key {:?}.",
@@ -347,10 +347,13 @@ mod tests {
 
     use ahash::AHashMap;
 
-    use crate::{config::{
-        Condition,  ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey,
-        IpAddrMask, Server, StringMatch,
-    }, lookup::Lookup};
+    use crate::{
+        config::{
+            Condition, ConditionMatch, Conditions, Config, ConfigContext, EnvelopeKey, IpAddrMask,
+            Server, StringMatch,
+        },
+        lookup::Lookup,
+    };
 
     #[test]
     fn parse_conditions() {
@@ -397,7 +400,9 @@ mod tests {
                     conditions: vec![
                         Condition::Match {
                             key: EnvelopeKey::SenderDomain,
-                            value: ConditionMatch::String(StringMatch::StartsWith("example".to_string())),
+                            value: ConditionMatch::String(StringMatch::StartsWith(
+                                "example".to_string(),
+                            )),
                             not: false,
                         },
                         Condition::JumpIfFalse { positions: 1 },
@@ -415,7 +420,9 @@ mod tests {
                     conditions: vec![
                         Condition::Match {
                             key: EnvelopeKey::RecipientDomain,
-                            value: ConditionMatch::String(StringMatch::Equal("example.org".to_string())),
+                            value: ConditionMatch::String(StringMatch::Equal(
+                                "example.org".to_string(),
+                            )),
                             not: false,
                         },
                         Condition::JumpIfTrue { positions: 9 },
@@ -430,13 +437,17 @@ mod tests {
                         Condition::JumpIfTrue { positions: 7 },
                         Condition::Match {
                             key: EnvelopeKey::Recipient,
-                            value: ConditionMatch::String(StringMatch::StartsWith("no-reply@".to_string())),
+                            value: ConditionMatch::String(StringMatch::StartsWith(
+                                "no-reply@".to_string(),
+                            )),
                             not: false,
                         },
                         Condition::JumpIfFalse { positions: 5 },
                         Condition::Match {
                             key: EnvelopeKey::Sender,
-                            value: ConditionMatch::String(StringMatch::EndsWith("@domain.org".to_string())),
+                            value: ConditionMatch::String(StringMatch::EndsWith(
+                                "@domain.org".to_string(),
+                            )),
                             not: false,
                         },
                         Condition::JumpIfFalse { positions: 3 },
@@ -457,7 +468,7 @@ mod tests {
         ]);
 
         for (key, rule) in expected_rules {
-            assert_eq!(Some(rule), conditions.remove(&key), "failed for {key}" );
+            assert_eq!(Some(rule), conditions.remove(&key), "failed for {key}");
         }
     }
 }

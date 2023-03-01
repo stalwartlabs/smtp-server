@@ -38,6 +38,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
 
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install protobuf-compiler
+
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -50,34 +55,4 @@ jobs:
         with:
           command: test
           args: --all
-
-      - name: Database Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: store_tests --all
-
-      - name: JMAP Core Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: jmap_core_tests -- --ignored
-
-      - name: JMAP Mail Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: jmap_mail_tests -- --ignored
-
-      - name: Stress Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: jmap_stress_tests -- --ignored
-
-      - name: Cluster Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: cluster_tests -- --ignored
 

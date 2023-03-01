@@ -5,7 +5,8 @@ RUN apt-get update && \
         build-essential \
         cmake \
         clang \ 
-        curl
+        curl \
+        protobuf-compiler
 ENV RUSTUP_HOME=/opt/rust/rustup \
     PATH=/home/root/.cargo/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN curl https://sh.rustup.rs -sSf | \
@@ -21,7 +22,6 @@ FROM chef AS planner
 COPY Cargo.toml .
 COPY Cargo.lock .
 COPY src/ src/
-COPY components/ components/
 COPY resources/ resources/
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -31,7 +31,6 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY Cargo.toml .
 COPY Cargo.lock .
 COPY src/ src/
-COPY components/ components/
 COPY resources/ resources/
 RUN cargo build --release
 

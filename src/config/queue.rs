@@ -170,7 +170,7 @@ impl Config {
                     .unwrap_or_else(|| IfBlock::new("Mail Delivery Subsystem".to_string())),
                 address: self
                     .parse_if_block("report.dsn.from-address", ctx, &sender_envelope_keys)?
-                    .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{default_hostname}" ))),
+                    .unwrap_or_else(|| IfBlock::new(format!("MAILER-DAEMON@{default_hostname}"))),
                 sign: self
                     .parse_if_block::<Vec<String>>("report.dsn.sign", ctx, &sender_envelope_keys)?
                     .unwrap_or_default()
@@ -178,14 +178,14 @@ impl Config {
             },
             management_lookup: if let Some(lookup) = self.value("management.auth.lookup") {
                 ctx.lookup
-                .get(lookup)
-                .ok_or_else(|| format!(
-                    "Lookup {lookup:?} not found for key \"management.auth.lookup\"."
-                ))?
-                .clone()
+                    .get(lookup)
+                    .ok_or_else(|| {
+                        format!("Lookup {lookup:?} not found for key \"management.auth.lookup\".")
+                    })?
+                    .clone()
             } else {
                 Arc::new(Lookup::default())
-            }
+            },
         };
 
         if config.retry.has_empty_list() {
@@ -378,7 +378,6 @@ impl IfBlock<Option<String>> {
                                     .ok_or_else(|| {
                                         format!(
                                             "Host {then:?} not found for property \"queue.next-hop\".",
-                                            
                                         )
                                     })?
                                     .into(),
