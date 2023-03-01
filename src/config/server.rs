@@ -227,6 +227,7 @@ impl Config {
                     let key = ("server.listener", id, "socket", option);
                     match option {
                         "reuse-addr" => socket.set_reuseaddr(value.parse_key(key)?),
+                        #[cfg(not(target_env = "msvc"))]
                         "reuse-port" => socket.set_reuseport(value.parse_key(key)?),
                         "send-buffer-size" => socket.set_send_buffer_size(value.parse_key(key)?),
                         "recv-buffer-size" => socket.set_recv_buffer_size(value.parse_key(key)?),
