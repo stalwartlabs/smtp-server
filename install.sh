@@ -174,19 +174,19 @@ init() {
 
 configure() {
 
-    read -p "Enter the SMTP server's hostname [mx.yourdomain.org]: " hostname
+    read -p "Enter the SMTP server's hostname [mx.yourdomain.org]: " hostname </dev/tty
     local hostname=${hostname:-mx.yourdomain.org}
 
-    read -p "Enter your domain name [yourdomain.org]: " domain
+    read -p "Enter your domain name [yourdomain.org]: " domain </dev/tty
     local domain=${domain:-yourdomain.org}
 
-    read -p "Enter the SMTP server's administrator password [changeme]: " pass
+    read -p "Enter the SMTP server's administrator password [changeme]: " pass </dev/tty
     local pass=${pass:-changeme}
 
-    read -p "Enter your LMTP server's hostname [localhost]: " lmtp_address
+    read -p "Enter your LMTP server's hostname [localhost]: " lmtp_address </dev/tty
     local lmtp_address=${lmtp_address:-localhost}
 
-    read -p "Enter your LMTP server's port [24]: " lmtp_port
+    read -p "Enter your LMTP server's port [24]: " lmtp_port </dev/tty
     local lmtp_port=${lmtp_port:-24}
 
     ignore sed -i -r "s/__HOST__/${hostname}/g; s/__DOMAIN__/${domain}/g; s/__ADMIN_PASS__/${pass}/g; s/__LMTP_HOST__/${lmtp_address}/g; s/__LMTP_PORT__/${lmtp_port}/g;" ${CFG_PATH}/config.toml
