@@ -202,7 +202,7 @@ impl Config {
                 .parse_if_block("session.ehlo.require", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
             reject_non_fqdn: self
-                .parse_if_block("session.ehlo.reject-invalid", ctx, &available_keys)?
+                .parse_if_block("session.ehlo.reject-non-fqdn", ctx, &available_keys)?
                 .unwrap_or_else(|| IfBlock::new(true)),
         })
     }
