@@ -63,12 +63,12 @@ impl Config {
         .into_iter()
         .map(Certificate);
 
-        let certs = Vec::from_iter(certs.into_iter());
+        let certs = Vec::from_iter(certs);
 
         if certs.is_empty() {
             Err(format!("No certificates found in \"certificate.{cert_id}.cert\"."))
         } else {
-            Ok(Vec::from_iter(certs.into_iter()))
+            Ok(certs)
         }
     }
 
