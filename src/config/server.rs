@@ -116,7 +116,7 @@ impl Config {
                             value,
                             match self.value((prefix, "certificate")) {
                                 Some(sni_cert_id) if sni_cert_id != cert_id => CertifiedKey {
-                                    cert: vec![self.rustls_certificate(sni_cert_id)?],
+                                    cert: self.rustls_certificate(sni_cert_id)?,
                                     key: any_supported_type(&self.rustls_private_key(sni_cert_id)?)
                                         .map_err(|err| {
                                             format!(
@@ -127,7 +127,7 @@ impl Config {
                                     sct_list: None,
                                 },
                                 _ => CertifiedKey {
-                                    cert: vec![cert.clone()],
+                                    cert: cert.clone(),
                                     key:
                                         any_supported_type(&pki).map_err(|err| {
                                             format!(
@@ -147,7 +147,7 @@ impl Config {
 
             // Add default certificate
             let default_cert = Some(Arc::new(CertifiedKey {
-                cert: vec![cert],
+                cert: cert,
                 key: any_supported_type(&pki)
                     .map_err(|err| format!("Failed to sign certificate id {cert_id:?}: {err}"))?,
                 ocsp: None,

@@ -51,8 +51,8 @@ impl ResolvesServerCert for CertificateResolver {
 }
 
 impl Config {
-    pub fn rustls_certificate(&self, cert_id: &str) -> super::Result<Certificate> {
-        certs(&mut Cursor::new(self.file_contents((
+    pub fn rustls_certificate(&self, cert_id: &str) -> super::Result<Vec<Certificate>> {
+        let certs = certs(&mut Cursor::new(self.file_contents((
             "certificate",
             cert_id,
             "cert",
@@ -61,9 +61,15 @@ impl Config {
             format!("Failed to read certificates in \"certificate.{cert_id}.cert\": {err}")
         })?
         .into_iter()
-        .map(Certificate)
-        .next()
-        .ok_or_else(|| format!("No certificates found in \"certificate.{cert_id}.cert\"."))
+        .map(Certificate);
+
+        let certs = Vec::from_iter(certs.into_iter());
+
+        if certs.is_empty() {
+            Err(format!("No certificates found in \"certificate.{cert_id}.cert\"."))
+        } else {
+            Ok(Vec::from_iter(certs.into_iter()))
+        }
     }
 
     pub fn rustls_private_key(&self, cert_id: &str) -> super::Result<PrivateKey> {
