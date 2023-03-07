@@ -65,7 +65,7 @@ impl Config {
                             ']' if !in_quote => {
                                 if table_name.is_empty() {
                                     return Err(format!(
-                                        "Eempty table name at line {}.",
+                                        "Empty table name at line {}.",
                                         parser.line
                                     ));
                                 }
