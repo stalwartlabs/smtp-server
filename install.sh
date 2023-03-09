@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # shellcheck shell=dash
 
 # Stalwart SMTP install script -- based on the rustup installation script.
