@@ -397,7 +397,7 @@ impl<T: AsyncWrite + AsyncRead + IsTls + Unpin> Session<T> {
         }
 
         // Build message
-        let mail_from = self.data.mail_from.take().unwrap();
+        let mail_from = self.data.mail_from.clone().unwrap();
         let rcpt_to = std::mem::take(&mut self.data.rcpt_to);
         let mut message = self.build_message(mail_from, rcpt_to).await;
 

@@ -186,6 +186,7 @@ pub struct SessionData {
     pub dnsbl_error: Option<Vec<u8>>,
 }
 
+#[derive(Clone)]
 pub struct SessionAddress {
     pub address: String,
     pub address_lcase: String,
