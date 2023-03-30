@@ -391,11 +391,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ImapAuthClient<T> {
     pub async fn expect_greeting(&mut self) -> Result<(), Error> {
         tokio::time::timeout(self.timeout, async {
             let line = self.read_line().await?;
-            return if matches!(line.get(..4), Some(b"* OK")) {
+            if matches!(line.get(..4), Some(b"* OK")) {
                 Ok(())
             } else {
                 Err(Error::InvalidResponse(line.into_string()))
-            };
+            }
         })
         .await
         .map_err(|_| Error::Timeout)?

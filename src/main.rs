@@ -365,7 +365,7 @@ fn parse_config() -> Config {
     let mut config_path = None;
     let mut found_param = false;
 
-    for arg in std::env::args().into_iter().skip(1) {
+    for arg in std::env::args().skip(1) {
         if let Some((key, value)) = arg.split_once('=') {
             if key.starts_with("--config") {
                 config_path = value.trim().to_string().into();

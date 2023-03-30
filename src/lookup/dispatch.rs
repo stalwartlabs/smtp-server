@@ -81,7 +81,11 @@ impl Lookup {
                         Credentials::OAuthBearer { token } => token,
                     };
 
-                    Some(list.contains(&entry).into())
+                    if !list.is_empty() {
+                        Some(list.contains(&entry).into())
+                    } else {
+                        None
+                    }
                 }
             },
         }

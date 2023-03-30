@@ -452,8 +452,8 @@ data = '''
     }
 '''
 
-[management.lookup]
-auth = ["list/admin"]
+[management.auth]
+lookup = "list/admin"
 
 [list]
 domains = ["__DOMAIN__"]
