@@ -72,7 +72,7 @@ impl IsTls for TlsStream<TcpStream> {
                 rustls::ProtocolVersion::DTLSv1_0 => "DTLSv1.0",
                 rustls::ProtocolVersion::DTLSv1_2 => "DTLSv1.2",
                 rustls::ProtocolVersion::DTLSv1_3 => "DTLSv1.3",
-                rustls::ProtocolVersion::Unknown(_) => "unknown",
+                _ => "unknown",
             }
             .as_bytes(),
         );

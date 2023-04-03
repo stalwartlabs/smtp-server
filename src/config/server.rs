@@ -170,7 +170,7 @@ impl Config {
                     TLS12_VERSION
                 })
                 .map_err(|err| format!("Failed to build TLS config: {err}"))?
-                .with_client_cert_verifier(NoClientAuth::new())
+                .with_client_cert_verifier(NoClientAuth::boxed())
                 .with_cert_resolver(Arc::new(CertificateResolver {
                     resolver: if has_sni { resolver.into() } else { None },
                     default_cert,
