@@ -265,21 +265,25 @@ async fn handle_request(
         .keep_alive(true)
         .serve_connection(
             stream,
-            service_fn(|req: hyper::Request<body::Incoming>| async {
-                let (req, response) = parse_request(req, core.clone()).await;
+            service_fn(|req: hyper::Request<body::Incoming>| {
+                let core = core.clone();
 
-                tracing::debug!(
-                    context = "management",
-                    event = "request",
-                    remote.ip = remote_addr.to_string(),
-                    uri = req.uri().to_string(),
-                    status = match &response {
-                        Ok(response) => response.status().to_string(),
-                        Err(error) => error.to_string(),
-                    }
-                );
+                async move {
+                    let response = core.parse_request(&req).await;
 
-                response
+                    tracing::debug!(
+                        context = "management",
+                        event = "request",
+                        remote.ip = remote_addr.to_string(),
+                        uri = req.uri().to_string(),
+                        status = match &response {
+                            Ok(response) => response.status().to_string(),
+                            Err(error) => error.to_string(),
+                        }
+                    );
+
+                    response
+                }
             }),
         )
         .await
@@ -293,76 +297,72 @@ async fn handle_request(
     }
 }
 
-async fn parse_request(
-    req: hyper::Request<hyper::body::Incoming>,
-    core: Arc<Core>,
-) -> (
-    hyper::Request<hyper::body::Incoming>,
-    Result<hyper::Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>,
-) {
-    // Authenticate request
-    let mut is_authenticated = false;
-    if let Some((mechanism, payload)) = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.trim().split_once(' '))
-    {
-        if mechanism.eq_ignore_ascii_case("basic") {
-            // Decode the base64 encoded credentials
-            if let Some((username, secret)) = base64_decode(payload.as_bytes())
-                .and_then(|token| String::from_utf8(token).ok())
-                .and_then(|token| {
-                    token
-                        .split_once(':')
-                        .map(|(login, secret)| (login.trim().to_lowercase(), secret.to_string()))
-                })
-            {
-                match core
-                    .queue
-                    .config
-                    .management_lookup
-                    .lookup(Item::Authenticate(Credentials::Plain { username, secret }))
-                    .await
+impl Core {
+    async fn parse_request(
+        &self,
+        req: &hyper::Request<hyper::body::Incoming>,
+    ) -> Result<hyper::Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        // Authenticate request
+        let mut is_authenticated = false;
+        if let Some((mechanism, payload)) = req
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.trim().split_once(' '))
+        {
+            if mechanism.eq_ignore_ascii_case("basic") {
+                // Decode the base64 encoded credentials
+                if let Some((username, secret)) = base64_decode(payload.as_bytes())
+                    .and_then(|token| String::from_utf8(token).ok())
+                    .and_then(|token| {
+                        token.split_once(':').map(|(login, secret)| {
+                            (login.trim().to_lowercase(), secret.to_string())
+                        })
+                    })
                 {
-                    Some(LookupResult::True) => {
-                        is_authenticated = true;
+                    match self
+                        .queue
+                        .config
+                        .management_lookup
+                        .lookup(Item::Authenticate(Credentials::Plain { username, secret }))
+                        .await
+                    {
+                        Some(LookupResult::True) => {
+                            is_authenticated = true;
+                        }
+                        Some(LookupResult::False) => {
+                            tracing::debug!(
+                                context = "management",
+                                event = "auth-error",
+                                "Invalid username or password."
+                            );
+                        }
+                        _ => {
+                            tracing::debug!(
+                                context = "management",
+                                event = "auth-error",
+                                "Temporary authentication failure."
+                            );
+                        }
                     }
-                    Some(LookupResult::False) => {
-                        tracing::debug!(
-                            context = "management",
-                            event = "auth-error",
-                            "Invalid username or password."
-                        );
-                    }
-                    _ => {
-                        tracing::debug!(
-                            context = "management",
-                            event = "auth-error",
-                            "Temporary authentication failure."
-                        );
-                    }
+                } else {
+                    tracing::debug!(
+                        context = "management",
+                        event = "auth-error",
+                        "Failed to decode base64 Authorization header."
+                    );
                 }
             } else {
                 tracing::debug!(
                     context = "management",
                     event = "auth-error",
-                    "Failed to decode base64 Authorization header."
+                    mechanism = mechanism,
+                    "Unsupported authentication mechanism."
                 );
             }
-        } else {
-            tracing::debug!(
-                context = "management",
-                event = "auth-error",
-                mechanism = mechanism,
-                "Unsupported authentication mechanism."
-            );
         }
-    }
-    if !is_authenticated {
-        return (
-            req,
-            Ok(hyper::Response::builder()
+        if !is_authenticated {
+            return Ok(hyper::Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .header(header::WWW_AUTHENTICATE, "Basic realm=\"Stalwart SMTP\"")
                 .body(
@@ -370,347 +370,344 @@ async fn parse_request(
                         .map_err(|never| match never {})
                         .boxed(),
                 )
-                .unwrap()),
-        );
-    }
+                .unwrap());
+        }
 
-    let mut path = req.uri().path().split('/');
-    path.next();
-    let (status, response) = match (req.method(), path.next(), path.next()) {
-        (&Method::GET, Some("queue"), Some("list")) => {
-            let mut from = None;
-            let mut to = None;
-            let mut before = None;
-            let mut after = None;
-            let mut error = None;
+        let mut path = req.uri().path().split('/');
+        path.next();
+        let (status, response) = match (req.method(), path.next(), path.next()) {
+            (&Method::GET, Some("queue"), Some("list")) => {
+                let mut from = None;
+                let mut to = None;
+                let mut before = None;
+                let mut after = None;
+                let mut error = None;
 
-            if let Some(query) = req.uri().query() {
-                for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-                    match key.as_ref() {
-                        "from" => {
-                            from = value.into_owned().into();
-                        }
-                        "to" => {
-                            to = value.into_owned().into();
-                        }
-                        "after" => match value.parse_timestamp() {
-                            Ok(dt) => {
-                                after = dt.into();
+                if let Some(query) = req.uri().query() {
+                    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+                        match key.as_ref() {
+                            "from" => {
+                                from = value.into_owned().into();
                             }
-                            Err(reason) => {
-                                error = reason.into();
+                            "to" => {
+                                to = value.into_owned().into();
+                            }
+                            "after" => match value.parse_timestamp() {
+                                Ok(dt) => {
+                                    after = dt.into();
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            "before" => match value.parse_timestamp() {
+                                Ok(dt) => {
+                                    before = dt.into();
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            _ => {
+                                error = format!("Invalid parameter {key:?}.").into();
                                 break;
                             }
-                        },
-                        "before" => match value.parse_timestamp() {
-                            Ok(dt) => {
-                                before = dt.into();
-                            }
-                            Err(reason) => {
-                                error = reason.into();
-                                break;
-                            }
-                        },
-                        _ => {
-                            error = format!("Invalid parameter {key:?}.").into();
-                            break;
                         }
                     }
                 }
-            }
 
-            match error {
-                None => {
-                    let (result_tx, result_rx) = oneshot::channel();
-                    core.send_queue_event(
-                        QueueRequest::List {
-                            from,
-                            to,
-                            before,
-                            after,
-                            result_tx,
-                        },
-                        result_rx,
-                    )
-                    .await
+                match error {
+                    None => {
+                        let (result_tx, result_rx) = oneshot::channel();
+                        self.send_queue_event(
+                            QueueRequest::List {
+                                from,
+                                to,
+                                before,
+                                after,
+                                result_tx,
+                            },
+                            result_rx,
+                        )
+                        .await
+                    }
+                    Some(error) => error.into_bad_request(),
                 }
-                Some(error) => error.into_bad_request(),
             }
-        }
-        (&Method::GET, Some("queue"), Some("status")) => {
-            let mut queue_ids = Vec::new();
-            let mut error = None;
+            (&Method::GET, Some("queue"), Some("status")) => {
+                let mut queue_ids = Vec::new();
+                let mut error = None;
 
-            if let Some(query) = req.uri().query() {
-                for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-                    match key.as_ref() {
-                        "id" | "ids" => match value.parse_queue_ids() {
-                            Ok(ids) => {
-                                queue_ids = ids;
-                            }
-                            Err(reason) => {
-                                error = reason.into();
+                if let Some(query) = req.uri().query() {
+                    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+                        match key.as_ref() {
+                            "id" | "ids" => match value.parse_queue_ids() {
+                                Ok(ids) => {
+                                    queue_ids = ids;
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            _ => {
+                                error = format!("Invalid parameter {key:?}.").into();
                                 break;
                             }
-                        },
-                        _ => {
-                            error = format!("Invalid parameter {key:?}.").into();
-                            break;
                         }
                     }
                 }
-            }
 
-            match error {
-                None => {
-                    let (result_tx, result_rx) = oneshot::channel();
-                    core.send_queue_event(
-                        QueueRequest::Status {
-                            queue_ids,
-                            result_tx,
-                        },
-                        result_rx,
-                    )
-                    .await
-                }
-                Some(error) => error.into_bad_request(),
-            }
-        }
-        (&Method::GET, Some("queue"), Some("retry")) => {
-            let mut queue_ids = Vec::new();
-            let mut time = Instant::now();
-            let mut item = None;
-            let mut error = None;
-
-            if let Some(query) = req.uri().query() {
-                for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-                    match key.as_ref() {
-                        "id" | "ids" => match value.parse_queue_ids() {
-                            Ok(ids) => {
-                                queue_ids = ids;
-                            }
-                            Err(reason) => {
-                                error = reason.into();
-                                break;
-                            }
-                        },
-                        "at" => match value.parse_timestamp() {
-                            Ok(dt) => {
-                                time = dt;
-                            }
-                            Err(reason) => {
-                                error = reason.into();
-                                break;
-                            }
-                        },
-                        "filter" => {
-                            item = value.into_owned().into();
-                        }
-                        _ => {
-                            error = format!("Invalid parameter {key:?}.").into();
-                            break;
-                        }
+                match error {
+                    None => {
+                        let (result_tx, result_rx) = oneshot::channel();
+                        self.send_queue_event(
+                            QueueRequest::Status {
+                                queue_ids,
+                                result_tx,
+                            },
+                            result_rx,
+                        )
+                        .await
                     }
+                    Some(error) => error.into_bad_request(),
                 }
             }
+            (&Method::GET, Some("queue"), Some("retry")) => {
+                let mut queue_ids = Vec::new();
+                let mut time = Instant::now();
+                let mut item = None;
+                let mut error = None;
 
-            match error {
-                None => {
-                    let (result_tx, result_rx) = oneshot::channel();
-                    core.send_queue_event(
-                        QueueRequest::Retry {
-                            queue_ids,
-                            item,
-                            time,
-                            result_tx,
-                        },
-                        result_rx,
-                    )
-                    .await
-                }
-                Some(error) => error.into_bad_request(),
-            }
-        }
-        (&Method::GET, Some("queue"), Some("cancel")) => {
-            let mut queue_ids = Vec::new();
-            let mut item = None;
-            let mut error = None;
-
-            if let Some(query) = req.uri().query() {
-                for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-                    match key.as_ref() {
-                        "id" | "ids" => match value.parse_queue_ids() {
-                            Ok(ids) => {
-                                queue_ids = ids;
-                            }
-                            Err(reason) => {
-                                error = reason.into();
-                                break;
-                            }
-                        },
-                        "filter" => {
-                            item = value.into_owned().into();
-                        }
-                        _ => {
-                            error = format!("Invalid parameter {key:?}.").into();
-                            break;
-                        }
-                    }
-                }
-            }
-
-            match error {
-                None => {
-                    let (result_tx, result_rx) = oneshot::channel();
-                    core.send_queue_event(
-                        QueueRequest::Cancel {
-                            queue_ids,
-                            item,
-                            result_tx,
-                        },
-                        result_rx,
-                    )
-                    .await
-                }
-                Some(error) => error.into_bad_request(),
-            }
-        }
-        (&Method::GET, Some("report"), Some("list")) => {
-            let mut domain = None;
-            let mut type_ = None;
-            let mut error = None;
-
-            if let Some(query) = req.uri().query() {
-                for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-                    match key.as_ref() {
-                        "type" => match value.as_ref() {
-                            "dmarc" => {
-                                type_ = ReportType::Dmarc(()).into();
-                            }
-                            "tls" => {
-                                type_ = ReportType::Tls(()).into();
+                if let Some(query) = req.uri().query() {
+                    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+                        match key.as_ref() {
+                            "id" | "ids" => match value.parse_queue_ids() {
+                                Ok(ids) => {
+                                    queue_ids = ids;
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            "at" => match value.parse_timestamp() {
+                                Ok(dt) => {
+                                    time = dt;
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            "filter" => {
+                                item = value.into_owned().into();
                             }
                             _ => {
-                                error = format!("Invalid report type {value:?}.").into();
+                                error = format!("Invalid parameter {key:?}.").into();
                                 break;
                             }
-                        },
-                        "domain" => {
-                            domain = value.into_owned().into();
-                        }
-                        _ => {
-                            error = format!("Invalid parameter {key:?}.").into();
-                            break;
                         }
                     }
                 }
-            }
 
-            match error {
-                None => {
-                    let (result_tx, result_rx) = oneshot::channel();
-                    core.send_report_event(
-                        ReportRequest::List {
-                            type_,
-                            domain,
-                            result_tx,
-                        },
-                        result_rx,
-                    )
-                    .await
+                match error {
+                    None => {
+                        let (result_tx, result_rx) = oneshot::channel();
+                        self.send_queue_event(
+                            QueueRequest::Retry {
+                                queue_ids,
+                                item,
+                                time,
+                                result_tx,
+                            },
+                            result_rx,
+                        )
+                        .await
+                    }
+                    Some(error) => error.into_bad_request(),
                 }
-                Some(error) => error.into_bad_request(),
             }
-        }
-        (&Method::GET, Some("report"), Some("status")) => {
-            let mut report_ids = Vec::new();
-            let mut error = None;
+            (&Method::GET, Some("queue"), Some("cancel")) => {
+                let mut queue_ids = Vec::new();
+                let mut item = None;
+                let mut error = None;
 
-            if let Some(query) = req.uri().query() {
-                for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-                    match key.as_ref() {
-                        "id" | "ids" => match value.parse_report_ids() {
-                            Ok(ids) => {
-                                report_ids = ids;
+                if let Some(query) = req.uri().query() {
+                    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+                        match key.as_ref() {
+                            "id" | "ids" => match value.parse_queue_ids() {
+                                Ok(ids) => {
+                                    queue_ids = ids;
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            "filter" => {
+                                item = value.into_owned().into();
                             }
-                            Err(reason) => {
-                                error = reason.into();
+                            _ => {
+                                error = format!("Invalid parameter {key:?}.").into();
                                 break;
                             }
-                        },
-                        _ => {
-                            error = format!("Invalid parameter {key:?}.").into();
-                            break;
                         }
                     }
                 }
-            }
 
-            match error {
-                None => {
-                    let (result_tx, result_rx) = oneshot::channel();
-                    core.send_report_event(
-                        ReportRequest::Status {
-                            report_ids,
-                            result_tx,
-                        },
-                        result_rx,
-                    )
-                    .await
+                match error {
+                    None => {
+                        let (result_tx, result_rx) = oneshot::channel();
+                        self.send_queue_event(
+                            QueueRequest::Cancel {
+                                queue_ids,
+                                item,
+                                result_tx,
+                            },
+                            result_rx,
+                        )
+                        .await
+                    }
+                    Some(error) => error.into_bad_request(),
                 }
-                Some(error) => error.into_bad_request(),
             }
-        }
-        (&Method::GET, Some("report"), Some("cancel")) => {
-            let mut report_ids = Vec::new();
-            let mut error = None;
+            (&Method::GET, Some("report"), Some("list")) => {
+                let mut domain = None;
+                let mut type_ = None;
+                let mut error = None;
 
-            if let Some(query) = req.uri().query() {
-                for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-                    match key.as_ref() {
-                        "id" | "ids" => match value.parse_report_ids() {
-                            Ok(ids) => {
-                                report_ids = ids;
+                if let Some(query) = req.uri().query() {
+                    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+                        match key.as_ref() {
+                            "type" => match value.as_ref() {
+                                "dmarc" => {
+                                    type_ = ReportType::Dmarc(()).into();
+                                }
+                                "tls" => {
+                                    type_ = ReportType::Tls(()).into();
+                                }
+                                _ => {
+                                    error = format!("Invalid report type {value:?}.").into();
+                                    break;
+                                }
+                            },
+                            "domain" => {
+                                domain = value.into_owned().into();
                             }
-                            Err(reason) => {
-                                error = reason.into();
+                            _ => {
+                                error = format!("Invalid parameter {key:?}.").into();
                                 break;
                             }
-                        },
-                        _ => {
-                            error = format!("Invalid parameter {key:?}.").into();
-                            break;
                         }
                     }
                 }
-            }
 
-            match error {
-                None => {
-                    let (result_tx, result_rx) = oneshot::channel();
-                    core.send_report_event(
-                        ReportRequest::Cancel {
-                            report_ids,
-                            result_tx,
-                        },
-                        result_rx,
-                    )
-                    .await
+                match error {
+                    None => {
+                        let (result_tx, result_rx) = oneshot::channel();
+                        self.send_report_event(
+                            ReportRequest::List {
+                                type_,
+                                domain,
+                                result_tx,
+                            },
+                            result_rx,
+                        )
+                        .await
+                    }
+                    Some(error) => error.into_bad_request(),
                 }
-                Some(error) => error.into_bad_request(),
             }
-        }
-        _ => (
-            StatusCode::NOT_FOUND,
-            format!(
-                "{{\"error\": \"not-found\", \"details\": \"URL {} does not exist.\"}}",
-                req.uri().path()
+            (&Method::GET, Some("report"), Some("status")) => {
+                let mut report_ids = Vec::new();
+                let mut error = None;
+
+                if let Some(query) = req.uri().query() {
+                    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+                        match key.as_ref() {
+                            "id" | "ids" => match value.parse_report_ids() {
+                                Ok(ids) => {
+                                    report_ids = ids;
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            _ => {
+                                error = format!("Invalid parameter {key:?}.").into();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                match error {
+                    None => {
+                        let (result_tx, result_rx) = oneshot::channel();
+                        self.send_report_event(
+                            ReportRequest::Status {
+                                report_ids,
+                                result_tx,
+                            },
+                            result_rx,
+                        )
+                        .await
+                    }
+                    Some(error) => error.into_bad_request(),
+                }
+            }
+            (&Method::GET, Some("report"), Some("cancel")) => {
+                let mut report_ids = Vec::new();
+                let mut error = None;
+
+                if let Some(query) = req.uri().query() {
+                    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+                        match key.as_ref() {
+                            "id" | "ids" => match value.parse_report_ids() {
+                                Ok(ids) => {
+                                    report_ids = ids;
+                                }
+                                Err(reason) => {
+                                    error = reason.into();
+                                    break;
+                                }
+                            },
+                            _ => {
+                                error = format!("Invalid parameter {key:?}.").into();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                match error {
+                    None => {
+                        let (result_tx, result_rx) = oneshot::channel();
+                        self.send_report_event(
+                            ReportRequest::Cancel {
+                                report_ids,
+                                result_tx,
+                            },
+                            result_rx,
+                        )
+                        .await
+                    }
+                    Some(error) => error.into_bad_request(),
+                }
+            }
+            _ => (
+                StatusCode::NOT_FOUND,
+                format!(
+                    "{{\"error\": \"not-found\", \"details\": \"URL {} does not exist.\"}}",
+                    req.uri().path()
+                ),
             ),
-        ),
-    };
+        };
 
-    (
-        req,
         Ok(hyper::Response::builder()
             .status(status)
             .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
@@ -719,11 +716,9 @@ async fn parse_request(
                     .map_err(|never| match never {})
                     .boxed(),
             )
-            .unwrap()),
-    )
-}
+            .unwrap())
+    }
 
-impl Core {
     async fn send_queue_event<T: Serialize>(
         &self,
         request: QueueRequest,
