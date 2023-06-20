@@ -157,38 +157,82 @@ impl Config {
             let (signer, sealer) =
                 match self.property_require::<Algorithm>(("signature", id, "algorithm"))? {
                     Algorithm::RsaSha256 => {
-                        let key = RsaKey::<Sha256>::from_rsa_pem(
-                            &String::from_utf8(self.file_contents((
-                                "signature",
-                                id,
-                                "private-key",
-                            ))?)
-                            .unwrap_or_default(),
-                        )
-                        .map_err(|err| {
-                            format!(
-                                "Failed to build RSA key for {}: {}",
-                                ("signature", id, "private-key",).as_key(),
-                                err
-                            )
-                        })?;
-                        let key_clone = RsaKey::<Sha256>::from_rsa_pem(
-                            &String::from_utf8(self.file_contents((
-                                "signature",
-                                id,
-                                "private-key",
-                            ))?)
-                            .unwrap_or_default(),
-                        )
-                        .map_err(|err| {
-                            format!(
-                                "Failed to build RSA key for {}: {}",
-                                ("signature", id, "private-key",).as_key(),
-                                err
-                            )
-                        })?;
-                        let (signer, sealer) = self.parse_signature(id, key_clone, key)?;
-                        (DkimSigner::RsaSha256(signer), ArcSealer::RsaSha256(sealer))
+                        match self.property::<String>(("signature", id, "format"))? {
+                            Some(f) => match f.as_str() {
+                                "pkcs8" => {
+                                    let key = RsaKey::<Sha256>::from_pkcs8_pem(
+                                        &String::from_utf8(self.file_contents((
+                                            "signature",
+                                            id,
+                                            "private-key",
+                                        ))?)
+                                        .unwrap_or_default(),
+                                    )
+                                    .map_err(|err| {
+                                        format!(
+                                            "Failed to build RSA key for {}: {}",
+                                            ("signature", id, "private-key",).as_key(),
+                                            err
+                                        )
+                                    })?;
+                                    let key_clone = RsaKey::<Sha256>::from_pkcs8_pem(
+                                        &String::from_utf8(self.file_contents((
+                                            "signature",
+                                            id,
+                                            "private-key",
+                                        ))?)
+                                        .unwrap_or_default(),
+                                    )
+                                    .map_err(|err| {
+                                        format!(
+                                            "Failed to build RSA key for {}: {}",
+                                            ("signature", id, "private-key",).as_key(),
+                                            err
+                                        )
+                                    })?;
+                                    let (signer, sealer) =
+                                        self.parse_signature(id, key_clone, key)?;
+                                    (DkimSigner::RsaSha256(signer), ArcSealer::RsaSha256(sealer))
+                                }
+                                "pkcs1" => {
+                                    let key = RsaKey::<Sha256>::from_rsa_pem(
+                                        &String::from_utf8(self.file_contents((
+                                            "signature",
+                                            id,
+                                            "private-key",
+                                        ))?)
+                                        .unwrap_or_default(),
+                                    )
+                                    .map_err(|err| {
+                                        format!(
+                                            "Failed to build RSA key for {}: {}",
+                                            ("signature", id, "private-key",).as_key(),
+                                            err
+                                        )
+                                    })?;
+                                    let key_clone = RsaKey::<Sha256>::from_rsa_pem(
+                                        &String::from_utf8(self.file_contents((
+                                            "signature",
+                                            id,
+                                            "private-key",
+                                        ))?)
+                                        .unwrap_or_default(),
+                                    )
+                                    .map_err(|err| {
+                                        format!(
+                                            "Failed to build RSA key for {}: {}",
+                                            ("signature", id, "private-key",).as_key(),
+                                            err
+                                        )
+                                    })?;
+                                    let (signer, sealer) =
+                                        self.parse_signature(id, key_clone, key)?;
+                                    (DkimSigner::RsaSha256(signer), ArcSealer::RsaSha256(sealer))
+                                }
+                                _ => return Err("Unknown RSA pem format".to_owned()),
+                            },
+                            None => return Err("Missing RSA pem format".to_owned()),
+                        }
                     }
                     Algorithm::Ed25519Sha256 => {
                         let public_key =

@@ -77,6 +77,7 @@ canonicalization = 'simple/relaxed'
 expire = '10d'
 set-body-length = true
 report = true
+format = 'pkcs1'
 
 [signature.ed]
 public-key = '11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo='
