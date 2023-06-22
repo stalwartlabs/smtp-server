@@ -57,7 +57,7 @@ You may also [compile Stalwart SMTP from the source](https://stalw.art/smtp/deve
 
 If you are having problems running Stalwart SMTP, you found a bug or just have a question,
 do not hesitate to reach us on [Github Discussions](https://github.com/stalwartlabs/smtp-server/discussions),
-[Reddit](https://www.reddit.com/r/stalwartlabs) or [Discord](https://discord.gg/9dXkHzCk).
+[Reddit](https://www.reddit.com/r/stalwartlabs) or [Discord](https://discord.gg/gNCVEEkWyX).
 Additionally you may become a sponsor to obtain priority support from Stalwart Labs Ltd.
 
 ## Documentation
