@@ -1,3 +1,0 @@
-user3@example.net
-user4@example.net
-user5@example.net

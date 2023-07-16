@@ -1,6 +1,6 @@
 # Stalwart SMTP Server
 
-[![Test](https://github.com/stalwartlabs/smtp-server/actions/workflows/test.yml/badge.svg)](https://github.com/stalwartlabs/smtp-server/actions/workflows/test.yml)
+[![Test](https://github.com/stalwartlabs/mail-server/actions/workflows/test.yml/badge.svg)](https://github.com/stalwartlabs/mail-server/actions/workflows/test.yml)
 [![Build](https://github.com/stalwartlabs/smtp-server/actions/workflows/build.yml/badge.svg)](https://github.com/stalwartlabs/smtp-server/actions/workflows/build.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![](https://img.shields.io/discord/923615863037390889?label=Chat)](https://discord.gg/jtgtCNj66U)
@@ -38,20 +38,23 @@ Key features:
   - Automatic analysis of incoming DMARC/TLS aggregate reports, DMARC/DKIM/SPF authentication failure reports as well as abuse reports.
 - And more:
   - SASL authentication.
-  - PostgreSQL, MySQL, MSSQL and SQLite support.
+  - LDAP, PostgreSQL, MySQL, MSSQL and SQLite support.
   - Granular configuration rules.
   - REST API for management.
   - Memory safe (thanks to Rust).
 
 ## Get Started
 
-Install Stalwart SMTP on your server by following the instructions for your platform:
+Install Stalwart SMTP Server on your server by following the instructions for your platform:
 
-- [Linux / MacOS](https://stalw.art/smtp/get-started/linux/)
-- [Windows](https://stalw.art/smtp/get-started/windows/)
-- [Docker](https://stalw.art/smtp/get-started/docker/)
+- [Linux / MacOS](https://stalw.art/docs/install/linux)
+- [Windows](https://stalw.art/docs/install/windows)
+- [Docker](https://stalw.art/docs/install/docker)
 
-You may also [compile Stalwart SMTP from the source](https://stalw.art/smtp/development/compile/).
+All documentation is available at [stalw.art/docs](https://stalw.art/docs).
+
+> **Note**
+> If you need a more comprehensive solution that includes IMAP and JMAP servers, you should consider installing the [Stalwart Mail Server](https://github.com/stalwartlabs/mail-server) instead.
 
 ## Support
 
@@ -59,79 +62,6 @@ If you are having problems running Stalwart SMTP, you found a bug or just have a
 do not hesitate to reach us on [Github Discussions](https://github.com/stalwartlabs/smtp-server/discussions),
 [Reddit](https://www.reddit.com/r/stalwartlabs) or [Discord](https://discord.gg/gNCVEEkWyX).
 Additionally you may become a sponsor to obtain priority support from Stalwart Labs Ltd.
-
-## Documentation
-
-Table of Contents
-
-- Get Started
-  - [Linux / MacOS](https://stalw.art/smtp/get-started/linux/)
-  - [Windows](https://stalw.art/smtp/get-started/windows/)
-  - [Docker](https://stalw.art/smtp/get-started/docker/)
-- Configuration
-  - [Overview](https://stalw.art/smtp/settings/overview)
-  - [Configuration Rules](https://stalw.art/smtp/settings/rules)
-  - [General settings](https://stalw.art/smtp/settings/general)
-  - [Remote hosts](https://stalw.art/smtp/settings/remote)
-  - [Databases](https://stalw.art/smtp/settings/database)
-  - [Local Lists](https://stalw.art/smtp/settings/list)
-  - [Tracing & Logging](https://stalw.art/smtp/settings/tracing)
-- Inbound settings
-  - [Listeners](https://stalw.art/smtp/inbound/listeners)
-  - [Sessions](https://stalw.art/smtp/inbound/session)
-  - [EHLO Stage](https://stalw.art/smtp/inbound/ehlo)
-  - [MAIL Stage](https://stalw.art/smtp/inbound/mail)
-  - [RCPT Stage](https://stalw.art/smtp/inbound/rcpt)
-  - [DATA Stage](https://stalw.art/smtp/inbound/data)
-  - [AUTH Stage](https://stalw.art/smtp/inbound/auth)
-  - [DNSBLs](https://stalw.art/smtp/inbound/dnsbl)
-  - [Sieve Scripting](https://stalw.art/smtp/inbound/sieve)
-  - [Throttling](https://stalw.art/smtp/inbound/throttle)
-- Outbound settings
-  - [Queues](https://stalw.art/smtp/outbound/queue)
-  - [Transport & Routing](https://stalw.art/smtp/outbound/transport)
-  - [TLS Security](https://stalw.art/smtp/outbound/tls)
-  - [Throttling](https://stalw.art/smtp/outbound/throttle)
-  - [Quotas](https://stalw.art/smtp/outbound/quota)
-  - [DNS](https://stalw.art/smtp/outbound/dns)
-- Email Authentication
-  - [DKIM](https://stalw.art/smtp/auth/dkim)
-  - [SPF](https://stalw.art/smtp/auth/spf)
-  - [ARC](https://stalw.art/smtp/auth/arc)
-  - [DMARC](https://stalw.art/smtp/auth/dmarc)
-  - [Reverse IP](https://stalw.art/smtp/auth/iprev)
-  - [Report Analysis](https://stalw.art/smtp/auth/analysis)
-- Management
-  - [API](https://stalw.art/smtp/management/api)
-  - [CLI](https://stalw.art/smtp/management/cli)
-  - [Queue](https://stalw.art/smtp/management/queue)
-  - [Reports](https://stalw.art/smtp/management/reports)
-- Development
-  - [Compiling](https://stalw.art/smtp/development/compile/)
-  - [Tests](https://stalw.art/smtp/development/test/)
-  - [RFCs conformed](https://stalw.art/smtp/development/rfc/)
-
-## Roadmap
-
-The following major features and enhancements are planned for Stalwart SMTP:
-
-- Embedded Antispam and Antivirus
-- WASM filters
-- Distributed mode
-- Web-based administration
-
-## Testing & Fuzzing
-
-The base tests perform protocol compliance tests as well as basic functionality testing on different functions across the Stalwart SMTP code base. 
-To run the base test suite execute:
-
-```bash
-cargo test
-```
-
-To run the fuzz tests please refer to the Stalwart libraries that handle parsing for the SMTP server: [smtp-proto](https://github.com/stalwartlabs/smtp-proto),
-[mail-parser](https://github.com/stalwartlabs/mail-parser),
-[mail-auth](https://github.com/stalwartlabs/mail-auth) and [sieve-rs](https://github.com/stalwartlabs/sieve). 
 
 ## Funding
 
