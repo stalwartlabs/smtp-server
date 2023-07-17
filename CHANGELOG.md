@@ -2,6 +2,7 @@ stalwart-smtp v0.3.0
 ================================
 - Added **LDAP** support.
 - Removed concept of `databases`, `lists`, `remotes` lists and replaced it with `directories`.
+- Fixed error when using PKCS8 DKIM private keys.
 
 stalwart-smtp v0.1.2
 ================================
