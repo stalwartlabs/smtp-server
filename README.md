@@ -39,6 +39,7 @@ Key features:
 - And more:
   - SASL authentication.
   - LDAP, PostgreSQL, MySQL, MSSQL and SQLite support.
+  - Email aliases, mailing lists, subaddressing and catch-all addresses support.
   - Granular configuration rules.
   - REST API for management.
   - Memory safe (thanks to Rust).
@@ -51,7 +52,7 @@ Install Stalwart SMTP Server on your server by following the instructions for yo
 - [Windows](https://stalw.art/docs/install/windows)
 - [Docker](https://stalw.art/docs/install/docker)
 
-All documentation is available at [stalw.art/docs](https://stalw.art/docs/get-started).
+All documentation is available at [stalw.art/docs/get-started](https://stalw.art/docs/get-started).
 
 > **Note**
 > If you need a more comprehensive solution that includes IMAP and JMAP servers, you should consider installing the [Stalwart Mail Server](https://github.com/stalwartlabs/mail-server) instead.
