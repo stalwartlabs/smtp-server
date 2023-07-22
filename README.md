@@ -23,6 +23,7 @@ Key features:
   - SMTP TLS Reporting (**TLSRPT**) delivery and analysis.
 - Inbound Filtering and Throttling:
   - Sieve scripting language with support for all [registered extensions](https://www.iana.org/assignments/sieve-extensions/sieve-extensions.xhtml).
+  - Milter support.
   - Filtering, modification and removal of MIME parts or headers.
   - DNS block lists (**DNSBL**) & Greylisting.
   - Inbound concurrency & rate limiting.
