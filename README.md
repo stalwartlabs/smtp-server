@@ -24,11 +24,11 @@ Key features:
   - SMTP TLS Reporting (**TLSRPT**) delivery and analysis.
 - Inbound Filtering and Throttling:
   - Sieve scripting language with support for all [registered extensions](https://www.iana.org/assignments/sieve-extensions/sieve-extensions.xhtml).
-  - **Milter** support.
-  - Filtering, modification and removal of MIME parts or headers.
+  - **Milter** support for integration with external content filtering systems such as SpamAssassin and ClamAV.
+  - Address rewriting.
+  - Filtering, modification and removal of message parts or headers.
   - DNS block lists (**DNSBL**) & Greylisting.
   - Inbound concurrency & rate limiting.
-  - Integration with external content filtering systems such as SpamAssassin and ClamAV.
 - Flexible Queues:
   - Unlimited virtual queues with custom routing rules.
   - Delayed delivery with `FUTURERELEASE` and `DELIVERBY` extensions support.
