@@ -5,7 +5,6 @@
 [![](https://img.shields.io/discord/923615863037390889?label=Chat)](https://discord.gg/jtgtCNj66U)
 [![](https://img.shields.io/twitter/follow/stalwartlabs)](https://twitter.com/stalwartlabs)
 [![](https://img.shields.io/mastodon/follow/109929667531941122)](https://mastodon.social/@stalwartlabs)
-[![](https://img.shields.io/badge/Follow-%40stalwartlabs-8A2BE2)](https://www.threads.net/@stalwartlabs)
 
 **Stalwart SMTP** is a modern SMTP server developed in Rust with a focus on security, speed, and extensive configurability. 
 It features built-in DMARC, DKIM, SPF and ARC support for message authentication, strong transport security through DANE, MTA-STS and SMTP TLS reporting, and offers great flexibility and customization thanks to its dynamic configuration rules and native support for Sieve scripts.
