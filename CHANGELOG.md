@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.3.4] - 2023-08-09
+
+## Added
+ 
+### Changed
+ 
+### Fixed
+- Missing envelope keys in rewrite rules (#25) 
+- Remove CRLF from Milter headers
+
 ## [0.3.3] - 2023-08-02
 
 ### Added

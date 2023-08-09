@@ -7,7 +7,8 @@ COPY main/resources/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 RUN sed -i -e 's/__C__/smtp/g' /usr/local/bin/configure.sh && \
     sed -i -e 's/__R__/smtp-server/g' /usr/local/bin/configure.sh && \
-    sed -i -e 's/__N__/smtp/g' /usr/local/bin/configure.sh
+    sed -i -e 's/__N__/smtp/g' /usr/local/bin/configure.sh && \
+    sed -i -e 's/__B__/stalwart-smtp/g' /usr/local/bin/entrypoint.sh
 
 RUN chmod a+rx /usr/local/bin/*.sh
 
