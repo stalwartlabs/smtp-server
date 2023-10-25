@@ -26,8 +26,17 @@ Key features:
   - **Milter** support for integration with external content filtering systems such as SpamAssassin and ClamAV.
   - Address rewriting.
   - Filtering, modification and removal of message parts or headers.
-  - DNS block lists (**DNSBL**) & Greylisting.
   - Inbound concurrency & rate limiting.
+- **Spam and Phishing** filter:
+  - Comprehensive set of filtering **rules** on par with popular solutions.
+  - Statistical **spam classifier** with automatic training capabilities.
+  - DNS Blocklists (**DNSBLs**) checking of IP addresses, domains, and hashes.
+  - Collaborative digest-based spam filtering with **Pyzor**.
+  - **Phishing** protection against homographic URL attacks, sender spoofing and other techniques.
+  - Trusted **reply** tracking to recognize and prioritize genuine e-mail replies.
+  - Sender **reputation** monitoring by IP address, ASN, domain and email address.
+  - **Greylisting** to temporarily defer unknown senders.
+  - **Spam traps** to set up decoy email addresses that catch and analyze spam.
 - Flexible Queues:
   - Unlimited virtual queues with custom routing rules.
   - Delayed delivery with `FUTURERELEASE` and `DELIVERBY` extensions support.
