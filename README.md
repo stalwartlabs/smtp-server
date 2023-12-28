@@ -1,10 +1,40 @@
-# Stalwart SMTP Server
+<h2 align="center">
+    <a href="https://stalw.art">
+    <img src="https://stalw.art/home/apple-touch-icon.png" height="60">
+    </a>
+    <br>
+    Stalwart SMTP Server
+</h1>
 
-[![Build](https://github.com/stalwartlabs/smtp-server/actions/workflows/build.yml/badge.svg)](https://github.com/stalwartlabs/smtp-server/actions/workflows/build.yml)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![](https://img.shields.io/discord/923615863037390889?label=Chat)](https://discord.gg/jtgtCNj66U)
-[![](https://img.shields.io/twitter/follow/stalwartlabs)](https://twitter.com/stalwartlabs)
-[![](https://img.shields.io/mastodon/follow/109929667531941122)](https://mastodon.social/@stalwartlabs)
+<p align="center">
+  <i align="center">Secure & Modern SMTP Server</i> 🛡️
+</p>
+
+<h4 align="center">
+  <a href="https://github.com/stalwartlabs/mail-server/actions/workflows/build.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/stalwartlabs/mail-server/build.yml?style=flat-square" alt="continuous integration">
+  </a>
+  <a href="https://www.gnu.org/licenses/agpl-3.0">
+    <img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg?label=license&style=flat-square" alt="License: AGPL v3">
+  </a>
+  <a href="https://stalw.art/docs/get-started/">
+    <img src="https://img.shields.io/badge/read_the-docs-red?style=flat-square" alt="Documentation">
+  </a>
+  <br>
+  <a href="https://mastodon.social/@stalwartlabs">
+    <img src="https://img.shields.io/mastodon/follow/109929667531941122?style=flat-square&logo=mastodon&color=%236364ff" alt="Mastodon">
+  </a>
+  <a href="https://twitter.com/stalwartlabs">
+    <img src="https://img.shields.io/twitter/follow/stalwartlabs?style=flat-square&logo=twitter" alt="Twitter">
+  </a>
+  <br>
+  <a href="https://discord.gg/jtgtCNj66U">
+    <img src="https://img.shields.io/discord/923615863037390889?label=discord&style=flat-square" alt="Discord">
+  </a>
+  <a href="https://matrix.to/#/#stalwart:matrix.org">
+    <img src="https://img.shields.io/matrix/stalwartmail%3Amatrix.org?label=matrix&style=flat-square" alt="Matrix">
+  </a>
+</h4>
 
 **Stalwart SMTP** is a modern SMTP server developed in Rust with a focus on security, speed, and extensive configurability. 
 It features built-in DMARC, DKIM, SPF and ARC support for message authentication, strong transport security through DANE, MTA-STS and SMTP TLS reporting, and offers great flexibility and customization thanks to its dynamic configuration rules and native support for Sieve scripts.
@@ -48,7 +78,7 @@ Key features:
   - Automatic analysis of incoming DMARC/TLS aggregate reports, DMARC/DKIM/SPF authentication failure reports as well as abuse reports.
 - And more:
   - SASL authentication.
-  - LDAP, PostgreSQL, MySQL, MSSQL and SQLite support.
+  - Redis, LDAP, PostgreSQL, MySQL, MSSQL and SQLite support.
   - Email aliases, mailing lists, subaddressing and catch-all addresses support.
   - Granular configuration rules.
   - REST API for management.
