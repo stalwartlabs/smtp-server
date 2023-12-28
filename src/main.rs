@@ -23,9 +23,9 @@
 
 use std::time::Duration;
 
-use directory::config::ConfigDirectory;
+use directory::core::config::ConfigDirectory;
 use smtp::core::{SmtpAdminSessionManager, SmtpSessionManager, SMTP};
-use tokio::sync::mpsc;
+use store::config::ConfigStore;
 use utils::{
     config::{Config, ServerProtocol},
     enable_tracing, wait_for_shutdown, UnwrapFailure,
@@ -43,12 +43,6 @@ pub const IPC_CHANNEL_BUFFER: usize = 1024;
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let config = Config::init();
-    let servers = config.parse_servers().failed("Invalid configuration");
-    let directory = config.parse_directory().failed("Invalid configuration");
-
-    // Bind ports and drop privileges
-    servers.bind(&config);
-
     // Enable tracing
     let _tracer = enable_tracing(
         &config,
@@ -58,9 +52,28 @@ async fn main() -> std::io::Result<()> {
         ),
     )
     .failed("Failed to enable tracing");
+    let servers = config.parse_servers().failed("Invalid configuration");
+
+    // Bind ports and drop privileges
+    servers.bind(&config);
+
+    // Parse stores and directories
+    let stores = config.parse_stores().await.failed("Invalid configuration");
+    let directory = config
+        .parse_directory(&stores, config.value("jmap.store.data"))
+        .await
+        .failed("Invalid configuration");
+    let schedulers = config
+        .parse_purge_schedules(
+            &stores,
+            config.value("jmap.store.data"),
+            config.value("jmap.store.blob"),
+        )
+        .await
+        .failed("Invalid configuration");
 
     // Init servers
-    let smtp = SMTP::init(&config, &servers, &directory)
+    let smtp = SMTP::init(&config, &servers, &stores, &directory)
         .await
         .failed("Invalid configuration file");
 
@@ -91,9 +104,9 @@ async fn main() -> std::io::Result<()> {
         };
     });
 
-    // Spawn scheduled directory queries
-    for schedule in directory.schedules {
-        schedule.spawn(shutdown_rx.clone());
+    // Spawn purge schedulers
+    for scheduler in schedulers {
+        scheduler.spawn(shutdown_rx.clone());
     }
 
     // Wait for shutdown signal

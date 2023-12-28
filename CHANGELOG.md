@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.5.0] - 2023-12-27
+
+This version introduces some breaking changes in the configuration file. Please read the [UPGRADING.md](UPGRADING.md) file for more information.
+
+## Added
+- Spam databases can now be stored in any of the supported data stores or `Redis`. It is no longer necessary to have an SQL server to use the spam filter.
+- LDAP bind authentication, to support some LDAP servers such as `lldap` which do not expose the userPassword attribute.
+
+### Changed
+
+### Fixed
+- Spamhaus DNSBL return codes.
+- CLI tool reports authentication errors rather than a parsing error.
+
 ## [0.4.0] - 2023-10-25
 
 This version introduces some breaking changes in the configuration file. Please read the [UPGRADING.md](UPGRADING.md) file for more information.

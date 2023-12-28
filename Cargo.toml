@@ -7,7 +7,7 @@ homepage = "https://stalw.art/smtp"
 keywords = ["smtp", "email", "mail", "server"]
 categories = ["email"]
 license = "AGPL-3.0-only"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 resolver = "2"
 
@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 smtp = { path = "main/crates/smtp" }
+store = { path = "main/crates/store", features = ["redis", "postgres", "mysql", "sqlite"] }
 directory = { path = "main/crates/directory" }
 utils = { path = "main/crates/utils" }
 tokio = { version = "1.23", features = ["full"] }
