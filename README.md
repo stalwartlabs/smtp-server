@@ -68,6 +68,7 @@ Key features:
   - **Greylisting** to temporarily defer unknown senders.
   - **Spam traps** to set up decoy email addresses that catch and analyze spam.
 - Flexible Queues:
+  - Distributed and fault-tolerant queues.
   - Unlimited virtual queues with custom routing rules.
   - Delayed delivery with `FUTURERELEASE` and `DELIVERBY` extensions support.
   - Priority delivery with `MT-PRIORITY` extension support.
@@ -108,7 +109,7 @@ Additionally you may become a sponsor to obtain priority support from Stalwart L
 
 Part of the development of this project was funded through the [NGI0 Entrust Fund](https://nlnet.nl/entrust), a fund established by [NLnet](https://nlnet.nl/) with financial support from the European Commission's [Next Generation Internet](https://ngi.eu/) programme, under the aegis of DG Communications Networks, Content and Technology under grant agreement No 101069594.
 
-If you find the project useful you can help by [becoming a sponsor](https://github.com/sponsors/stalwartlabs). Thank you!
+If you find the project useful you can help by [becoming a sponsor](https://liberapay.com/stalwartlabs). Thank you!
 
 ## License
 
