@@ -42,7 +42,7 @@ pub const IPC_CHANNEL_BUFFER: usize = 1024;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let config = Config::init();
+    let mut config = Config::init();
     // Enable tracing
     let _tracer = enable_tracing(
         &config,
@@ -57,17 +57,25 @@ async fn main() -> std::io::Result<()> {
     // Bind ports and drop privileges
     servers.bind(&config);
 
-    // Parse stores and directories
+    // Parse stores
     let stores = config.parse_stores().await.failed("Invalid configuration");
+    let data_store = stores
+        .get_store(&config, "storage.data")
+        .failed("Invalid configuration");
+
+    // Update configuration
+    config.update(data_store.config_list("").await.failed("Storage error"));
+
+    // Parse directories
     let directory = config
-        .parse_directory(&stores, config.value("jmap.store.data"))
+        .parse_directory(&stores, data_store)
         .await
         .failed("Invalid configuration");
     let schedulers = config
         .parse_purge_schedules(
             &stores,
-            config.value("jmap.store.data"),
-            config.value("jmap.store.blob"),
+            config.value("storage.data"),
+            config.value("storage.blob"),
         )
         .await
         .failed("Invalid configuration");
@@ -98,7 +106,7 @@ async fn main() -> std::io::Result<()> {
             }
             ServerProtocol::ManageSieve => {
                 tracing::debug!(
-                    "Ignoring ManageSieve server listener, not supported by JMAP-only release."
+                    "Ignoring ManageSieve server listener, not supported by SMTP-only release."
                 );
             }
         };
